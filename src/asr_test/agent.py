@@ -12,7 +12,7 @@ import sounddevice as sd
 from . import config
 from .audio.echo import EchoControl
 from .audio.output import LocalAudioSink
-from .interfaces import LlmBase, SttBase, TtsBase, VadBase
+from .interfaces import AudioSinkBase, LlmBase, SttBase, TtsBase, VadBase
 from .llm import OpenAiCompatibleLlm
 from .stt import OnnxAsrEngine
 from .tts import KokoroTts
@@ -27,6 +27,7 @@ class Agent:
         tts: TtsBase | None = None,
         llm: LlmBase | None = None,
         trigger_word: str | None = None,
+        audio_sink: AudioSinkBase | None = None,
     ):
         print("Loading models...")
         t0 = time.perf_counter()
@@ -61,7 +62,7 @@ class Agent:
             len(trigger_word.split()) + config.TRIGGER_LOOKAHEAD_WORDS if trigger_word else 0
         )
 
-        self.audio_out = LocalAudioSink(
+        self.audio_out = audio_sink or LocalAudioSink(
             self.tts.sample_rate,
             blocksize=config.OUT_BLOCK,
             on_played=lambda a: self.echo.note_playback(a, self.tts.sample_rate),
@@ -115,10 +116,31 @@ class Agent:
         self.audio_out.flush()
         self.new_turn()
 
-    def mic_callback(self, indata, frames, time_info, status):
-        if status:
-            print("Audio status:", status)
-        self.mic_q.put(indata.copy())
+    def feed_audio(self, frame: np.ndarray) -> None:
+        """Transport-agnostic entry point for one mono audio frame.
+        Any transport (local InputStream, websocket receive loop) calls
+        this the same way."""
+        self.mic_q.put(frame)
+
+    def start(self) -> list[threading.Thread]:
+        """Spawn the vad/worker/tts threads without opening any input
+        device. run() (local mode) wraps this; server mode calls it
+        directly per connection."""
+        threads = [
+            threading.Thread(target=self.vad_thread, daemon=True),
+            threading.Thread(target=self.worker_thread, daemon=True),
+            threading.Thread(target=self.tts_thread, daemon=True),
+        ]
+        for t in threads:
+            t.start()
+        return threads
+
+    def shutdown(self, threads: list[threading.Thread]) -> None:
+        self.stop.set()
+        self.cancel.set()
+        for t in threads:
+            t.join(timeout=1.0)
+        self.audio_out.close()
 
     def vad_thread(self):
         while not self.stop.is_set():
@@ -371,22 +393,21 @@ class Agent:
                       f"llm_ttft {ttft:.2f} + tts {synth:.2f} + other {other:.2f}")
 
     def run(self):
-        threads = [
-            threading.Thread(target=self.vad_thread, daemon=True),
-            threading.Thread(target=self.worker_thread, daemon=True),
-            threading.Thread(target=self.tts_thread, daemon=True),
-        ]
-        for t in threads:
-            t.start()
+        threads = self.start()
 
         print("Listening — speak any time, including over the bot. Ctrl+C to stop.\n")
+
+        def _on_frame(indata, frames, time_info, status):
+            if status:
+                print("Audio status:", status)
+            self.feed_audio(indata.flatten().astype(np.float32))
 
         mic = sd.InputStream(
             samplerate=config.MIC_RATE,
             channels=1,
             dtype="float32",
             blocksize=config.FRAME,
-            callback=self.mic_callback,
+            callback=_on_frame,
         )
 
         with mic:
@@ -395,11 +416,7 @@ class Agent:
                     time.sleep(0.2)
             except KeyboardInterrupt:
                 print("\nStopping...")
-                self.stop.set()
-                self.cancel.set()
-                for t in threads:
-                    t.join(timeout=1.0)
-                self.audio_out.close()
+                self.shutdown(threads)
                 self.report()
 
     def report(self):
