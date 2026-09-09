@@ -42,8 +42,6 @@ class FakeStt(SttBase):
 class FakeLlm(LlmBase):
     def __init__(self, reply: str = "hi there"):
         self.reply = reply
-        self.last_ttft: float | None = 0.01
-        self.last_total: float | None = 0.02
         self.calls: list[list[dict]] = []
 
     def stream(self, messages: list[dict], cancel: threading.Event) -> Iterator[str]:

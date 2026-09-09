@@ -29,9 +29,6 @@ class OpenAiCompatibleLlm(LlmBase):
         self.max_tokens = max_tokens
         self.timeout = timeout
 
-        self.last_ttft: float | None = None
-        self.last_total: float | None = None
-
         if warmup:
             t0 = time.perf_counter()
             try:
@@ -48,10 +45,6 @@ class OpenAiCompatibleLlm(LlmBase):
     def stream(self, messages: list[dict], cancel: threading.Event) -> Iterator[str]:
         full_messages = [{"role": "system", "content": self.system_prompt}] + messages
 
-        t_start = time.perf_counter()
-        self.last_ttft = None
-        self.last_total = None
-
         completion = self.client.chat.completions.create(
             model=self.model,
             messages=full_messages,
@@ -67,8 +60,4 @@ class OpenAiCompatibleLlm(LlmBase):
                 continue
             piece = chunk.choices[0].delta.content
             if piece:
-                if self.last_ttft is None:
-                    self.last_ttft = time.perf_counter() - t_start
                 yield piece
-
-        self.last_total = time.perf_counter() - t_start
