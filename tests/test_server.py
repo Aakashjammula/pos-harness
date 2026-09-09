@@ -79,9 +79,28 @@ def test_default_llm_models_falls_back_when_lm_studio_unreachable(monkeypatch):
     assert _default_llm_models("http://localhost:1234/v1", "fallback-model") == ["fallback-model"]
 
 
+def test_create_app_eagerly_warms_default_tts_and_llm():
+    before_tts = FakeTts.instances_created
+    llm_factory_calls = []
+
+    def llm_factory(model):
+        llm_factory_calls.append(model)
+        return FakeLlm()
+
+    create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=llm_factory,
+        default_tts_engine="kokoro",
+        default_llm_model="default-model",
+    )
+
+    assert FakeTts.instances_created - before_tts == 1
+    assert llm_factory_calls == ["default-model"]
+
+
 def test_tts_engine_cache_reuses_instance_for_same_voice(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    before = FakeTts.instances_created
     fake_llm = FakeLlm(reply="hi there")
     app = create_app(
         stt=FakeStt("hello"),
@@ -90,6 +109,10 @@ def test_tts_engine_cache_reuses_instance_for_same_voice(monkeypatch):
         vad_factory=lambda: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
     )
+    # Snapshot *after* create_app() — it now eagerly warms the default
+    # (engine, voice="") combo at startup, which is a different cache key
+    # from voice="voice-a" below and shouldn't count toward this delta.
+    before = FakeTts.instances_created
     client = TestClient(app)
 
     with client.websocket_connect("/ws?voice=voice-a") as ws1:
