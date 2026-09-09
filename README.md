@@ -182,7 +182,20 @@ bot's response is still draining, so starting to talk again *before*
 the bot fully finishes can truncate the start of your next utterance —
 often showing up as an empty or garbled STT transcript, not a genuine
 STT failure. This is expected behavior for `"duck"`'s safety tradeoff,
-not a bug; `"headphones"` mode doesn't have this limitation.
+not a bug; `"headphones"` mode doesn't have this limitation, but only
+actually helps if you're wearing real headphones (it does zero echo
+suppression, so on open speakers it just lets the bot's own voice back
+into the mic as false speech instead).
+
+**On loud speakers with no headset mic** (loud/noisy room, laptop
+speakers, no headphones): `?echo_mode=aec` is the one built for exactly
+this — active echo cancellation instead of muting, so the mic stays
+live and isolates your voice from the bot's own output rather than
+either dropping your speech (`"duck"`) or picking up the bot's voice as
+false input (`"headphones"` without real isolation). Needs `voiceclean`
+installed — see the `ECHO_MODE` entry under Configuration below,
+including the caveat that this project's `voiceclean` integration is
+fixed but not yet verified against the real package with live audio.
 
 `fastapi`, `uvicorn[standard]`, and `websockets` are dependencies added
 for server mode; `pytest` is a dev-only dependency (`uv run pytest` to
@@ -323,13 +336,27 @@ knobs:
 - **`ECHO_MODE`** (`"headphones" | "duck" | "aec"`) — `"headphones"` does
   zero echo suppression and assumes the mic genuinely cannot hear the
   speakers. If you're on laptop speakers/mic instead of real headphones,
-  use `"duck"` (mutes VAD input while the bot is talking) or `"aec"`
-  (active echo cancellation, requires the optional `voiceclean` package —
-  falls back to `"duck"` if unavailable). Using `"headphones"` without
+  `"aec"` (active echo cancellation) is the one that keeps full barge-in
+  and doesn't cut off the start of what you say while the bot is still
+  talking, unlike `"duck"` (mutes/drops mic input entirely while the bot
+  talks — the safest default, but in a loud room this can truncate your
+  next sentence if you start before the bot fully finishes, which shows
+  up as an empty or garbled STT transcript, not an STT bug). `"aec"`
+  needs the optional `voiceclean` package (`uv add voiceclean` — pulls in
+  `soxr`; `numpy`/`onnxruntime` are already dependencies here) and falls
+  back to `"duck"` if it's not installed. Using `"headphones"` without
   actual headphone isolation causes the bot's own voice to be picked up as
   false speech. `Agent(echo_mode=...)` overrides this per-instance (what
   `--echo-mode`/`?echo_mode=` actually set) without touching the module
   default other callers still see.
+  **Not independently verified live** — `voiceclean`'s real API
+  (confirmed against its own docs) is `VoiceClean(sample_rate=...)` +
+  `feed_reference()`/`process()`; this project's integration was fixed to
+  match it (the previous code called a `voiceclean.AEC(...)` shape that
+  doesn't exist in the real package, so `"aec"` silently fell back to
+  `"duck"` even with `voiceclean` installed), but hasn't been tested with
+  the actual package + real audio — try it and report back if it doesn't
+  behave as expected.
 - **`MIN_SILENCE_MS`** (default `1200`) — how long a pause must last before
   VAD considers your turn finished. Lower = snappier turn-taking but risks
   cutting off mid-sentence pauses (fragmenting one utterance into several
