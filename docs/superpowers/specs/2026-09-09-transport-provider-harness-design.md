@@ -279,21 +279,73 @@ Builds directly on Phase 1's stateless `LlmBase`:
   API) to prove the interface needs no changes for a cloud engine whose
   call is a network round-trip instead of a local ONNX session.
 
-## Phase 3 — LLM harness / tool calling (spec'd separately, summarized here)
+## Phase 3 — LLM harness / tool calling via LangChain (spec'd separately, summarized here)
 
-- Wrap or replace `OpenAiCompatibleLlm` with a LangChain
-  `ChatOpenAI`-based implementation of the same (now-stateless)
-  `LlmBase.stream(messages, cancel)` contract, so `agent.py` needs no
-  changes.
-- Tool calls surface as a streaming concern: LangChain/OpenAI stream
-  tool-call deltas interleaved with content deltas. `stream()` needs a
-  documented way to signal "a tool is being called" vs. "here is text to
-  speak" — likely by yielding a small tagged union instead of a bare
-  `str`, e.g. `TextPiece(str)` / `ToolCall(name, args)`, with `Agent`
-  executing the tool and feeding the result back into a follow-up call
-  before resuming the sentence-chunking/TTS flow it does today. This
-  needs its own design pass once Phase 1/2 land — flagged here so the
-  Phase 1 interface change doesn't have to be revisited twice.
+Researched against LangChain's Python OSS docs (`docs.langchain.com/oss/python/langchain/`:
+overview, agents, models, tools, messages, short-term-memory, streaming,
+middleware, quickstart). Key finding: LangChain offers two integration
+levels, and only one of them fits cleanly on top of what Phases 1/2
+already build.
+
+**Not used: `create_agent`'s own state ownership.** `create_agent(model=,
+tools=, ...)` is convenient but owns conversation memory itself via
+`AgentState` + a checkpointer + `thread_id` — a second, parallel
+state-tracking mechanism alongside `Agent`'s own turn/cancel/barge-in
+state and (per Phase 1) its own `self.conversation` history. Adopting it
+would mean two systems tracking the same conversation. Not worth it for
+what we need (a few tool calls mid-conversation, not a multi-agent
+graph).
+
+**Used instead: the model-level API.** `init_chat_model(model=...,
+model_provider="openai", base_url=..., api_key=...)` returns a plain
+chat model — a direct drop-in for today's `OpenAiCompatibleLlm` (same
+three kwargs already point it at LM Studio; pointing at real cloud
+OpenAI/Anthropic/etc. later is the same three kwargs, subsuming Phase
+2's LLM-side provider story). `model.bind_tools([...])` adds tool
+calling; the caller hand-rolls the loop: invoke, check
+`response.tool_calls`, execute, append `ToolMessage`s, invoke again —
+exactly the shape shown in LangChain's own "Tool Execution Loop"
+example. Crucially, this loop takes a **plain external list of
+`{"role", "content"}` dicts** each call — stateless, no framework-owned
+history — which is exactly Phase 1 Task 5's `LlmBase.stream(messages,
+cancel)` contract. No interface change needed for Phase 3.
+
+**Where the tool loop lives:** entirely inside a new `LangChainLlm
+(LlmBase)`'s `stream()` implementation — invisible to `Agent`/`respond()`,
+which keeps calling `stream(messages, cancel)` and getting back plain
+text pieces to speak, unchanged from today:
+
+```python
+def stream(self, messages, cancel):
+    full = [{"role": "system", "content": self.system_prompt}] + messages
+    for _ in range(self.max_tool_rounds):          # bounded — avoid an infinite tool-call loop
+        if cancel.is_set():
+            return
+        response = self.model_with_tools.invoke(full)   # not streamed: no user-facing text yet
+        if not response.tool_calls:
+            break
+        full.append(response)
+        for call in response.tool_calls:
+            full.append(self._tools[call["name"]].invoke(call))   # -> ToolMessage
+    for chunk in self.model_with_tools.stream(full):    # final round: stream the spoken answer
+        if cancel.is_set():
+            return
+        if chunk.text:
+            yield chunk.text
+```
+
+Only the final, no-more-tool-calls round is streamed token-by-token
+(what's actually spoken); intermediate tool-decision rounds are quick
+blocking calls since they produce no speakable text anyway — this keeps
+`agent.py`'s sentence-chunking/TTS flow completely untouched.
+
+Open items for Phase 3's own design pass: which tools to expose first
+(needs a product decision, not a technical one), `max_tool_rounds`'
+value, and whether `langchain` + `langchain-openai` are worth the
+dependency weight vs. hand-rolling the same loop directly against the
+`openai` SDK's own `tools=` param (LangChain's main value-add here is
+provider-agnostic model swapping, not the tool loop itself, which is
+~10 lines either way).
 
 ## Risks / open questions
 
