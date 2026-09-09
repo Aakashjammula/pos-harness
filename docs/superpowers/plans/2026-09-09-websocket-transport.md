@@ -56,7 +56,7 @@ internally).
   task that crosses the websocket boundary (Tasks 4, 6, 7) imports these
   two functions from `asr_test.utils`.
 
-- [ ] **Step 1: Add pytest as a dev dependency**
+- [x] **Step 1: Add pytest as a dev dependency**
 
 Run: `uv add --dev pytest`
 
@@ -64,7 +64,7 @@ Expected: `pyproject.toml` gains a `[dependency-groups]` `dev = ["pytest>=..."]`
 entry (or similar, depending on installed uv version's exact TOML
 shape) and `uv.lock` updates.
 
-- [ ] **Step 2: Add a root `conftest.py` so top-level scripts are importable from tests**
+- [x] **Step 2: Add a root `conftest.py` so top-level scripts are importable from tests**
 
 ```python
 # conftest.py
@@ -74,7 +74,7 @@ shape) and `uv.lock` updates.
 # `from server import ...` instead of packaging them.
 ```
 
-- [ ] **Step 3: Write the failing tests**
+- [x] **Step 3: Write the failing tests**
 
 ```python
 # tests/test_utils.py
@@ -114,13 +114,13 @@ def test_roundtrip_is_close():
 
 Add `import pytest` at the top of the file alongside the `numpy` import.
 
-- [ ] **Step 4: Run tests to verify they fail**
+- [x] **Step 4: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_utils.py -v`
 Expected: FAIL with `ImportError: cannot import name 'pcm16_to_float32'`
 (the functions don't exist yet).
 
-- [ ] **Step 5: Implement the functions**
+- [x] **Step 5: Implement the functions**
 
 ```python
 # src/asr_test/utils.py — add alongside the existing resample_linear
@@ -133,12 +133,12 @@ def float32_to_pcm16(audio: np.ndarray) -> bytes:
     return (clipped * 32767.0).astype(np.int16).tobytes()
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_utils.py -v`
 Expected: 4 passed.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add pyproject.toml uv.lock conftest.py tests/test_utils.py src/asr_test/utils.py
@@ -172,7 +172,7 @@ touched.
   wires this into `Agent.__init__` as the default; Task 4 adds the
   second implementation.
 
-- [ ] **Step 1: Write the interface**
+- [x] **Step 1: Write the interface**
 
 ```python
 # src/asr_test/interfaces/audio_sink.py
@@ -213,7 +213,7 @@ class AudioSinkBase(ABC):
     def elapsed_ms(self) -> float: ...
 ```
 
-- [ ] **Step 2: Export it from the interfaces package**
+- [x] **Step 2: Export it from the interfaces package**
 
 ```python
 # src/asr_test/interfaces/__init__.py
@@ -226,7 +226,7 @@ from .vad import VadBase
 __all__ = ["AudioSinkBase", "LlmBase", "SttBase", "TtsBase", "VadBase"]
 ```
 
-- [ ] **Step 3: Write the failing tests (stubbing `sounddevice.OutputStream`)**
+- [x] **Step 3: Write the failing tests (stubbing `sounddevice.OutputStream`)**
 
 ```python
 # tests/test_local_audio_sink.py
@@ -292,13 +292,13 @@ def test_underrun_counted_when_buffer_empties_mid_playback(sink):
     assert sink.underruns == 1
 ```
 
-- [ ] **Step 4: Run tests to verify they fail**
+- [x] **Step 4: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_local_audio_sink.py -v`
 Expected: FAIL — `ImportError: cannot import name 'LocalAudioSink'`
 (class is still named `AudioOutput`).
 
-- [ ] **Step 5: Rename the class and make it implement the ABC**
+- [x] **Step 5: Rename the class and make it implement the ABC**
 
 ```python
 # src/asr_test/audio/output.py — change only the class line and imports,
@@ -326,7 +326,7 @@ class LocalAudioSink(AudioSinkBase):
 `elapsed_ms`, `close` — byte-for-byte identical to today's `AudioOutput`;
 only the class name and base class change.)
 
-- [ ] **Step 6: Update the one call site in `agent.py`**
+- [x] **Step 6: Update the one call site in `agent.py`**
 
 ```python
 # src/asr_test/agent.py
@@ -342,12 +342,12 @@ self.audio_out = LocalAudioSink(
 )
 ```
 
-- [ ] **Step 7: Verify no `AudioOutput` references remain**
+- [x] **Step 7: Verify no `AudioOutput` references remain**
 
 Run: `grep -rn "AudioOutput" src/ main.py`
 Expected: no output (rename is complete everywhere).
 
-- [ ] **Step 8: Run tests to verify they pass, and confirm nothing else broke**
+- [x] **Step 8: Run tests to verify they pass, and confirm nothing else broke**
 
 Run: `uv run pytest tests/ -v`
 Expected: all tests pass (Task 1's + this task's).
@@ -355,7 +355,7 @@ Expected: all tests pass (Task 1's + this task's).
 Run: `uv run python -m py_compile main.py src/asr_test/agent.py src/asr_test/audio/output.py`
 Expected: no errors.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/asr_test/interfaces/audio_sink.py src/asr_test/interfaces/__init__.py src/asr_test/audio/output.py src/asr_test/agent.py tests/test_local_audio_sink.py
@@ -394,7 +394,7 @@ hardware, or real network calls.
   `FakeLlm`'s `stream()` signature (documented there); Task 6 reuses all
   five as-is.
 
-- [ ] **Step 1: Write the fakes**
+- [x] **Step 1: Write the fakes**
 
 ```python
 # tests/fakes.py
@@ -490,7 +490,7 @@ place that constructs a `FakeLlm` call assertion. This task's own test
 below does not assert on `fake_llm.calls`' exact shape, specifically so
 Task 5's interface change doesn't require touching it again.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```python
 # tests/test_agent.py
@@ -559,14 +559,14 @@ def test_end_to_end_frame_to_response(monkeypatch):
         agent.shutdown(threads)
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_agent.py -v`
 Expected: FAIL — `TypeError: Agent.__init__() got an unexpected keyword
 argument 'audio_sink'` (doesn't exist yet), and `feed_audio`/`start`/
 `shutdown` don't exist yet either.
 
-- [ ] **Step 4: Implement `audio_sink` param, `feed_audio`, `start`, `shutdown`**
+- [x] **Step 4: Implement `audio_sink` param, `feed_audio`, `start`, `shutdown`**
 
 ```python
 # src/asr_test/agent.py — changes to Agent.__init__ signature and body
@@ -621,7 +621,7 @@ class Agent:
         self.audio_out.close()
 ```
 
-- [ ] **Step 5: Rewrite `run()` and remove `mic_callback()` as a thin wrapper over the new methods**
+- [x] **Step 5: Rewrite `run()` and remove `mic_callback()` as a thin wrapper over the new methods**
 
 ```python
     def run(self):
@@ -656,7 +656,7 @@ Remove the old standalone `mic_callback` method entirely (its body is
 now the `_on_frame` closure above) — no alias, per this plan's
 no-backwards-compat-shims constraint.
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `uv run pytest tests/ -v`
 Expected: all tests pass (Tasks 1, 2, and this task's).
@@ -668,7 +668,7 @@ confirm you get a spoken response and Ctrl+C still prints the session
 summary. This is the hardware-touching path pytest can't cover — see
 Global Constraints.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add tests/fakes.py tests/test_agent.py src/asr_test/agent.py
@@ -699,7 +699,7 @@ barge-in logic needs no changes to work under this transport.
   passes a real one; this task's tests pass a fake). Task 6 constructs
   this per-connection.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_ws_sink.py
@@ -774,12 +774,12 @@ def test_background_thread_sends_audio_over_websocket(loop):
     assert pcm16_to_float32(ws.sent[0]).size == 8
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_ws_sink.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'asr_test.audio.ws_sink'`.
 
-- [ ] **Step 3: Implement `WebSocketAudioSink`**
+- [x] **Step 3: Implement `WebSocketAudioSink`**
 
 ```python
 # src/asr_test/audio/ws_sink.py
@@ -906,12 +906,12 @@ class WebSocketAudioSink(AudioSinkBase):
         return (time.perf_counter() - self._started_at) * 1000.0
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_ws_sink.py -v`
 Expected: 5 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/asr_test/audio/ws_sink.py tests/test_ws_sink.py
@@ -947,7 +947,7 @@ Phase 3's LangChain harness will expect.
   `Agent.conversation: list[dict]` holds the running history; Phase 2/3
   work (not in this plan) can read/reset it.
 
-- [ ] **Step 1: Update `FakeLlm` to the new signature**
+- [x] **Step 1: Update `FakeLlm` to the new signature**
 
 ```python
 # tests/fakes.py — replace FakeLlm.stream
@@ -964,7 +964,7 @@ class FakeLlm(LlmBase):
             yield word + " "
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 ```python
 # tests/test_openai_compatible_llm.py
@@ -1049,13 +1049,13 @@ def test_agent_tracks_conversation_history_across_turns(monkeypatch):
         agent.shutdown(threads)
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_openai_compatible_llm.py tests/test_agent.py -v`
 Expected: FAIL — `TypeError` on `llm.stream(...)` call signature
 mismatch, and `Agent` has no `conversation` attribute yet.
 
-- [ ] **Step 4: Update the interface**
+- [x] **Step 4: Update the interface**
 
 ```python
 # src/asr_test/interfaces/llm.py
@@ -1080,7 +1080,7 @@ class LlmBase(ABC):
     def stream(self, messages: list[dict], cancel: threading.Event) -> Iterator[str]: ...
 ```
 
-- [ ] **Step 5: Update `OpenAiCompatibleLlm`**
+- [x] **Step 5: Update `OpenAiCompatibleLlm`**
 
 ```python
 # src/asr_test/llm/openai_compatible.py
@@ -1165,7 +1165,7 @@ Note what's removed vs. today: `history_turns` constructor param,
 logic at the end of `stream()` — all gone. `Agent` takes over that job
 next.
 
-- [ ] **Step 6: Add `HISTORY_TURNS` to config**
+- [x] **Step 6: Add `HISTORY_TURNS` to config**
 
 ```python
 # src/asr_test/config.py — add near the other tunables
@@ -1176,7 +1176,7 @@ HISTORY_TURNS = 3   # how many prior user/assistant turn-pairs to include
                      # sessions in server mode.
 ```
 
-- [ ] **Step 7: Update `Agent.__init__` and `respond()`**
+- [x] **Step 7: Update `Agent.__init__` and `respond()`**
 
 ```python
 # src/asr_test/agent.py — in __init__, after existing state init:
@@ -1268,7 +1268,7 @@ HISTORY_TURNS = 3   # how many prior user/assistant turn-pairs to include
 and the final history-append block are new — `limit`/`enqueue`/`drain`
 and the chunking logic are unchanged from today.)
 
-- [ ] **Step 8: Run tests to verify they pass**
+- [x] **Step 8: Run tests to verify they pass**
 
 Run: `uv run pytest tests/ -v`
 Expected: all tests pass (Tasks 1-4's plus this task's).
@@ -1280,7 +1280,7 @@ answer shows awareness of the first (proving `self.conversation` is
 actually being threaded through) and Ctrl+C still prints the summary
 cleanly.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add src/asr_test/interfaces/llm.py src/asr_test/llm/openai_compatible.py src/asr_test/agent.py src/asr_test/config.py tests/fakes.py tests/test_openai_compatible_llm.py tests/test_agent.py
@@ -1312,11 +1312,11 @@ concurrency test.
   vad_factory: Callable[[], VadBase] = <default SileroVad factory>) ->
   FastAPI`. Task 7's clients connect to the `/ws` endpoint this exposes.
 
-- [ ] **Step 1: Add FastAPI/uvicorn dependencies**
+- [x] **Step 1: Add FastAPI/uvicorn dependencies**
 
 Run: `uv add fastapi "uvicorn[standard]"`
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 ```python
 # tests/test_server.py
@@ -1371,12 +1371,12 @@ def test_two_concurrent_sessions_have_independent_history(monkeypatch):
     assert fake_llm.calls[0] == fake_llm.calls[1] == [{"role": "user", "content": "hello"}]
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_server.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'server'`.
 
-- [ ] **Step 4: Implement `server.py`**
+- [x] **Step 4: Implement `server.py`**
 
 ```python
 # server.py
@@ -1467,7 +1467,7 @@ if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_server.py -v`
 Expected: 2 passed.
@@ -1482,7 +1482,7 @@ stack, same as `main.py` does) — confirm it starts and listens on
 `:8000` without error. Full end-to-end audio verification happens in
 Task 7 once a client exists to connect with.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add server.py pyproject.toml uv.lock tests/test_server.py
@@ -1506,11 +1506,11 @@ hardware-touching code.
 - Modify: `server.py` (serve the static file)
 - Modify: `pyproject.toml` (add `websockets`)
 
-- [ ] **Step 1: Add the `websockets` dependency for the CLI client**
+- [x] **Step 1: Add the `websockets` dependency for the CLI client**
 
 Run: `uv add websockets`
 
-- [ ] **Step 2: Serve the HTML client from the FastAPI app**
+- [x] **Step 2: Serve the HTML client from the FastAPI app**
 
 ```python
 # server.py — add near the top-level imports
@@ -1526,7 +1526,7 @@ from fastapi.responses import FileResponse
         return FileResponse(Path(__file__).parent / "static" / "index.html")
 ```
 
-- [ ] **Step 3: Write the HTML client**
+- [x] **Step 3: Write the HTML client**
 
 ```html
 <!-- static/index.html -->
@@ -1611,7 +1611,7 @@ from fastapi.responses import FileResponse
 </html>
 ```
 
-- [ ] **Step 4: Write the CLI client**
+- [x] **Step 4: Write the CLI client**
 
 ```python
 # ws_client.py
@@ -1705,7 +1705,7 @@ another, speak, confirm the same round-trip works. Then run a second
 sessions get independent responses (proving multi-session works
 end-to-end with real hardware, not just the faked test in Task 6).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add static/index.html ws_client.py server.py pyproject.toml uv.lock
@@ -1724,7 +1724,7 @@ rather than aspirational claims.
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1: Add a "Running: local vs. server" section**
+- [x] **Step 1: Add a "Running: local vs. server" section**
 
 Add a new section after "## Usage" explaining the three modes:
 
@@ -1755,14 +1755,14 @@ client has real headphone isolation (`"headphones"` mode assumes that
 and would mistake the bot's own voice for your speech otherwise).
 ```
 
-- [ ] **Step 2: Document the new dependencies in the existing dependency-related prose**
+- [x] **Step 2: Document the new dependencies in the existing dependency-related prose**
 
 Add a short note wherever `pyproject.toml`/`uv sync` is discussed: `fastapi`,
 `uvicorn[standard]`, and `websockets` are new dependencies added for
 server mode (Task 6/7) — `pytest` is a dev-only dependency (Task 1),
 not needed to run the app, only to run `uv run pytest`.
 
-- [ ] **Step 3: Add `HISTORY_TURNS` to the Configuration section's bullet list**
+- [x] **Step 3: Add `HISTORY_TURNS` to the Configuration section's bullet list**
 
 ```markdown
 - **`HISTORY_TURNS`** (default `3`) — how many prior user/assistant turn
@@ -1771,7 +1771,7 @@ not needed to run the app, only to run `uv run pytest`.
   shared, stateless instance across concurrent server sessions.
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add README.md
