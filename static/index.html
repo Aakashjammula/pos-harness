@@ -300,6 +300,13 @@
         <label for="micSelect">microphone</label>
         <select id="micSelect"><option value="">system default</option></select>
       </div>
+      <div class="field">
+        <label for="echoMode">echo handling</label>
+        <select id="echoMode">
+          <option value="duck">duck (safe default — mutes mic while bot talks)</option>
+          <option value="headphones">headphones (I have real headphone isolation)</option>
+        </select>
+      </div>
     </div>
 
     <div class="actions">
@@ -320,13 +327,14 @@
   const stateText = el("stateText"), statusLabel = el("statusLabel");
   const configPanel = el("configPanel"), connectBtn = el("connectBtn"), muteBtn = el("muteBtn");
   const ttsEngineSel = el("ttsEngine"), ttsVoiceSel = el("ttsVoice"), llmModelSel = el("llmModel");
-  const triggerInput = el("triggerWord"), micSelect = el("micSelect");
+  const triggerInput = el("triggerWord"), micSelect = el("micSelect"), echoModeSel = el("echoMode");
   const transcript = el("transcript");
 
   let options = null;
   let ws = null, connected = false, micMuted = false, currentState = "idle";
   let audioCtx, micStream, source, processor, playCtx;
   let outputSampleRate = 16000;
+  let nextPlayTime = 0; // running Web Audio timeline cursor for gapless playback scheduling
 
   // --- helpers ---
 
@@ -496,6 +504,7 @@
     if (ttsVoiceSel.value) params.set("voice", ttsVoiceSel.value);
     params.set("llm_model", llmModelSel.value);
     if (triggerInput.value.trim()) params.set("trigger_word", triggerInput.value.trim());
+    params.set("echo_mode", echoModeSel.value);
 
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     ws = new WebSocket(`${proto}//${location.host}/ws?${params.toString()}`);
@@ -520,7 +529,17 @@
         const src = playCtx.createBufferSource();
         src.buffer = buffer;
         src.connect(playCtx.destination);
-        src.start();
+        // Schedule back-to-back on a running timeline instead of
+        // src.start() (= "play now" on every ~40ms block) — network
+        // delivery isn't perfectly metronomic, so "now" causes
+        // consecutive blocks to overlap or leave gaps at every boundary,
+        // which is exactly what audible crackling sounds like. Falls
+        // back to "now" naturally if playback ever falls behind (a gap
+        // in the stream), since Math.max keeps it from scheduling in
+        // the past.
+        const startAt = Math.max(playCtx.currentTime, nextPlayTime);
+        src.start(startAt);
+        nextPlayTime = startAt + buffer.duration;
       }
     };
 
@@ -540,6 +559,7 @@
     if (msg.event === "ready") {
       outputSampleRate = msg.output_sample_rate;
       playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: outputSampleRate });
+      nextPlayTime = 0;
       connected = true;
       configPanel.querySelectorAll("select, input").forEach((f) => (f.disabled = true));
       connectBtn.textContent = "disconnect";
@@ -555,6 +575,8 @@
       addLine("bot", msg.text);
     } else if (msg.event === "interrupted") {
       addLine("system", "interrupted");
+    } else if (msg.event === "error") {
+      disconnect(msg.message || "server rejected the connection");
     }
   }
 

@@ -139,3 +139,37 @@ def test_ws_query_params_select_voice_and_llm_model(monkeypatch):
 
     assert ready["llm_model"] == "custom-model"
     assert "voice-b" in FakeTts.created_voices
+
+
+def test_ws_echo_mode_query_param_is_applied_and_echoed_back(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?echo_mode=headphones") as ws:
+        ready = ws.receive_json()
+
+    assert ready["echo_mode"] == "headphones"
+
+
+def test_ws_rejects_invalid_echo_mode(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?echo_mode=bogus") as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "error"
+        assert "echo_mode" in msg["message"]

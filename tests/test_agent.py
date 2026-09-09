@@ -121,6 +121,17 @@ def test_on_event_fires_interrupted_on_barge_in():
     assert ("interrupted", {}) in events
 
 
+def test_echo_mode_override_takes_precedence_over_config_default(monkeypatch):
+    monkeypatch.setattr(config, "ECHO_MODE", "duck")
+
+    agent = _build_agent(echo_mode="headphones")
+    assert agent.echo.mode == "headphones"
+    assert agent.echo.barge_in is True
+
+    agent_default = _build_agent()
+    assert agent_default.echo.mode == "duck"
+
+
 def test_feed_audio_drops_frames_while_muted():
     agent = _build_agent()
     agent.muted.set()
