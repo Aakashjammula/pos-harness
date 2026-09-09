@@ -54,9 +54,20 @@ class FakeLlm(LlmBase):
 
 class FakeTts(TtsBase):
     sample_rate = 16000
+    instances_created = 0  # class-level counter — tests assert engine-cache reuse against this
+    created_voices: list[str | None] = []
+
+    def __init__(self, voice: str | None = None):
+        self.voice = voice
+        FakeTts.instances_created += 1
+        FakeTts.created_voices.append(voice)
 
     def __call__(self, text: str) -> np.ndarray:
         return np.zeros(160, dtype=np.float32)
+
+    @classmethod
+    def list_voices(cls) -> list[str]:
+        return ["voice-a", "voice-b"]
 
 
 class FakeAudioSink(AudioSinkBase):

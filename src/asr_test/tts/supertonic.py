@@ -238,6 +238,12 @@ class SupertonicTts(TtsBase):
     for quality.
     """
 
+    VALID_VOICES = _VALID_VOICES
+
+    @classmethod
+    def list_voices(cls) -> list[str]:
+        return list(cls.VALID_VOICES)
+
     def __init__(
         self,
         repo: str = "Supertone/supertonic-3",

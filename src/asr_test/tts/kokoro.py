@@ -87,3 +87,15 @@ class KokoroTts(TtsBase):
             },
         )
         return np.asarray(out[0], dtype=np.float32).flatten()
+
+    @staticmethod
+    def list_voices(repo: str = "NeuML/kokoro-base-onnx") -> list[str]:
+        """Available voice names, without loading the full ~380MB model —
+        voices.json is a separate, tiny file from model.onnx."""
+        import json
+
+        from huggingface_hub import hf_hub_download
+
+        voices_path = hf_hub_download(repo, "voices.json")
+        with open(voices_path, "r", encoding="utf-8") as f:
+            return sorted(json.load(f))
