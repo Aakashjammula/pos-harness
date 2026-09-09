@@ -15,6 +15,13 @@ class EchoControl:
         self.barge_in = mode in ("headphones", "aec")
         self._lock = threading.Lock()
         self.aec = None
+        # voiceclean buffers internally on its own frame size and emits
+        # variable-length (sometimes empty) chunks per process() call —
+        # confirmed live: feeding 512-sample frames produced 0 or 640
+        # sample outputs, never 512. Accumulated here and re-chunked to
+        # exactly frame_size per call, same pattern as WebSocketAudioSink's
+        # drain logic elsewhere in this codebase.
+        self._aec_out_buf = np.zeros(0, dtype=np.float32)
 
         if mode == "aec":
             try:
@@ -47,11 +54,28 @@ class EchoControl:
     def process(self, mic: np.ndarray, is_playing: bool) -> np.ndarray | None:
         if self.mode == "duck":
             return None if is_playing else mic
-        if self.mode == "aec" and self.aec is not None and is_playing:
+        if self.mode == "aec" and self.aec is not None:
+            if not is_playing:
+                # Drop any cleaned audio buffered from the previous burst —
+                # otherwise the next time the bot talks, the first frame(s)
+                # returned would be stale audio from before, not this
+                # moment's actual mic input.
+                self._aec_out_buf = np.zeros(0, dtype=np.float32)
+                return mic
             try:
                 with self._lock:
                     result = self.aec.process(float32_to_pcm16(mic))
-                return pcm16_to_float32(result.audio)
+                self._aec_out_buf = np.concatenate(
+                    [self._aec_out_buf, pcm16_to_float32(result.audio)]
+                )
             except Exception as e:
                 print(f"   [aec failed: {e}]")
+                return mic
+            if self._aec_out_buf.size < mic.size:
+                return None  # voiceclean hasn't buffered enough cleaned audio yet this tick
+            frame_out, self._aec_out_buf = (
+                self._aec_out_buf[: mic.size],
+                self._aec_out_buf[mic.size :],
+            )
+            return frame_out
         return mic

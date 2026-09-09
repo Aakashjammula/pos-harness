@@ -24,10 +24,12 @@ def test_duck_mode_drops_frames_only_while_playing():
 
 
 def test_aec_mode_falls_back_to_duck_when_voiceclean_unavailable(monkeypatch):
-    # voiceclean isn't installed in this environment, so the real `import
-    # voiceclean` inside EchoControl.__init__ raises naturally — this is
-    # exactly the fallback path a user without the optional package hits.
-    monkeypatch.delitem(sys.modules, "voiceclean", raising=False)
+    # voiceclean may or may not actually be installed in this environment
+    # (it's an optional dependency) — force the import to fail either way,
+    # to exercise the fallback path a user without the package hits.
+    # `sys.modules[name] = None` is the standard way to make `import name`
+    # raise ImportError regardless of what's actually installed.
+    monkeypatch.setitem(sys.modules, "voiceclean", None)
     echo = EchoControl("aec", mic_rate=16000, frame_size=512)
     assert echo.mode == "duck"
     assert echo.barge_in is False
@@ -41,17 +43,36 @@ class _FakeAecResult:
 
 
 class _FakeVoiceClean:
+    """Mimics the real package's confirmed-live behavior: internal
+    buffering on its own frame size, emitting variable-length (sometimes
+    empty) chunks per call rather than echoing back exactly what was fed
+    in — never 1:1 with the caller's frame size. Content-preserving
+    (identity, just re-chunked) so tests can verify reassembly integrity,
+    not just sizes."""
+
+    _CHUNK_SAMPLES = 640  # observed real output chunk size, vs. our 512-sample input frames
+
     def __init__(self, sample_rate: int):
         self.sample_rate = sample_rate
         self.fed_references: list[bytes] = []
         self.processed: list[bytes] = []
+        self._pending = b""
+        self._calls = 0
 
     def feed_reference(self, pcm_bytes: bytes) -> None:
         self.fed_references.append(pcm_bytes)
 
     def process(self, pcm_bytes: bytes) -> _FakeAecResult:
         self.processed.append(pcm_bytes)
-        return _FakeAecResult(audio=pcm_bytes)  # identity: echo mic back unchanged
+        self._calls += 1
+        self._pending += pcm_bytes
+        if self._calls == 1:
+            return _FakeAecResult(audio=b"")  # first call: nothing ready yet, matches real behavior
+        chunk_bytes = self._CHUNK_SAMPLES * 2
+        if len(self._pending) >= chunk_bytes:
+            out, self._pending = self._pending[:chunk_bytes], self._pending[chunk_bytes:]
+            return _FakeAecResult(audio=out)
+        return _FakeAecResult(audio=b"")
 
 
 @pytest.fixture
@@ -79,11 +100,9 @@ def test_aec_mode_calls_the_real_voiceclean_api_shape(fake_voiceclean):
     assert len(echo.aec.fed_references) == 1
 
     mic_frame = np.full(512, 0.2, dtype=np.float32)
-    out = echo.process(mic_frame, is_playing=True)
+    echo.process(mic_frame, is_playing=True)
 
     assert len(echo.aec.processed) == 1
-    assert out is not None
-    assert np.allclose(out, mic_frame, atol=1e-3)
 
 
 def test_aec_mode_skips_processing_when_not_playing(fake_voiceclean):
@@ -94,3 +113,46 @@ def test_aec_mode_skips_processing_when_not_playing(fake_voiceclean):
 
     assert np.array_equal(out, mic_frame)
     assert echo.aec.processed == []
+
+
+def test_aec_mode_reassembles_variable_size_voiceclean_output_into_fixed_frames(fake_voiceclean):
+    """Regression test for a second bug found live: voiceclean doesn't
+    return exactly frame_size samples per call (confirmed with the real
+    package — feeding 512-sample frames produced 0 or 640 sample outputs,
+    never 512). EchoControl.process() must buffer and re-chunk to exactly
+    mic.size per call, matching WebSocketAudioSink's own drain pattern,
+    or it hands VAD wrong-length or empty arrays."""
+    echo = EchoControl("aec", mic_rate=16000, frame_size=512)
+    rng = np.random.default_rng(0)
+    frames_in = [rng.uniform(-0.5, 0.5, 512).astype(np.float32) for _ in range(8)]
+
+    outputs = []
+    for frame in frames_in:
+        echo.note_playback(frame, source_rate=16000)
+        out = echo.process(frame, is_playing=True)
+        if out is not None:
+            assert out.shape == (512,)
+            outputs.append(out)
+
+    assert outputs  # buffering eventually produced at least one properly-sized frame
+
+    original = np.concatenate(frames_in)
+    reconstructed = np.concatenate(outputs)
+    # The fake is content-preserving (identity, just re-chunked), so the
+    # reassembled stream must match the original in order — some tail may
+    # still be sitting in the internal buffer, hence the prefix compare.
+    assert np.allclose(reconstructed, original[: reconstructed.size], atol=1e-3)
+
+
+def test_aec_mode_clears_buffer_when_playback_stops(fake_voiceclean):
+    echo = EchoControl("aec", mic_rate=16000, frame_size=512)
+    frame = np.full(512, 0.2, dtype=np.float32)
+
+    for _ in range(4):  # get some cleaned audio sitting in the internal buffer
+        echo.note_playback(frame, source_rate=16000)
+        echo.process(frame, is_playing=True)
+    assert echo._aec_out_buf.size > 0
+
+    echo.process(frame, is_playing=False)
+
+    assert echo._aec_out_buf.size == 0
