@@ -7,6 +7,8 @@ from collections import deque
 import numpy as np
 import sounddevice as sd
 
+from ..interfaces.audio_sink import AudioSinkBase
+
 # Short enough to be inaudible as a ramp (~1-4ms depending on rate), long
 # enough to avoid the click/pop a hard jump to/from zero produces. Underruns
 # (TTS falling behind playback) aren't eliminated by this — see kokoro/HF's
@@ -15,7 +17,7 @@ import sounddevice as sd
 _FADE_FRAMES = 64
 
 
-class AudioOutput:
+class LocalAudioSink(AudioSinkBase):
     def __init__(self, rate: int, blocksize: int = 1024, on_played=None):
         self.rate = rate
         self.on_played = on_played
