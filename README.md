@@ -142,6 +142,38 @@ prints a session summary:
   underruns      0                        # TTS fell behind playback mid-turn
 ```
 
+## Running: local vs. server
+
+Three ways to run this, all sharing the same VAD/STT/LLM/TTS pipeline:
+
+1. **Local** (`uv run main.py`) — everything in one process, direct
+   `sounddevice` mic/speaker access. No network involved. This is the
+   original mode and still the simplest for single-user local use.
+2. **FastAPI server + browser client** (`uv run server.py`, then open
+   `http://localhost:8000/`) — the pipeline runs server-side; the
+   browser captures your mic and plays responses via a websocket at
+   `/ws`. Supports multiple simultaneous browser tabs/users, each with
+   independent conversation history.
+3. **FastAPI server + CLI client** (`uv run server.py`, then in another
+   terminal `uv run ws_client.py`) — same server, a Python relay client
+   instead of a browser. Useful for scripting/headless use, or testing
+   the server without a browser.
+
+Modes 2 and 3 share 100% of the server-side code — the only difference
+is which relay client captures/plays your audio. Audio crosses the
+websocket as raw PCM16 mono frames (16kHz client→server, matching the
+TTS engine's own sample rate server→client) — no codec, matching what
+the pipeline already uses internally.
+
+Server mode defaults `config.ECHO_MODE` to `"duck"` regardless of the
+module-level default, since the server has no way to verify a remote
+client has real headphone isolation (`"headphones"` mode assumes that
+and would mistake the bot's own voice for your speech otherwise).
+
+`fastapi`, `uvicorn[standard]`, and `websockets` are dependencies added
+for server mode; `pytest` is a dev-only dependency (`uv run pytest` to
+run the test suite) — neither is needed just to run `main.py`.
+
 ## Latency
 
 Real numbers, not estimates — aggregated from actual `TTFA = stt + llm_ttft
@@ -245,6 +277,10 @@ knobs:
   ("uh"/"hey"/"okay") to tolerate before the trigger phrase — see
   "Optional: trigger word" above for the false-trigger trade-off of
   raising it.
+- **`HISTORY_TURNS`** (default `3`) — how many prior user/assistant turn
+  pairs `Agent` includes as LLM context. Previously owned by the LLM
+  engine itself; moved to `Agent` so the LLM engine can be a single
+  shared, stateless instance across concurrent server sessions.
 - **`FIRST_CHUNK_CHARS`** / **`MAX_CHUNK_CHARS`** — bound how much text is
   handed to the TTS engine per chunk. Kept small for the first chunk to
   minimize time-to-first-audio; capped thereafter so no single TTS call
@@ -262,8 +298,10 @@ implementation instead, so swapping an engine doesn't require touching
 - `src/asr_test/tts/kokoro.py` — `KokoroTts`
 - `src/asr_test/tts/supertonic.py` — `SupertonicTts`
 - `src/asr_test/llm/openai_compatible.py` — `OpenAiCompatibleLlm` (base
-  URL, API key, model name, system prompt, history length — this is where
-  you'd point at a different LM Studio model or port)
+  URL, API key, model name, system prompt — this is where you'd point at
+  a different LM Studio model or port; conversation history length is
+  `config.HISTORY_TURNS`, owned by `Agent` instead — see Configuration
+  above)
 
 ### TTS engine choice
 
@@ -283,29 +321,41 @@ as a drop-in alternative (different voices/prosody) via `--tts supertonic`.
 ## Architecture
 
 ```
-main.py                          thin CLI entrypoint (--tts, --voice, --trigger-word)
+main.py                          local-mode CLI entrypoint (--tts, --voice, --trigger-word)
+server.py                        FastAPI multi-session websocket server (see "Running" above)
+ws_client.py                     Python CLI relay client for server.py
+static/index.html                browser relay client for server.py
 src/asr_test/
   config.py                      shared, engine-agnostic settings
-  utils.py                       resample_linear
-  agent.py                       orchestrator: threads + queues wiring
+  utils.py                       resample_linear, pcm16_to_float32, float32_to_pcm16
+  agent.py                       orchestrator: threads + queues wiring; feed_audio/start/shutdown
+                                  are the transport-agnostic entry points main.py and server.py
+                                  both drive
   interfaces/
-    vad.py, stt.py, tts.py, llm.py   abstract base classes (the swap contracts)
+    vad.py, stt.py, tts.py, llm.py, audio_sink.py   abstract base classes (the swap contracts)
   audio/
-    output.py                    AudioOutput — playback ring buffer, click-free underrun handling
+    output.py                    LocalAudioSink(AudioSinkBase) — playback ring buffer, click-free underrun handling
+    ws_sink.py                   WebSocketAudioSink(AudioSinkBase) — same contract, paced by a timer thread instead of a device callback
     echo.py                      EchoControl — headphones/duck/aec modes, barge-in gating
   vad/silero.py                  SileroVad(VadBase)
   stt/onnx_asr_engine.py         OnnxAsrEngine(SttBase)
   tts/kokoro.py                  KokoroTts(TtsBase)
   tts/supertonic.py              SupertonicTts(TtsBase)
   llm/openai_compatible.py       OpenAiCompatibleLlm(LlmBase)
+tests/                           pytest suite (fakes.py holds shared no-hardware/no-network test doubles); run with `uv run pytest`
 ```
 
 `Agent` is built by dependency injection —
-`Agent(vad=..., stt=..., tts=..., llm=..., trigger_word=...)` — defaulting
-to the concrete classes above (`trigger_word` defaults to `None`, feature
-off). To add a new engine, implement the matching interface (usually just
-one `__call__`/`stream` method) and pass an instance in; no changes to
-`agent.py` needed.
+`Agent(vad=..., stt=..., tts=..., llm=..., trigger_word=..., audio_sink=...)`
+— defaulting to the concrete classes above (`trigger_word` defaults to
+`None`, feature off; `audio_sink` defaults to `LocalAudioSink`). To add a
+new engine, implement the matching interface (usually just one
+`__call__`/`stream` method) and pass an instance in; no changes to
+`agent.py` needed. `LlmBase.stream(messages, cancel)` is stateless — it
+takes the full prior-turns message list each call rather than owning
+conversation history itself, so one `LlmBase` instance can be shared
+across every concurrent session in server mode (`Agent` owns the
+history, in `self.conversation`).
 
 Pipeline stages run as separate threads connected by queues (mirroring how
 [huggingface/speech-to-speech](https://github.com/huggingface/speech-to-speech)
