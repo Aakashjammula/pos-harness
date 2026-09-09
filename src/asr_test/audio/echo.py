@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import threading
-from collections import deque
 
 import numpy as np
 
-from ..utils import resample_linear
+from ..utils import float32_to_pcm16, pcm16_to_float32, resample_linear
 
 
 class EchoControl:
@@ -14,7 +13,6 @@ class EchoControl:
         self.mic_rate = mic_rate
         self.frame_size = frame_size
         self.barge_in = mode in ("headphones", "aec")
-        self._ref: deque[np.ndarray] = deque(maxlen=64)
         self._lock = threading.Lock()
         self.aec = None
 
@@ -22,8 +20,16 @@ class EchoControl:
             try:
                 import voiceclean
 
-                self.aec = voiceclean.AEC(sample_rate=mic_rate, frame_size=frame_size)
-                print("  echo: SpeexDSP AEC active")
+                # voiceclean's real API (confirmed against its own docs,
+                # not the mismatched voiceclean.AEC(...)/process(mic, ref)
+                # shape this used to call — that class doesn't exist in the
+                # real package, so "aec" mode silently fell back to "duck"
+                # unconditionally, even with voiceclean installed): a
+                # VoiceClean instance is fed reference (bot) audio
+                # separately via feed_reference(), then process(mic_bytes)
+                # returns a result whose .audio is the cleaned PCM.
+                self.aec = voiceclean.VoiceClean(sample_rate=mic_rate)
+                print("  echo: voiceclean AEC active")
             except Exception as e:
                 print(f"  echo: AEC unavailable ({e}) — using duck")
                 self.mode = "duck"
@@ -32,26 +38,20 @@ class EchoControl:
             print(f"  echo: {mode}")
 
     def note_playback(self, audio: np.ndarray, source_rate: int):
-        if self.mode != "aec":
+        if self.mode != "aec" or self.aec is None:
             return
+        resampled = resample_linear(audio, source_rate, self.mic_rate)
         with self._lock:
-            self._ref.append(resample_linear(audio, source_rate, self.mic_rate))
+            self.aec.feed_reference(float32_to_pcm16(resampled))
 
     def process(self, mic: np.ndarray, is_playing: bool) -> np.ndarray | None:
         if self.mode == "duck":
             return None if is_playing else mic
         if self.mode == "aec" and self.aec is not None and is_playing:
-            with self._lock:
-                ref = self._ref.popleft() if self._ref else None
-            if ref is not None:
-                if ref.size < mic.size:
-                    ref = np.concatenate(
-                        [ref, np.zeros(mic.size - ref.size, dtype=np.float32)]
-                    )
-                try:
-                    return np.asarray(
-                        self.aec.process(mic, ref[: mic.size]), dtype=np.float32
-                    )
-                except Exception as e:
-                    print(f"   [aec failed: {e}]")
+            try:
+                with self._lock:
+                    result = self.aec.process(float32_to_pcm16(mic))
+                return pcm16_to_float32(result.audio)
+            except Exception as e:
+                print(f"   [aec failed: {e}]")
         return mic
