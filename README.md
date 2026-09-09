@@ -367,6 +367,21 @@ knobs:
   all, since you get raw mic passthrough with no indication anything's
   wrong beyond a `[aec failed: ...]` log line per frame. Plain
   `voiceclean` (AEC only, no noise suppression) works correctly.
+  **On speakers, VAD may still fire on long/garbled segments even with
+  `"aec"` active** — this is residual echo the canceller didn't fully
+  suppress, not a VAD bug (it doesn't happen on `"headphones"`, which has
+  no echo to begin with). `voiceclean`'s AEC works by correlation-based
+  suppression (attenuate a chunk once it correlates with the reference
+  above a threshold), confirmed against the real installed
+  `voiceclean.aec.AEC` class — not classic adaptive-filter cancellation.
+  Its own docs recommend lowering the 0.15 default `correlation_threshold`
+  toward 0.10 for exactly this kind of challenging echo (their own
+  example: PSTN telephony), so this project ships `0.10` as its own
+  default rather than requiring you to discover it (see
+  `_AEC_CORRELATION_THRESHOLD` in `src/asr_test/audio/echo.py`). Still not
+  independently verified with real speech — if residual echo keeps
+  triggering VAD, try lowering it further (`0.08` per voiceclean's docs)
+  before assuming `"aec"` doesn't work for your setup.
 - **`MIN_SILENCE_MS`** (default `1200`) — how long a pause must last before
   VAD considers your turn finished. Lower = snappier turn-taking but risks
   cutting off mid-sentence pauses (fragmenting one utterance into several
