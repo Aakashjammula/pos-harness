@@ -11,14 +11,12 @@ Two endpoints:
                   directions; one JSON "ready" event on connect, then
                   "user_text"/"bot_text"/"interrupted" events for live
                   captions. Config is chosen via query params, e.g.
-                  /ws?tts=kokoro&voice=af_bella&llm_model=lfm2.5-230m&trigger_word=computer&echo_mode=headphones
+                  /ws?tts=kokoro&voice=af_bella&llm_model=lfm2.5-230m&trigger_word=computer
                   — all optional, falling back to each engine's own
-                  default. echo_mode defaults to "duck" (safest — the
-                  server can't verify you have real headphone isolation);
-                  pass "headphones" if you actually do, for full barge-in
-                  instead of the mic being cut while the bot talks. An
-                  invalid echo_mode gets an "error" event and the socket
-                  is closed rather than silently falling back.
+                  default. Headphones are assumed unconditionally (no echo
+                  suppression, full barge-in) — every client is expected to
+                  have real mic/speaker isolation; there's no safer
+                  fallback mode.
 
 Each connection gets its own Agent (own VAD state, own conversation
 history), but STT and same-(engine,voice)/same-model TTS/LLM instances
@@ -46,9 +44,6 @@ from asr_test.audio.ws_sink import WebSocketAudioSink
 from asr_test.interfaces import LlmBase, SttBase, TtsBase, VadBase
 from asr_test.utils import pcm16_to_float32
 from asr_test.vad import SileroVad
-
-
-_ECHO_MODES = ("headphones", "duck", "aec")
 
 
 def _default_vad_factory() -> VadBase:
@@ -148,15 +143,6 @@ def create_app(
         voice = params.get("voice") or None
         llm_model = params.get("llm_model", default_llm_model)
         trigger_word = params.get("trigger_word") or None
-        echo_mode = params.get("echo_mode", "duck")
-
-        if echo_mode not in _ECHO_MODES:
-            await websocket.send_json({
-                "event": "error",
-                "message": f"echo_mode must be one of {_ECHO_MODES}, got {echo_mode!r}",
-            })
-            await websocket.close(code=1008)
-            return
 
         tts = await get_tts(tts_engine, voice)
         llm = await get_llm(llm_model)
@@ -167,7 +153,6 @@ def create_app(
             "output_sample_rate": tts.sample_rate,
             "tts_engine": tts_engine,
             "llm_model": llm_model,
-            "echo_mode": echo_mode,
         })
 
         def emit(name: str, data: dict) -> None:
@@ -183,7 +168,6 @@ def create_app(
         agent = Agent(
             vad=vad_factory(), stt=stt, tts=tts, llm=llm,
             trigger_word=trigger_word, audio_sink=sink, on_event=emit,
-            echo_mode=echo_mode,
         )
         threads = agent.start()
         try:
@@ -209,8 +193,5 @@ if __name__ == "__main__":
 
     from asr_test.stt import OnnxAsrEngine
 
-    # Per-connection default is "duck" (see the /ws echo_mode query param
-    # above) since the server can't verify a remote client has real
-    # headphone isolation — pass ?echo_mode=headphones if you do.
     app = create_app(stt=OnnxAsrEngine())
     uvicorn.run(app, host="0.0.0.0", port=8000)

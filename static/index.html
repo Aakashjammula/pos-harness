@@ -300,14 +300,6 @@
         <label for="micSelect">microphone</label>
         <select id="micSelect"><option value="">system default</option></select>
       </div>
-      <div class="field">
-        <label for="echoMode">echo handling</label>
-        <select id="echoMode">
-          <option value="duck">duck (safe default — mutes mic while bot talks)</option>
-          <option value="headphones">headphones (I have real headphone isolation)</option>
-          <option value="aec">aec (speakers in a noisy room, no headphones)</option>
-        </select>
-      </div>
     </div>
 
     <div class="actions">
@@ -328,7 +320,7 @@
   const stateText = el("stateText"), statusLabel = el("statusLabel");
   const configPanel = el("configPanel"), connectBtn = el("connectBtn"), muteBtn = el("muteBtn");
   const ttsEngineSel = el("ttsEngine"), ttsVoiceSel = el("ttsVoice"), llmModelSel = el("llmModel");
-  const triggerInput = el("triggerWord"), micSelect = el("micSelect"), echoModeSel = el("echoMode");
+  const triggerInput = el("triggerWord"), micSelect = el("micSelect");
   const transcript = el("transcript");
 
   let options = null;
@@ -505,7 +497,6 @@
     if (ttsVoiceSel.value) params.set("voice", ttsVoiceSel.value);
     params.set("llm_model", llmModelSel.value);
     if (triggerInput.value.trim()) params.set("trigger_word", triggerInput.value.trim());
-    params.set("echo_mode", echoModeSel.value);
 
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     ws = new WebSocket(`${proto}//${location.host}/ws?${params.toString()}`);

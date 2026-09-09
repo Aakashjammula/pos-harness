@@ -14,7 +14,6 @@ MIC_RATE = 16000
 FRAME = 512
 OUT_BLOCK = 1024
 
-ECHO_MODE = "headphones"          # "headphones" | "duck" | "aec"
 BARGE_IN_FRAMES = 3
 BARGE_IN_GRACE_MS = 250
 

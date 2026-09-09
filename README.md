@@ -131,7 +131,6 @@ prints a session summary:
 
 ```
 --- session summary ---
-  echo mode      headphones (barge-in on)
   stt            avg=0.32s  min=0.18s  max=0.49s  n=9
   llm_ttft       avg=2.14s  ...
   llm_total      avg=2.90s  ...
@@ -165,37 +164,12 @@ websocket as raw PCM16 mono frames (16kHz client→server, matching the
 TTS engine's own sample rate server→client) — no codec, matching what
 the pipeline already uses internally.
 
-Server mode defaults each session's echo handling to `"duck"`
-(`?echo_mode=duck`, or omit it), regardless of `config.ECHO_MODE`'s own
-module-level default — the server has no way to verify a remote client
-has real headphone isolation, and `"headphones"` mode assumes that (it
-would otherwise mistake the bot's own voice for your speech). If you
-genuinely are on headphones, pass `?echo_mode=headphones` (browser: the
-"echo handling" dropdown; CLI: `--echo-mode headphones`) for full
-barge-in instead of the mic being cut while the bot talks — an invalid
-value gets an `"error"` event and the connection is closed rather than
-silently falling back to something else.
-
-**Why this matters for audio quality, not just barge-in**: `"duck"`
-mode discards mic frames entirely (not just attenuates them) while the
-bot's response is still draining, so starting to talk again *before*
-the bot fully finishes can truncate the start of your next utterance —
-often showing up as an empty or garbled STT transcript, not a genuine
-STT failure. This is expected behavior for `"duck"`'s safety tradeoff,
-not a bug; `"headphones"` mode doesn't have this limitation, but only
-actually helps if you're wearing real headphones (it does zero echo
-suppression, so on open speakers it just lets the bot's own voice back
-into the mic as false speech instead).
-
-**On loud speakers with no headset mic** (loud/noisy room, laptop
-speakers, no headphones): `?echo_mode=aec` is the one built for exactly
-this — active echo cancellation instead of muting, so the mic stays
-live and isolates your voice from the bot's own output rather than
-either dropping your speech (`"duck"`) or picking up the bot's voice as
-false input (`"headphones"` without real isolation). Needs `voiceclean`
-installed — see the `ECHO_MODE` entry under Configuration below,
-including the caveat that this project's `voiceclean` integration is
-fixed but not yet verified against the real package with live audio.
+Every mode assumes real headphones — no echo suppression, no mic
+muting, full barge-in always on. If the mic can actually hear the
+speakers (laptop speakers instead of a real headset, or a remote client
+without headphones), the bot's own voice will be picked up as false
+speech; there's no fallback mode for that anymore, so use real
+headphones with any of the three run modes.
 
 `fastapi`, `uvicorn[standard]`, and `websockets` are dependencies added
 for server mode; `pytest` is a dev-only dependency (`uv run pytest` to
@@ -333,55 +307,6 @@ comparison; look for a consistent shift across several turns.
 Shared, engine-agnostic tuning lives in `src/asr_test/config.py`. Notable
 knobs:
 
-- **`ECHO_MODE`** (`"headphones" | "duck" | "aec"`) — `"headphones"` does
-  zero echo suppression and assumes the mic genuinely cannot hear the
-  speakers. If you're on laptop speakers/mic instead of real headphones,
-  `"aec"` (active echo cancellation) is the one that keeps full barge-in
-  and doesn't cut off the start of what you say while the bot is still
-  talking, unlike `"duck"` (mutes/drops mic input entirely while the bot
-  talks — the safest default, but in a loud room this can truncate your
-  next sentence if you start before the bot fully finishes, which shows
-  up as an empty or garbled STT transcript, not an STT bug). `"aec"`
-  needs the optional `voiceclean` package (`uv add voiceclean` — pulls in
-  `soxr`; `numpy`/`onnxruntime` are already dependencies here) and falls
-  back to `"duck"` if it's not installed. Using `"headphones"` without
-  actual headphone isolation causes the bot's own voice to be picked up as
-  false speech. `Agent(echo_mode=...)` overrides this per-instance (what
-  `--echo-mode`/`?echo_mode=` actually set) without touching the module
-  default other callers still see.
-  **Verified with the real package installed** (not just against docs):
-  `voiceclean`'s `process()` doesn't return exactly one frame_size chunk
-  per call — it buffers internally on its own frame size and emits
-  variable-length (sometimes empty) output, confirmed live feeding
-  512-sample frames and getting back 0 or 640 samples, never 512.
-  `EchoControl` buffers and re-chunks this to exactly `frame_size` per
-  call (same pattern as `WebSocketAudioSink`'s own drain logic) — a
-  second real bug beyond the original API-shape mismatch, caught by
-  actually running it rather than trusting the docs alone.
-  **Do not install `pyrnnoise`** (voiceclean's optional noise-suppression
-  extra) — as of `voiceclean==0.3.6` + `pyrnnoise==0.4.3`, enabling it
-  makes every `process()` call raise internally (`Graph.__init__() got
-  an unexpected keyword argument 'rate'`, an upstream version mismatch
-  between the two packages), which `EchoControl` catches safely but then
-  silently no-ops AEC on every frame — worse than not installing it at
-  all, since you get raw mic passthrough with no indication anything's
-  wrong beyond a `[aec failed: ...]` log line per frame. Plain
-  `voiceclean` (AEC only, no noise suppression) works correctly.
-  **On speakers, VAD may still fire on long/garbled segments even with
-  `"aec"` active** — this is residual echo the canceller didn't fully
-  suppress, not a VAD bug (it doesn't happen on `"headphones"`, which has
-  no echo to begin with). `voiceclean`'s AEC works by correlation-based
-  suppression (attenuate a chunk once it correlates with the reference
-  above a threshold), confirmed against the real installed
-  `voiceclean.aec.AEC` class — not classic adaptive-filter cancellation.
-  Its own docs recommend lowering the 0.15 default `correlation_threshold`
-  toward 0.10 for exactly this kind of challenging echo (their own
-  example: PSTN telephony), so this project ships `0.10` as its own
-  default rather than requiring you to discover it (see
-  `_AEC_CORRELATION_THRESHOLD` in `src/asr_test/audio/echo.py`). Still not
-  independently verified with real speech — if residual echo keeps
-  triggering VAD, try lowering it further (`0.08` per voiceclean's docs)
-  before assuming `"aec"` doesn't work for your setup.
 - **`MIN_SILENCE_MS`** (default `1200`) — how long a pause must last before
   VAD considers your turn finished. Lower = snappier turn-taking but risks
   cutting off mid-sentence pauses (fragmenting one utterance into several
@@ -456,7 +381,6 @@ src/asr_test/
   audio/
     output.py                    LocalAudioSink(AudioSinkBase) — playback ring buffer, click-free underrun handling
     ws_sink.py                   WebSocketAudioSink(AudioSinkBase) — same contract, paced by a timer thread instead of a device callback
-    echo.py                      EchoControl — headphones/duck/aec modes, barge-in gating
   vad/silero.py                  SileroVad(VadBase)
   stt/onnx_asr_engine.py         OnnxAsrEngine(SttBase)
   tts/kokoro.py                  KokoroTts(TtsBase)
@@ -489,8 +413,10 @@ overlaps with LLM generation of the next one instead of blocking it.
 
 ## Known limitations
 
-- `"headphones"` echo mode assumes real mic/speaker isolation; using it
-  without that causes false VAD triggers from the bot's own voice.
+- Real headphones (mic genuinely cannot hear the speakers) are assumed
+  unconditionally — there's no echo suppression or mic-muting fallback
+  mode. Without real isolation, the bot's own voice gets picked up as
+  false speech, degrading VAD/STT/turn-taking.
 - The STT engine (Parakeet-TDT 0.6B int8) occasionally returns an empty
   transcript for short (~2-3s) segments even when they contain real
   speech — confirmed by feeding known-good audio through it directly, not

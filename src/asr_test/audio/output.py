@@ -18,9 +18,8 @@ _FADE_FRAMES = 64
 
 
 class LocalAudioSink(AudioSinkBase):
-    def __init__(self, rate: int, blocksize: int = 1024, on_played=None):
+    def __init__(self, rate: int, blocksize: int = 1024):
         self.rate = rate
-        self.on_played = on_played
         self._buf: deque[np.ndarray] = deque()
         self._lock = threading.Lock()
         self._playing = threading.Event()
@@ -72,9 +71,6 @@ class LocalAudioSink(AudioSinkBase):
             self._starved = False
 
         outdata[:, 0] = block
-
-        if self.on_played is not None and chunks:
-            self.on_played(np.concatenate(chunks))
 
         if empty and not chunks and self._playing.is_set():
             self._playing.clear()

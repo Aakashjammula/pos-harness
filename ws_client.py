@@ -12,7 +12,6 @@ Usage:
     # Config, forwarded to the server as query params (see server.py):
     uv run ws_client.py --tts supertonic --voice M1 --llm-model gemma-3-1b-it
     uv run ws_client.py --trigger-word "computer"
-    uv run ws_client.py --echo-mode headphones   # if you actually have real headphone isolation
 
     # Pick an input device (index or a substring of its name):
     uv run ws_client.py --list-mics
@@ -106,12 +105,6 @@ def main():
         "--list-mics", action="store_true",
         help="Print available input devices and exit.",
     )
-    parser.add_argument(
-        "--echo-mode", choices=("headphones", "duck", "aec"), default=None,
-        help="Echo handling (default: server's own default, 'duck'). Pass "
-             "'headphones' if you actually have real headphone isolation, "
-             "for full barge-in instead of the mic being cut while the bot talks.",
-    )
     args = parser.parse_args()
 
     if args.list_mics:
@@ -130,8 +123,6 @@ def main():
         params["llm_model"] = args.llm_model
     if args.trigger_word:
         params["trigger_word"] = args.trigger_word
-    if args.echo_mode:
-        params["echo_mode"] = args.echo_mode
     url = args.url + ("?" + urllib.parse.urlencode(params) if params else "")
 
     try:
