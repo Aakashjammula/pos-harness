@@ -90,3 +90,43 @@ def test_agent_tracks_conversation_history_across_turns(monkeypatch):
         ]
     finally:
         agent.shutdown(threads)
+
+
+def test_on_event_fires_user_text_and_bot_text(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    events: list[tuple[str, dict]] = []
+    agent = _build_agent(
+        vad=FakeVad(start_at=1, end_at=3), stt=FakeStt("hello"), llm=FakeLlm("hi there"),
+        on_event=lambda name, data: events.append((name, data)),
+    )
+    threads = agent.start()
+    try:
+        frame = np.zeros(config.FRAME, dtype=np.float32)
+        for _ in range(3):
+            agent.feed_audio(frame)
+        deadline = time.time() + 2.0
+        while len(events) < 2 and time.time() < deadline:
+            time.sleep(0.02)
+
+        assert ("user_text", {"text": "hello"}) in events
+        assert ("bot_text", {"text": "hi there "}) in events
+    finally:
+        agent.shutdown(threads)
+
+
+def test_on_event_fires_interrupted_on_barge_in():
+    events: list[tuple[str, dict]] = []
+    agent = _build_agent(on_event=lambda name, data: events.append((name, data)))
+    agent.interrupt()
+    assert ("interrupted", {}) in events
+
+
+def test_feed_audio_drops_frames_while_muted():
+    agent = _build_agent()
+    agent.muted.set()
+    agent.feed_audio(np.zeros(config.FRAME, dtype=np.float32))
+    assert agent.mic_q.qsize() == 0
+
+    agent.muted.clear()
+    agent.feed_audio(np.zeros(config.FRAME, dtype=np.float32))
+    assert agent.mic_q.qsize() == 1

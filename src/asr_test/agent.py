@@ -5,6 +5,7 @@ import re
 import statistics
 import threading
 import time
+from collections.abc import Callable
 
 import numpy as np
 import sounddevice as sd
@@ -28,6 +29,7 @@ class Agent:
         llm: LlmBase | None = None,
         trigger_word: str | None = None,
         audio_sink: AudioSinkBase | None = None,
+        on_event: Callable[[str, dict], None] | None = None,
     ):
         print("Loading models...")
         t0 = time.perf_counter()
@@ -101,6 +103,16 @@ class Agent:
         self.turn_start: float | None = None
 
         self.conversation: list[dict] = []
+        # UI hook for browser/CLI clients — e.g. "user_text"/"bot_text" for
+        # live captions, "interrupted" for barge-in feedback. No-op by
+        # default so local mode (main.py) behaves exactly as before.
+        self._on_event = on_event or (lambda name, data: None)
+
+        # Set to mute: feed_audio() drops frames instead of queuing them,
+        # so VAD never sees anything and the agent stays idle. One flag
+        # works for every transport (local mic, websocket) since they all
+        # funnel through feed_audio().
+        self.muted = threading.Event()
 
     def new_turn(self) -> int:
         with self.turn_lock:
@@ -114,6 +126,7 @@ class Agent:
     def interrupt(self):
         self.interrupts += 1
         print("      interrupted")
+        self._on_event("interrupted", {})
         self.cancel.set()
         self.audio_out.flush()
         self.new_turn()
@@ -121,7 +134,9 @@ class Agent:
     def feed_audio(self, frame: np.ndarray) -> None:
         """Transport-agnostic entry point for one mono audio frame.
         Any transport (local InputStream, websocket receive loop) calls
-        this the same way."""
+        this the same way. Dropped while muted."""
+        if self.muted.is_set():
+            return
         self.mic_q.put(frame)
 
     def start(self) -> list[threading.Thread]:
@@ -255,6 +270,7 @@ class Agent:
                 # STT output (not the stripped remainder) — text is left as-is.
 
             print(f"USER: {text}")
+            self._on_event("user_text", {"text": text})
             self.respond(text, turn, stt_t)
 
     def respond(self, text: str, turn: int, stt_t: float):
@@ -348,8 +364,10 @@ class Agent:
                       f"total {self.llm.last_total:.2f}s")
 
         if full_response:
+            joined = "".join(full_response)
             self.conversation.append({"role": "user", "content": text})
-            self.conversation.append({"role": "assistant", "content": "".join(full_response)})
+            self.conversation.append({"role": "assistant", "content": joined})
+            self._on_event("bot_text", {"text": joined})
 
         if spoken:
             print(f"BOT:  {' '.join(spoken)}")
@@ -404,7 +422,7 @@ class Agent:
                 print(f"      TTFA {ttfa:.2f}s = stt {stt_t:.2f} + "
                       f"llm_ttft {ttft:.2f} + tts {synth:.2f} + other {other:.2f}")
 
-    def run(self):
+    def run(self, device: int | None = None):
         threads = self.start()
 
         print("Listening — speak any time, including over the bot. Ctrl+C to stop.\n")
@@ -415,6 +433,7 @@ class Agent:
             self.feed_audio(indata.flatten().astype(np.float32))
 
         mic = sd.InputStream(
+            device=device,
             samplerate=config.MIC_RATE,
             channels=1,
             dtype="float32",
