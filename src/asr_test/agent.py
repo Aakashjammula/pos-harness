@@ -11,7 +11,7 @@ import sounddevice as sd
 
 from . import config
 from .audio.echo import EchoControl
-from .audio.output import AudioOutput
+from .audio.output import LocalAudioSink
 from .interfaces import LlmBase, SttBase, TtsBase, VadBase
 from .llm import OpenAiCompatibleLlm
 from .stt import OnnxAsrEngine
@@ -61,7 +61,7 @@ class Agent:
             len(trigger_word.split()) + config.TRIGGER_LOOKAHEAD_WORDS if trigger_word else 0
         )
 
-        self.audio_out = AudioOutput(
+        self.audio_out = LocalAudioSink(
             self.tts.sample_rate,
             blocksize=config.OUT_BLOCK,
             on_played=lambda a: self.echo.note_playback(a, self.tts.sample_rate),
