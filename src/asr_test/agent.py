@@ -100,6 +100,8 @@ class Agent:
         self.interrupts = 0
         self.turn_start: float | None = None
 
+        self.conversation: list[dict] = []
+
     def new_turn(self) -> int:
         with self.turn_lock:
             self.turn_id += 1
@@ -265,6 +267,7 @@ class Agent:
         buf = ""
         first = True
         spoken: list[str] = []
+        full_response: list[str] = []
         chunk_no = 0
         turn_start = self.turn_start or time.perf_counter()
 
@@ -316,10 +319,15 @@ class Agent:
         if config.REALTIME_LOG:
             print(f"      [LLM] triggered      \"{text}\"")
 
+        messages = self.conversation[-config.HISTORY_TURNS * 2 :] + [
+            {"role": "user", "content": text}
+        ]
+
         try:
-            for piece in self.llm.stream(text, self.cancel):
+            for piece in self.llm.stream(messages, self.cancel):
                 if self.cancel.is_set() or turn != self.current_turn():
                     return
+                full_response.append(piece)
                 buf += piece
                 buf = drain(buf)
                 if buf is None:
@@ -338,6 +346,10 @@ class Agent:
             if config.VERBOSE_TIMING:
                 print(f"      llm: ttft {self.llm.last_ttft or 0:.2f}s / "
                       f"total {self.llm.last_total:.2f}s")
+
+        if full_response:
+            self.conversation.append({"role": "user", "content": text})
+            self.conversation.append({"role": "assistant", "content": "".join(full_response)})
 
         if spoken:
             print(f"BOT:  {' '.join(spoken)}")
