@@ -1,0 +1,79 @@
+<!doctype html>
+<html>
+<head><title>asr-test</title></head>
+<body>
+  <button id="start">Start</button>
+  <button id="stop" disabled>Stop</button>
+  <pre id="log"></pre>
+  <script>
+    const log = (msg) => { document.getElementById("log").textContent += msg + "\n"; };
+    let ws, audioCtx, source, processor, playCtx, outputSampleRate = 16000;
+
+    function floatToPcm16(input) {
+      const out = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i++) {
+        const s = Math.max(-1, Math.min(1, input[i]));
+        out[i] = s < 0 ? s * 32768 : s * 32767;
+      }
+      return out.buffer;
+    }
+
+    function pcm16ToFloat(buf) {
+      const view = new Int16Array(buf);
+      const out = new Float32Array(view.length);
+      for (let i = 0; i < view.length; i++) out[i] = view[i] / 32768;
+      return out;
+    }
+
+    async function start() {
+      ws = new WebSocket(`ws://${location.host}/ws`);
+      ws.binaryType = "arraybuffer";
+
+      ws.onmessage = (event) => {
+        if (typeof event.data === "string") {
+          const msg = JSON.parse(event.data);
+          if (msg.event === "ready") {
+            outputSampleRate = msg.output_sample_rate;
+            playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: outputSampleRate });
+          }
+          log(JSON.stringify(msg));
+          return;
+        }
+        const floatData = pcm16ToFloat(event.data);
+        const buffer = playCtx.createBuffer(1, floatData.length, outputSampleRate);
+        buffer.copyToChannel(floatData, 0);
+        const src = playCtx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(playCtx.destination);
+        src.start();
+      };
+
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      source = audioCtx.createMediaStreamSource(stream);
+      processor = audioCtx.createScriptProcessor(512, 1, 1);
+      processor.onaudioprocess = (e) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(floatToPcm16(e.inputBuffer.getChannelData(0)));
+        }
+      };
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
+
+      document.getElementById("start").disabled = true;
+      document.getElementById("stop").disabled = false;
+    }
+
+    function stop() {
+      processor && processor.disconnect();
+      source && source.disconnect();
+      ws && ws.close();
+      document.getElementById("start").disabled = false;
+      document.getElementById("stop").disabled = true;
+    }
+
+    document.getElementById("start").onclick = start;
+    document.getElementById("stop").onclick = stop;
+  </script>
+</body>
+</html>

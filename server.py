@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 
 from asr_test import config
 from asr_test.agent import Agent
@@ -45,6 +47,10 @@ def create_app(
     vad_factory: Callable[[], VadBase] = _default_vad_factory,
 ) -> FastAPI:
     app = FastAPI()
+
+    @app.get("/")
+    async def index():
+        return FileResponse(Path(__file__).parent / "static" / "index.html")
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket):
