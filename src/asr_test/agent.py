@@ -11,7 +11,6 @@ import numpy as np
 import sounddevice as sd
 
 from . import config
-from .audio.echo import EchoControl
 from .audio.output import LocalAudioSink
 from .interfaces import AudioSinkBase, LlmBase, SttBase, TtsBase, VadBase
 from .llm import OpenAiCompatibleLlm
@@ -30,12 +29,9 @@ class Agent:
         trigger_word: str | None = None,
         audio_sink: AudioSinkBase | None = None,
         on_event: Callable[[str, dict], None] | None = None,
-        echo_mode: str | None = None,
     ):
         print("Loading models...")
         t0 = time.perf_counter()
-
-        self.echo = EchoControl(echo_mode or config.ECHO_MODE, config.MIC_RATE, config.FRAME)
 
         self.vad = vad or SileroVad(
             sample_rate=config.MIC_RATE,
@@ -68,11 +64,10 @@ class Agent:
         self.audio_out = audio_sink or LocalAudioSink(
             self.tts.sample_rate,
             blocksize=config.OUT_BLOCK,
-            on_played=lambda a: self.echo.note_playback(a, self.tts.sample_rate),
         )
 
         print(f"Models loaded in {time.perf_counter() - t0:.2f}s")
-        print(f"  barge-in: {'ON' if self.echo.barge_in else 'OFF'}")
+        print("  barge-in: ON (headphones assumed — mic hears only you, not the bot)")
         if trigger_word is not None:
             print(f"  trigger word: {trigger_word!r} — ignoring speech that doesn't lead with it")
         print()
@@ -172,13 +167,11 @@ class Agent:
                 continue
 
             playing = self.audio_out.playing
-            frame = self.echo.process(raw.flatten().astype(np.float32), playing)
-            if frame is None:
-                continue
+            frame = raw.flatten().astype(np.float32)
 
             event = self.vad(frame)
 
-            if playing and self.echo.barge_in:
+            if playing:
                 if self.audio_out.elapsed_ms < config.BARGE_IN_GRACE_MS:
                     continue
                 # VADIterator fires "start" once, on the onset frame only —
@@ -468,8 +461,6 @@ class Agent:
                   f"n={len(vals)}")
 
         print("\n--- session summary ---")
-        print(f"  echo mode      {self.echo.mode} "
-              f"(barge-in {'on' if self.echo.barge_in else 'off'})")
         line("stt", self.m_asr)
         line("llm_ttft", self.m_ttft)
         line("llm_total", self.m_llm)

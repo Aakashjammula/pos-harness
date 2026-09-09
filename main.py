@@ -77,11 +77,6 @@ def main():
         "--list-mics", action="store_true",
         help="Print available input devices and exit.",
     )
-    parser.add_argument(
-        "--echo-mode", choices=("headphones", "duck", "aec"), default=None,
-        help="Echo handling (default: config.ECHO_MODE, 'headphones'). Use "
-             "'duck' or 'aec' if you're on speakers instead of real headphones.",
-    )
     args = parser.parse_args()
 
     if args.list_mics:
@@ -94,7 +89,7 @@ def main():
     tts_kwargs = {"voice": args.voice} if args.voice else {}
     tts = _TTS_ENGINES[args.tts](**tts_kwargs)
 
-    agent = Agent(tts=tts, trigger_word=args.trigger_word, echo_mode=args.echo_mode)
+    agent = Agent(tts=tts, trigger_word=args.trigger_word)
     start_mute_toggle_listener(agent.muted)
     agent.run(device=device)
 
