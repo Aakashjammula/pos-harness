@@ -21,7 +21,6 @@ class OpenAiCompatibleLlm(LlmBase):
         ),
         max_tokens: int = 120,
         timeout: float = 30,
-        history_turns: int = 3,
         warmup: bool = True,
     ):
         self.client = OpenAI(base_url=base_url, api_key=api_key)
@@ -29,9 +28,7 @@ class OpenAiCompatibleLlm(LlmBase):
         self.system_prompt = system_prompt
         self.max_tokens = max_tokens
         self.timeout = timeout
-        self.history_turns = history_turns
 
-        self.history: list[dict] = []
         self.last_ttft: float | None = None
         self.last_total: float | None = None
 
@@ -48,19 +45,16 @@ class OpenAiCompatibleLlm(LlmBase):
             except Exception as e:
                 print(f"  llm warm-up failed ({e}) — is LM Studio running?")
 
-    def stream(self, user_text: str, cancel: threading.Event) -> Iterator[str]:
-        messages = [{"role": "system", "content": self.system_prompt}]
-        messages += self.history[-self.history_turns * 2 :]
-        messages.append({"role": "user", "content": user_text})
+    def stream(self, messages: list[dict], cancel: threading.Event) -> Iterator[str]:
+        full_messages = [{"role": "system", "content": self.system_prompt}] + messages
 
         t_start = time.perf_counter()
         self.last_ttft = None
         self.last_total = None
-        full: list[str] = []
 
         completion = self.client.chat.completions.create(
             model=self.model,
-            messages=messages,
+            messages=full_messages,
             max_tokens=self.max_tokens,
             temperature=0.7,
             stream=True,
@@ -75,10 +69,6 @@ class OpenAiCompatibleLlm(LlmBase):
             if piece:
                 if self.last_ttft is None:
                     self.last_ttft = time.perf_counter() - t_start
-                full.append(piece)
                 yield piece
 
         self.last_total = time.perf_counter() - t_start
-        if not cancel.is_set() and full:
-            self.history.append({"role": "user", "content": user_text})
-            self.history.append({"role": "assistant", "content": "".join(full)})

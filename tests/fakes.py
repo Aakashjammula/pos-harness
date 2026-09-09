@@ -9,9 +9,10 @@ from asr_test.interfaces import AudioSinkBase, LlmBase, SttBase, TtsBase, VadBas
 
 
 class FakeVad(VadBase):
-    """Fires 'start' on the Nth call and 'end' on the Mth call, else
-    None — deterministic speech-boundary events for tests, no real
-    audio analysis."""
+    """Fires 'start' at position start_at and 'end' at position end_at
+    within a repeating cycle of length end_at — deterministic
+    speech-boundary events for tests (no real audio analysis), cyclic
+    so a test can drive multiple turns through the same Agent."""
 
     def __init__(self, start_at: int = 1, end_at: int = 3):
         self._n = 0
@@ -20,9 +21,10 @@ class FakeVad(VadBase):
 
     def __call__(self, frame: np.ndarray) -> dict | None:
         self._n += 1
-        if self._n == self._start_at:
+        pos = (self._n - 1) % self._end_at + 1
+        if pos == self._start_at:
             return {"start": 0}
-        if self._n == self._end_at:
+        if pos == self._end_at:
             return {"end": 0}
         return None
 
@@ -42,10 +44,10 @@ class FakeLlm(LlmBase):
         self.reply = reply
         self.last_ttft: float | None = 0.01
         self.last_total: float | None = 0.02
-        self.calls: list[str] = []
+        self.calls: list[list[dict]] = []
 
-    def stream(self, user_text: str, cancel: threading.Event) -> Iterator[str]:
-        self.calls.append(user_text)
+    def stream(self, messages: list[dict], cancel: threading.Event) -> Iterator[str]:
+        self.calls.append(messages)
         for word in self.reply.split():
             yield word + " "
 
@@ -58,25 +60,30 @@ class FakeTts(TtsBase):
 
 
 class FakeAudioSink(AudioSinkBase):
+    """playing always reports False: unlike the real sinks, this fake
+    has no timer/callback draining its buffer, so a naive "push() sets
+    playing=True" would never clear again — that stuck Agent.vad_thread
+    in its barge-in branch forever after one push, silently swallowing
+    every later frame (found via a real two-turn test failure). No
+    current test needs playing=True, so it's left unsimulated rather
+    than building a real virtual clock for it."""
+
     def __init__(self):
         self.pushed: list[np.ndarray] = []
         self.underruns = 0
-        self._playing = False
 
     def push(self, audio: np.ndarray) -> None:
         self.pushed.append(audio)
-        self._playing = True
 
     def flush(self) -> None:
         self.pushed.clear()
-        self._playing = False
 
     def close(self) -> None:
         pass
 
     @property
     def playing(self) -> bool:
-        return self._playing
+        return False
 
     @property
     def elapsed_ms(self) -> float:

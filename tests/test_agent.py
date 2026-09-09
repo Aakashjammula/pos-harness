@@ -59,3 +59,34 @@ def test_end_to_end_frame_to_response(monkeypatch):
         assert fake_sink.pushed  # TTS output reached the sink
     finally:
         agent.shutdown(threads)
+
+
+def test_agent_tracks_conversation_history_across_turns(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    fake_llm = FakeLlm(reply="hi there")
+    agent = _build_agent(
+        vad=FakeVad(start_at=1, end_at=3), stt=FakeStt("hello"), llm=fake_llm,
+    )
+    threads = agent.start()
+    try:
+        frame = np.zeros(config.FRAME, dtype=np.float32)
+
+        for _ in range(3):
+            agent.feed_audio(frame)
+        deadline = time.time() + 2.0
+        while len(fake_llm.calls) < 1 and time.time() < deadline:
+            time.sleep(0.02)
+        assert fake_llm.calls[0] == [{"role": "user", "content": "hello"}]
+
+        for _ in range(3):
+            agent.feed_audio(frame)
+        deadline = time.time() + 2.0
+        while len(fake_llm.calls) < 2 and time.time() < deadline:
+            time.sleep(0.02)
+        assert fake_llm.calls[1] == [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi there "},
+            {"role": "user", "content": "hello"},
+        ]
+    finally:
+        agent.shutdown(threads)
