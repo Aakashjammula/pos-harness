@@ -174,6 +174,58 @@ and would mistake the bot's own voice for your speech otherwise).
 for server mode; `pytest` is a dev-only dependency (`uv run pytest` to
 run the test suite) — neither is needed just to run `main.py`.
 
+### Browser client: model/provider selection
+
+The browser client (`http://localhost:8000/`) has a config panel — TTS
+engine + voice, LLM model (populated live from LM Studio's own
+`/v1/models`), trigger word, and input microphone — picked before
+clicking Connect. Changing any of these requires disconnecting and
+reconnecting; there's no live mid-session reconfiguration. A live
+transcript pane shows what you said and what the bot replied as the
+conversation happens.
+
+The server (`GET /options`) lazily constructs and caches one TTS
+instance per distinct `(engine, voice)` combination actually requested,
+and one LLM client per distinct model name, sharing each across every
+session that asks for the same combination — picking N different
+voices across a server's lifetime costs roughly N × ~1.5GB RAM (each
+`KokoroTts`/`SupertonicTts` instance loads its own model weights), so
+that's a real resource tradeoff to be aware of on a long-running server
+with many different voices requested, not something this bounds
+automatically.
+
+### Mic selection and mute
+
+All three run modes support picking a specific input device:
+
+```
+uv run main.py --list-mics              # print available input devices
+uv run main.py --mic "USB"               # by name substring, or an index
+uv run ws_client.py --list-mics
+uv run ws_client.py --mic 3
+```
+
+The browser client has an equivalent microphone dropdown (populated via
+`navigator.mediaDevices.enumerateDevices()` — device labels only appear
+after mic permission has been granted once).
+
+**Mute**: in `main.py`/`ws_client.py`, press Enter in the terminal to
+toggle muting (frames are dropped before they ever reach VAD, so the
+agent stays idle) — press Enter again to unmute. In the browser, a Mute
+button next to Connect does the same, and also disables the mic track
+so the browser's own hardware-in-use indicator turns off.
+
+### CLI client provider selection (`ws_client.py`)
+
+```
+uv run ws_client.py --tts supertonic --voice M1 --llm-model gemma-3-1b-it
+uv run ws_client.py --trigger-word "computer"
+```
+
+These are forwarded to `server.py` as the same `/ws` query params the
+browser client uses — see `server.py`'s own module docstring for the
+full query-param reference.
+
 ## Latency
 
 Real numbers, not estimates — aggregated from actual `TTFA = stt + llm_ttft
@@ -346,12 +398,16 @@ tests/                           pytest suite (fakes.py holds shared no-hardware
 ```
 
 `Agent` is built by dependency injection —
-`Agent(vad=..., stt=..., tts=..., llm=..., trigger_word=..., audio_sink=...)`
+`Agent(vad=..., stt=..., tts=..., llm=..., trigger_word=..., audio_sink=..., on_event=...)`
 — defaulting to the concrete classes above (`trigger_word` defaults to
-`None`, feature off; `audio_sink` defaults to `LocalAudioSink`). To add a
-new engine, implement the matching interface (usually just one
-`__call__`/`stream` method) and pass an instance in; no changes to
-`agent.py` needed. `LlmBase.stream(messages, cancel)` is stateless — it
+`None`, feature off; `audio_sink` defaults to `LocalAudioSink`;
+`on_event` defaults to a no-op, called with `("user_text"|"bot_text"|
+"interrupted", data)` for UI captions). `agent.muted` (a
+`threading.Event`) gates `feed_audio()` — set it to drop incoming
+frames before they reach VAD, for any transport. To add a new engine,
+implement the matching interface (usually just one `__call__`/`stream`
+method) and pass an instance in; no changes to `agent.py` needed.
+`LlmBase.stream(messages, cancel)` is stateless — it
 takes the full prior-turns message list each call rather than owning
 conversation history itself, so one `LlmBase` instance can be shared
 across every concurrent session in server mode (`Agent` owns the
