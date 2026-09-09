@@ -349,14 +349,24 @@ knobs:
   false speech. `Agent(echo_mode=...)` overrides this per-instance (what
   `--echo-mode`/`?echo_mode=` actually set) without touching the module
   default other callers still see.
-  **Not independently verified live** — `voiceclean`'s real API
-  (confirmed against its own docs) is `VoiceClean(sample_rate=...)` +
-  `feed_reference()`/`process()`; this project's integration was fixed to
-  match it (the previous code called a `voiceclean.AEC(...)` shape that
-  doesn't exist in the real package, so `"aec"` silently fell back to
-  `"duck"` even with `voiceclean` installed), but hasn't been tested with
-  the actual package + real audio — try it and report back if it doesn't
-  behave as expected.
+  **Verified with the real package installed** (not just against docs):
+  `voiceclean`'s `process()` doesn't return exactly one frame_size chunk
+  per call — it buffers internally on its own frame size and emits
+  variable-length (sometimes empty) output, confirmed live feeding
+  512-sample frames and getting back 0 or 640 samples, never 512.
+  `EchoControl` buffers and re-chunks this to exactly `frame_size` per
+  call (same pattern as `WebSocketAudioSink`'s own drain logic) — a
+  second real bug beyond the original API-shape mismatch, caught by
+  actually running it rather than trusting the docs alone.
+  **Do not install `pyrnnoise`** (voiceclean's optional noise-suppression
+  extra) — as of `voiceclean==0.3.6` + `pyrnnoise==0.4.3`, enabling it
+  makes every `process()` call raise internally (`Graph.__init__() got
+  an unexpected keyword argument 'rate'`, an upstream version mismatch
+  between the two packages), which `EchoControl` catches safely but then
+  silently no-ops AEC on every frame — worse than not installing it at
+  all, since you get raw mic passthrough with no indication anything's
+  wrong beyond a `[aec failed: ...]` log line per frame. Plain
+  `voiceclean` (AEC only, no noise suppression) works correctly.
 - **`MIN_SILENCE_MS`** (default `1200`) — how long a pause must last before
   VAD considers your turn finished. Lower = snappier turn-taking but risks
   cutting off mid-sentence pauses (fragmenting one utterance into several
