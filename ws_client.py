@@ -8,6 +8,18 @@ static/index.html, both are dumb relays to the same server.
 Usage:
     uv run server.py            # in one terminal
     uv run ws_client.py         # in another
+
+    # Config, forwarded to the server as query params (see server.py):
+    uv run ws_client.py --tts supertonic --voice M1 --llm-model gemma-3-1b-it
+    uv run ws_client.py --trigger-word "computer"
+
+    # Pick an input device (index or a substring of its name):
+    uv run ws_client.py --list-mics
+    uv run ws_client.py --mic "USB"
+
+    # Mute: once running, press Enter in this terminal to toggle
+    # muting the mic (frames are simply not sent while muted) — press
+    # Enter again to unmute.
 """
 
 from __future__ import annotations
@@ -15,25 +27,38 @@ from __future__ import annotations
 import argparse
 import asyncio
 import queue
+import threading
+import urllib.parse
 
 import numpy as np
 import sounddevice as sd
 import websockets
 
 from asr_test import config
-from asr_test.utils import float32_to_pcm16, pcm16_to_float32
+from asr_test.utils import (
+    float32_to_pcm16,
+    list_input_devices,
+    pcm16_to_float32,
+    resolve_input_device,
+    start_mute_toggle_listener,
+)
 
 
-async def run(url: str):
+async def run(url: str, device: int | None):
     async with websockets.connect(url, max_size=None) as ws:
         ready = await ws.recv()
         print(f"server: {ready}")
+
+        muted = threading.Event()
+        start_mute_toggle_listener(muted)
 
         mic_q: queue.Queue[bytes] = queue.Queue()
 
         def on_mic(indata, frames, time_info, status):
             if status:
                 print("mic status:", status)
+            if muted.is_set():
+                return
             mic_q.put(float32_to_pcm16(indata.flatten().astype(np.float32)))
 
         out_stream = sd.OutputStream(samplerate=config.MIC_RATE, channels=1, dtype="float32")
@@ -53,6 +78,7 @@ async def run(url: str):
                     print(f"server: {message}")
 
         with sd.InputStream(
+            device=device,
             samplerate=config.MIC_RATE, channels=1, dtype="float32",
             blocksize=config.FRAME, callback=on_mic,
         ):
@@ -62,9 +88,45 @@ async def run(url: str):
 def main():
     parser = argparse.ArgumentParser(description="CLI client for server.py")
     parser.add_argument("--url", default="ws://localhost:8000/ws")
+    parser.add_argument("--tts", default=None, metavar="ENGINE", help="TTS engine (e.g. kokoro, supertonic)")
+    parser.add_argument("--voice", default=None, help="Voice name, engine-specific")
+    parser.add_argument("--llm-model", default=None, metavar="MODEL", help="LLM model name (as loaded in LM Studio)")
+    parser.add_argument(
+        "--trigger-word", default=None, metavar="PHRASE",
+        help="Only respond to speech whose transcript leads with this phrase; "
+             "everything else is ignored. Off by default.",
+    )
+    parser.add_argument(
+        "--mic", default=None, metavar="DEVICE",
+        help="Input device to use: an index or a substring of its name "
+             "(see --list-mics). Default: system default input device.",
+    )
+    parser.add_argument(
+        "--list-mics", action="store_true",
+        help="Print available input devices and exit.",
+    )
     args = parser.parse_args()
+
+    if args.list_mics:
+        for line in list_input_devices():
+            print(line)
+        return
+
+    device = resolve_input_device(args.mic)
+
+    params = {}
+    if args.tts:
+        params["tts"] = args.tts
+    if args.voice:
+        params["voice"] = args.voice
+    if args.llm_model:
+        params["llm_model"] = args.llm_model
+    if args.trigger_word:
+        params["trigger_word"] = args.trigger_word
+    url = args.url + ("?" + urllib.parse.urlencode(params) if params else "")
+
     try:
-        asyncio.run(run(args.url))
+        asyncio.run(run(url, device))
     except KeyboardInterrupt:
         print("\nStopped.")
 
