@@ -30,11 +30,12 @@ class Agent:
         trigger_word: str | None = None,
         audio_sink: AudioSinkBase | None = None,
         on_event: Callable[[str, dict], None] | None = None,
+        echo_mode: str | None = None,
     ):
         print("Loading models...")
         t0 = time.perf_counter()
 
-        self.echo = EchoControl(config.ECHO_MODE, config.MIC_RATE, config.FRAME)
+        self.echo = EchoControl(echo_mode or config.ECHO_MODE, config.MIC_RATE, config.FRAME)
 
         self.vad = vad or SileroVad(
             sample_rate=config.MIC_RATE,

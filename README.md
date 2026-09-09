@@ -165,10 +165,24 @@ websocket as raw PCM16 mono frames (16kHz client→server, matching the
 TTS engine's own sample rate server→client) — no codec, matching what
 the pipeline already uses internally.
 
-Server mode defaults `config.ECHO_MODE` to `"duck"` regardless of the
-module-level default, since the server has no way to verify a remote
-client has real headphone isolation (`"headphones"` mode assumes that
-and would mistake the bot's own voice for your speech otherwise).
+Server mode defaults each session's echo handling to `"duck"`
+(`?echo_mode=duck`, or omit it), regardless of `config.ECHO_MODE`'s own
+module-level default — the server has no way to verify a remote client
+has real headphone isolation, and `"headphones"` mode assumes that (it
+would otherwise mistake the bot's own voice for your speech). If you
+genuinely are on headphones, pass `?echo_mode=headphones` (browser: the
+"echo handling" dropdown; CLI: `--echo-mode headphones`) for full
+barge-in instead of the mic being cut while the bot talks — an invalid
+value gets an `"error"` event and the connection is closed rather than
+silently falling back to something else.
+
+**Why this matters for audio quality, not just barge-in**: `"duck"`
+mode discards mic frames entirely (not just attenuates them) while the
+bot's response is still draining, so starting to talk again *before*
+the bot fully finishes can truncate the start of your next utterance —
+often showing up as an empty or garbled STT transcript, not a genuine
+STT failure. This is expected behavior for `"duck"`'s safety tradeoff,
+not a bug; `"headphones"` mode doesn't have this limitation.
 
 `fastapi`, `uvicorn[standard]`, and `websockets` are dependencies added
 for server mode; `pytest` is a dev-only dependency (`uv run pytest` to
@@ -313,7 +327,9 @@ knobs:
   (active echo cancellation, requires the optional `voiceclean` package —
   falls back to `"duck"` if unavailable). Using `"headphones"` without
   actual headphone isolation causes the bot's own voice to be picked up as
-  false speech.
+  false speech. `Agent(echo_mode=...)` overrides this per-instance (what
+  `--echo-mode`/`?echo_mode=` actually set) without touching the module
+  default other callers still see.
 - **`MIN_SILENCE_MS`** (default `1200`) — how long a pause must last before
   VAD considers your turn finished. Lower = snappier turn-taking but risks
   cutting off mid-sentence pauses (fragmenting one utterance into several
