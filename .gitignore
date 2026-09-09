@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local model assets (766MB, own nested .git+LFS repo — never commit this)
+/assets/
+
+# Downloaded pretrained wake-word classifier models (auto-fetched on first use)
+/.cache/
+
+# Your own recorded wake-word phrase samples (local-wake) — personal voice data
+/wake_word_samples/
