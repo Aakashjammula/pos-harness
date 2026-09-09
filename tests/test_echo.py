@@ -52,8 +52,9 @@ class _FakeVoiceClean:
 
     _CHUNK_SAMPLES = 640  # observed real output chunk size, vs. our 512-sample input frames
 
-    def __init__(self, sample_rate: int):
+    def __init__(self, sample_rate: int, **aec_kwargs):
         self.sample_rate = sample_rate
+        self.aec_kwargs = aec_kwargs
         self.fed_references: list[bytes] = []
         self.processed: list[bytes] = []
         self._pending = b""
@@ -94,6 +95,9 @@ def test_aec_mode_calls_the_real_voiceclean_api_shape(fake_voiceclean):
     assert echo.mode == "aec"
     assert echo.barge_in is True
     assert isinstance(echo.aec, _FakeVoiceClean)
+    # Lowered from voiceclean's own 0.15 default per its docs' own guidance
+    # for noisy/challenging echo conditions — see echo.py's comment.
+    assert echo.aec.aec_kwargs.get("correlation_threshold") == 0.10
 
     ref_audio = np.full(512, 0.1, dtype=np.float32)
     echo.note_playback(ref_audio, source_rate=16000)
