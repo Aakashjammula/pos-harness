@@ -79,10 +79,14 @@ class Agent:
 
         self.mic_q: queue.Queue[np.ndarray] = queue.Queue()
         self.seg_q: queue.Queue[tuple[int, np.ndarray]] = queue.Queue()
-        # (turn, chunk_no, text, stt_t, turn_start) — sentence chunks awaiting synthesis.
-        # Kept on its own queue/thread so TTS synthesis overlaps LLM generation instead
-        # of blocking it (see respond() / tts_thread()).
-        self.tts_q: queue.Queue[tuple[int, int, str, float, float]] = queue.Queue()
+        # (turn, chunk_no, text, stt_t, turn_start, ttft) — sentence chunks awaiting
+        # synthesis. Kept on its own queue/thread so TTS synthesis overlaps LLM
+        # generation instead of blocking it (see respond() / tts_thread()). ttft is
+        # measured locally in respond() and threaded through here rather than read
+        # back from self.llm afterward, since the LLM engine can be shared across
+        # concurrent sessions (see server.py's provider cache) and any last_ttft
+        # attribute on it would race between them.
+        self.tts_q: queue.Queue[tuple[int, int, str, float, float, float | None]] = queue.Queue()
 
         self.turn_id = 0
         self.turn_lock = threading.Lock()
@@ -287,6 +291,7 @@ class Agent:
         full_response: list[str] = []
         chunk_no = 0
         turn_start = self.turn_start or time.perf_counter()
+        ttft: float | None = None  # set on the first streamed piece, below
 
         def limit() -> int:
             return config.FIRST_CHUNK_CHARS if first else config.MAX_CHUNK_CHARS
@@ -301,7 +306,7 @@ class Agent:
 
             chunk_no += 1
             first = False
-            self.tts_q.put((turn, chunk_no, chunk, stt_t, turn_start))
+            self.tts_q.put((turn, chunk_no, chunk, stt_t, turn_start, ttft))
             spoken.append(chunk)
             return True
 
@@ -340,10 +345,13 @@ class Agent:
             {"role": "user", "content": text}
         ]
 
+        t_start = time.perf_counter()
         try:
             for piece in self.llm.stream(messages, self.cancel):
                 if self.cancel.is_set() or turn != self.current_turn():
                     return
+                if ttft is None:
+                    ttft = time.perf_counter() - t_start
                 full_response.append(piece)
                 buf += piece
                 buf = drain(buf)
@@ -356,13 +364,12 @@ class Agent:
         if buf.strip():
             enqueue(buf)
 
-        if self.llm.last_ttft is not None:
-            self.m_ttft.append(self.llm.last_ttft)
-        if self.llm.last_total is not None:
-            self.m_llm.append(self.llm.last_total)
+        if ttft is not None:
+            total = time.perf_counter() - t_start
+            self.m_ttft.append(ttft)
+            self.m_llm.append(total)
             if config.VERBOSE_TIMING:
-                print(f"      llm: ttft {self.llm.last_ttft or 0:.2f}s / "
-                      f"total {self.llm.last_total:.2f}s")
+                print(f"      llm: ttft {ttft:.2f}s / total {total:.2f}s")
 
         if full_response:
             joined = "".join(full_response)
@@ -379,7 +386,7 @@ class Agent:
         """
         while not self.stop.is_set():
             try:
-                turn, chunk_no, chunk, stt_t, turn_start = self.tts_q.get(timeout=0.2)
+                turn, chunk_no, chunk, stt_t, turn_start, ttft = self.tts_q.get(timeout=0.2)
             except queue.Empty:
                 continue
 
@@ -418,10 +425,10 @@ class Agent:
             if chunk_no == 1:
                 ttfa = time.perf_counter() - turn_start
                 self.m_ttfa.append(ttfa)
-                ttft = self.llm.last_ttft or 0.0
-                other = ttfa - stt_t - ttft - synth
+                ttft_val = ttft or 0.0
+                other = ttfa - stt_t - ttft_val - synth
                 print(f"      TTFA {ttfa:.2f}s = stt {stt_t:.2f} + "
-                      f"llm_ttft {ttft:.2f} + tts {synth:.2f} + other {other:.2f}")
+                      f"llm_ttft {ttft_val:.2f} + tts {synth:.2f} + other {other:.2f}")
 
     def run(self, device: int | None = None):
         threads = self.start()

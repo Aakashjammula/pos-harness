@@ -26,6 +26,14 @@ def test_stream_is_stateless_and_prepends_system_prompt(monkeypatch):
     assert sent[0] == {"role": "system", "content": "sys"}
     assert sent[1] == {"role": "user", "content": "hi"}
     assert not hasattr(llm, "history")
+    # Regression guard: last_ttft/last_total used to be shared mutable
+    # instance state, which raced when one LLM instance was shared across
+    # concurrent sessions (server.py's provider cache does this
+    # deliberately for memory). Agent now measures timing locally around
+    # stream() instead of reading it back from the engine afterward — the
+    # engine should expose no such state at all.
+    assert not hasattr(llm, "last_ttft")
+    assert not hasattr(llm, "last_total")
 
 
 def test_stream_stops_on_cancel(monkeypatch):
