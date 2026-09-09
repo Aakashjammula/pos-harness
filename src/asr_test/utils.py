@@ -12,3 +12,12 @@ def resample_linear(x: np.ndarray, src: int, dst: int) -> np.ndarray:
         np.arange(x.size, dtype=np.float64),
         x,
     ).astype(np.float32)
+
+
+def pcm16_to_float32(data: bytes) -> np.ndarray:
+    return np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+
+
+def float32_to_pcm16(audio: np.ndarray) -> bytes:
+    clipped = np.clip(audio, -1.0, 1.0)
+    return (clipped * 32767.0).astype(np.int16).tobytes()
