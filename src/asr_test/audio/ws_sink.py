@@ -77,15 +77,36 @@ class WebSocketAudioSink(AudioSinkBase):
 
         return block
 
+    async def _safe_send(self, data: bytes) -> None:
+        try:
+            await self.websocket.send_bytes(data)
+        except Exception:
+            pass  # socket already closing/closed — nothing to deliver to
+
+    def _schedule_send(self, data: bytes) -> bool:
+        """Schedule one block for sending. Returns False (and does not
+        raise) if the event loop is already closed/closing — e.g. the
+        client disconnected and the server is tearing down this
+        connection while this thread is mid-tick. run_coroutine_threadsafe()
+        itself (not just the coroutine it schedules) raises synchronously
+        in that case — _safe_send's own try/except only covers errors
+        *after* successful scheduling, not this."""
+        coro = self._safe_send(data)
+        try:
+            asyncio.run_coroutine_threadsafe(coro, self.loop)
+            return True
+        except RuntimeError:
+            coro.close()  # never got scheduled — close it explicitly or asyncio warns "never awaited"
+            return False
+
     def _run(self):
         interval = self.blocksize / self.rate
         next_tick = time.perf_counter()
         while not self._stop.is_set():
             next_tick += interval
             block = self._drain_once()
-            asyncio.run_coroutine_threadsafe(
-                self.websocket.send_bytes(float32_to_pcm16(block)), self.loop
-            )
+            if not self._schedule_send(float32_to_pcm16(block)):
+                break
             sleep_for = next_tick - time.perf_counter()
             if sleep_for > 0:
                 time.sleep(sleep_for)

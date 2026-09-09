@@ -70,6 +70,33 @@ def test_flush_stops_playing(loop):
     sink.close()
 
 
+def test_schedule_send_returns_false_without_raising_when_loop_closed(loop):
+    ws = _FakeWebSocket()
+    sink = WebSocketAudioSink(ws, loop, rate=8000, blocksize=8)
+    _stop_pacing_thread(sink)
+
+    closed_loop = asyncio.new_event_loop()
+    closed_loop.close()
+    sink.loop = closed_loop
+
+    assert sink._schedule_send(b"\x00\x00") is False
+
+
+def test_run_stops_cleanly_instead_of_crashing_when_loop_closes_mid_tick(loop):
+    ws = _FakeWebSocket()
+    sink = WebSocketAudioSink(ws, loop, rate=8000, blocksize=8)
+    sink.push(np.ones(800, dtype=np.float32))
+    time.sleep(0.1)  # let it send at least one real block
+
+    closed_loop = asyncio.new_event_loop()
+    closed_loop.close()
+    sink.loop = closed_loop  # simulate the server's loop tearing down mid-session
+
+    time.sleep(0.2)  # _run()'s next tick should see the closed loop and stop itself
+    assert not sink._thread.is_alive()
+    sink._stop.set()  # already stopped itself, but keep close() a no-op either way
+
+
 def test_background_thread_sends_audio_over_websocket(loop):
     ws = _FakeWebSocket()
     sink = WebSocketAudioSink(ws, loop, rate=8000, blocksize=8)

@@ -85,8 +85,16 @@ def create_app(
 
     app = FastAPI()
 
-    _tts_cache: dict[tuple[str, str], TtsBase] = {}
-    _llm_cache: dict[str, LlmBase] = {}
+    # Eagerly warm the default (engine, voice)/model combo at startup —
+    # before uvicorn ever accepts a connection — so the *first* client
+    # to connect with default settings doesn't pay TTS/LLM construction
+    # and warm-up cost (several seconds, see each engine's own warmup
+    # timing) as part of their own connection setup. Any other combo a
+    # client explicitly asks for still loads lazily on first request.
+    _tts_cache: dict[tuple[str, str], TtsBase] = {
+        (default_tts_engine, ""): tts_engines[default_tts_engine]()
+    }
+    _llm_cache: dict[str, LlmBase] = {default_llm_model: llm_factory(default_llm_model)}
     _cache_lock = asyncio.Lock()
 
     async def get_tts(engine: str, voice: str | None) -> TtsBase:
@@ -145,9 +153,13 @@ def create_app(
         })
 
         def emit(name: str, data: dict) -> None:
-            asyncio.run_coroutine_threadsafe(
-                websocket.send_json({"event": name, **data}), loop
-            )
+            async def _send():
+                try:
+                    await websocket.send_json({"event": name, **data})
+                except Exception:
+                    pass  # socket already closing/closed — nothing to deliver to
+
+            asyncio.run_coroutine_threadsafe(_send(), loop)
 
         sink = WebSocketAudioSink(websocket, loop, rate=tts.sample_rate, blocksize=config.OUT_BLOCK)
         agent = Agent(
@@ -161,8 +173,14 @@ def create_app(
                 agent.feed_audio(pcm16_to_float32(data))
         except WebSocketDisconnect:
             pass
+        except Exception as e:
+            print(f"  session error: {e}")
         finally:
-            agent.shutdown(threads)
+            print("  session closed — shutting down this connection's Agent")
+            # Runs off the event loop: a turn in flight (blocking STT/LLM
+            # call) can't be interrupted, so shutdown() may block for a
+            # while waiting on it — must not stall other sessions' I/O.
+            await loop.run_in_executor(None, agent.shutdown, threads)
 
     return app
 
