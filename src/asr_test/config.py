@@ -52,3 +52,5 @@ HISTORY_TURNS = 3   # how many prior user/assistant turn-pairs to include as LLM
                      # context. Previously owned by OpenAiCompatibleLlm itself;
                      # moved to Agent since the LLM engine is now stateless and
                      # (in server mode) shared across concurrent sessions.
+
+SESSIONS_DB_PATH = "sessions.db"   # SQLite file for session/turn history — see storage.py
