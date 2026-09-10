@@ -3,6 +3,12 @@
 Date: 2026-09-10
 Status: draft, awaiting review
 
+**Amendment (same date):** adds context-window size to the usage data
+this spec produces — missed in the original brainstorming write-up even
+though it was answered during Q&A ("lmstudio will give context
+window"). See "Context window" section below, inserted after "Usage +
+cost."
+
 ## Context
 
 This is sub-project A of a four-part plan (the other three: session
@@ -148,12 +154,62 @@ usage.update({
     "total_tokens": ...,
     "cost_usd": estimate_cost(...),   # None if unpriced
     "tool_calls": [{"name": ..., "args": ...} for call in ...],  # every tool call across all rounds this turn
+    "context_window": self._context_window,   # None if unknown — see "Context window" below
 })
 ```
 
 If the model never returns `usage_metadata` (some backends omit it),
 `usage` is left as `{}` — callers must treat a missing key as "unknown,"
 not assume zero.
+
+## Context window (`src/asr_test/llm/context_window.py`)
+
+Researched rather than assumed (see this spec's amendment note): the
+three backends differ in whether a context-window size is available
+via any API at all.
+
+- **Local (LM Studio)**: available live. LM Studio's REST API v0 —
+  `GET {host}/api/v0/models` (a *different* base path than the
+  OpenAI-compatible `/v1/models` this project already calls for the
+  model-name dropdown; `host` is `provider.base_url` with its `/v1`
+  suffix removed) — returns each model's `max_context_length`
+  directly ([LM Studio REST API docs](https://lmstudio.ai/docs/developer/rest/endpoints)).
+- **OpenAI**: **no API for this exists** — confirmed via the OpenAI
+  developer community: `models.retrieve()`/`models.list()` return no
+  context-length field, and this has been a standing feature request
+  with no resolution. Only recourse is a maintained table, same
+  pattern as `pricing.py`.
+- **Azure OpenAI**: same limitation, and worse — the context window
+  depends on which base model was deployed behind the deployment name,
+  which Azure's API doesn't expose either. Table/env-override only.
+
+```python
+CONTEXT_WINDOWS: dict[tuple[str, str], int] = {
+    # Best-effort snapshot, same caveat as PRICING — override via
+    # {PROVIDER}_CONTEXT_WINDOW if a listed model's window has changed
+    # or a new model needs one.
+    ("openai", "gpt-4o-mini"): 128_000,
+    ("openai", "gpt-4o"): 128_000,
+}
+
+def get_context_window(provider: ProviderConfig) -> int | None: ...
+```
+
+`get_context_window()` branches on `provider.name`: `"local"` queries
+`{host}/api/v0/models` and matches by `provider.model`, returning
+`max_context_length` (or `None` on any request failure — LM Studio not
+running yet, model not found, network hiccup — this must never raise,
+since it runs once at `LangChainLlm.__init__` time and a startup that
+already tolerates warmup failures shouldn't hard-fail on this either);
+`"openai"`/`"azure"` check `{PROVIDER}_CONTEXT_WINDOW` env var first,
+then fall back to `CONTEXT_WINDOWS.get((provider.name, provider.model))`,
+else `None`.
+
+Called **once**, in `LangChainLlm.__init__` (stored as
+`self._context_window`) — not per turn. A live HTTP call to LM Studio's
+`/api/v0/models` on every single turn would add latency to a
+voice-agent's turn-taking loop for a number that never changes during
+one run.
 
 ## Wiring into `Agent`
 
@@ -171,8 +227,11 @@ mode's `report()`-style output) gains one more line when `usage` is
 non-empty, e.g.:
 
 ```
-  tokens: 812 in / 47 out (859 total)   cost: $0.0002   tools: get_current_time
+  tokens: 812 in / 47 out (859 total / 32768 context)   cost: $0.0002   tools: get_current_time
 ```
+
+(`context` is omitted from the line — falls back to just the total —
+when `usage["context_window"]` is `None`.)
 
 For server mode, `usage` (if non-empty) is merged into the existing
 `bot_text` event's payload: `emit("bot_text", {"text": joined, "usage": usage})`.
@@ -193,6 +252,10 @@ same field.
   logged, doesn't stop startup.
 - `estimate_cost()`/`price_for()` never raise — an unpriced model is
   `None`/"n/a", not an error.
+- `get_context_window()` never raises either — a failed local
+  `/api/v0/models` request (LM Studio not up yet, network issue) or an
+  unlisted OpenAI/Azure model both resolve to `None`, exactly like an
+  unpriced model.
 
 ## Testing
 
@@ -201,9 +264,17 @@ same field.
   winning over env-derived model name.
 - `tests/test_pricing.py` (new): table lookup, env override precedence,
   `None` for unknown model, local always `(0.0, 0.0)`.
+- `tests/test_context_window.py` (new): local branch parses a mocked
+  `/api/v0/models` response and matches by model id; local branch
+  returns `None` on a request exception (mocked to raise) rather than
+  propagating it; openai/azure table lookup + env override, same shape
+  as pricing's tests.
 - `tests/test_langchain_llm.py` (extend): `usage` dict populated from a
-  fake accumulated message's `usage_metadata`; `usage=None` (default)
-  behaves exactly as today (no regression on the four existing tests);
-  tool calls across multiple rounds all appear in `usage["tool_calls"]`.
-- No test talks to a real OpenAI/Azure endpoint — `ChatOpenAI`/`AzureChatOpenAI`
-  construction is monkeypatched exactly like today's `ChatOpenAI` mock.
+  fake accumulated message's `usage_metadata`, including
+  `context_window`; `usage=None` (default) behaves exactly as today (no
+  regression on the four existing tests); tool calls across multiple
+  rounds all appear in `usage["tool_calls"]`.
+- No test talks to a real OpenAI/Azure/LM Studio endpoint —
+  `ChatOpenAI`/`AzureChatOpenAI` construction is monkeypatched exactly
+  like today's `ChatOpenAI` mock, and `get_context_window()`'s local
+  branch monkeypatches `requests.get`.
