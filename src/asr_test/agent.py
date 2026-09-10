@@ -29,6 +29,7 @@ class Agent:
         trigger_word: str | None = None,
         audio_sink: AudioSinkBase | None = None,
         on_event: Callable[[str, dict], None] | None = None,
+        text_only: bool = False,
     ):
         print("Loading models...")
         t0 = time.perf_counter()
@@ -114,6 +115,12 @@ class Agent:
         # funnel through feed_audio().
         self.muted = threading.Event()
 
+        # Text-mode sessions never synthesize/play audio — see
+        # respond()'s enqueue(), which checks this flag before pushing
+        # to tts_q. Everything else about a turn (LLM streaming,
+        # history, the bot_text event) is identical to voice mode.
+        self.text_only = text_only
+
     def new_turn(self) -> int:
         with self.turn_lock:
             self.turn_id += 1
@@ -130,6 +137,17 @@ class Agent:
         self.cancel.set()
         self.audio_out.flush()
         self.new_turn()
+
+    def on_text_message(self, text: str) -> None:
+        """Transport-agnostic entry point for one text-mode chat turn —
+        the text-mode equivalent of feed_audio() + worker_thread()'s
+        STT hand-off, minus VAD/STT entirely. Runs respond() directly
+        on the calling thread (the caller — server.py's websocket loop
+        — is expected to run this off the event loop, same as any
+        other blocking Agent call)."""
+        print(f"USER: {text}")
+        self._on_event("user_text", {"text": text})
+        self.respond(text, self.new_turn(), stt_t=0.0)
 
     def feed_audio(self, frame: np.ndarray) -> None:
         """Transport-agnostic entry point for one mono audio frame.
@@ -299,7 +317,8 @@ class Agent:
 
             chunk_no += 1
             first = False
-            self.tts_q.put((turn, chunk_no, chunk, stt_t, turn_start, ttft))
+            if not self.text_only:
+                self.tts_q.put((turn, chunk_no, chunk, stt_t, turn_start, ttft))
             spoken.append(chunk)
             return True
 
