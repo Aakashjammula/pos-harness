@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Optional
 from unicodedata import normalize
 
 import numpy as np
@@ -39,7 +38,7 @@ def _strip_punctuation(text: str) -> str:
 
 class _UnicodeProcessor:
     def __init__(self, unicode_indexer_path: str):
-        with open(unicode_indexer_path, "r") as f:
+        with open(unicode_indexer_path) as f:
             self.indexer = json.load(f)
 
     def _preprocess_text(self, text: str, lang: str) -> str:
@@ -92,7 +91,7 @@ class _UnicodeProcessor:
         return np.array([ord(char) for char in text], dtype=np.uint16)
 
     def __call__(self, text_list: list[str], lang_list: list[str]) -> tuple[np.ndarray, np.ndarray]:
-        text_list = [self._preprocess_text(t, lang) for t, lang in zip(text_list, lang_list)]
+        text_list = [self._preprocess_text(t, lang) for t, lang in zip(text_list, lang_list, strict=True)]
         text_ids_lengths = np.array([len(text) for text in text_list], dtype=np.int64)
         text_ids = np.zeros((len(text_list), text_ids_lengths.max()), dtype=np.int64)
         for i, text in enumerate(text_list):
@@ -183,7 +182,7 @@ class _TextToSpeechEngine:
         return wav_cat, dur_cat
 
 
-def _length_to_mask(lengths: np.ndarray, max_len: Optional[int] = None) -> np.ndarray:
+def _length_to_mask(lengths: np.ndarray, max_len: int | None = None) -> np.ndarray:
     max_len = max_len or lengths.max()
     ids = np.arange(0, max_len)
     mask = (ids < np.expand_dims(lengths, axis=1)).astype(np.float32)
@@ -220,7 +219,7 @@ def _chunk_text(text: str, max_len: int = 300) -> list[str]:
 
 
 def _load_voice_style(path: str) -> _Style:
-    with open(path, "r") as f:
+    with open(path) as f:
         raw = json.load(f)
     ttl_dims = raw["style_ttl"]["dims"]
     dp_dims = raw["style_dp"]["dims"]
@@ -302,7 +301,7 @@ class SupertonicTts(TtsBase):
         vector_est_ort = ort.InferenceSession(vector_est_path, sess_options=opts, providers=providers)
         vocoder_ort = ort.InferenceSession(vocoder_path, sess_options=opts, providers=providers)
 
-        with open(cfg_path, "r") as f:
+        with open(cfg_path) as f:
             cfgs = json.load(f)
         text_processor = _UnicodeProcessor(indexer_path)
 

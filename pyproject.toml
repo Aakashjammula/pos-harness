@@ -1,7 +1,7 @@
 [project]
 name = "asr-test"
 version = "0.1.0"
-description = "Add your description here"
+description = "Full-duplex local speech-to-speech voice agent (VAD/STT/LLM/TTS) with barge-in, session history, and a browser or CLI client."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -33,4 +33,16 @@ packages = ["src/asr_test"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "ruff>=0.16.6",
 ]
+
+[tool.ruff]
+line-length = 120   # generous on purpose -- matches this codebase's existing
+                    # style of long, explanatory inline comments (many already
+                    # run 100-118 chars); a hard 79/88 would flag most of them
+target-version = "py314"
+
+[tool.ruff.lint]
+# E/F: pyflakes+pycodestyle core (unused imports/vars, undefined names, ...)
+# I: import sorting; UP: pyupgrade (modern syntax); B: bugbear (common footguns)
+select = ["E", "F", "I", "UP", "B"]

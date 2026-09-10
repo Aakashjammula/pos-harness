@@ -454,30 +454,56 @@ as a drop-in alternative (different voices/prosody) via `--tts supertonic`.
 ## Architecture
 
 ```
-main.py                          local-mode CLI entrypoint (--tts, --voice, --trigger-word)
+main.py                          local-mode CLI entrypoint (--tts, --voice, --trigger-word, --vad-*)
 server.py                        FastAPI multi-session websocket server (see "Running" above)
 ws_client.py                     Python CLI relay client for server.py
-static/index.html                browser relay client for server.py
+static/index.html                browser relay client for server.py — voice/text toggle, live
+                                  transcript, settings, session History sidebar
+conftest.py                      empty — puts the repo root on sys.path so tests can
+                                  `from server import ...` without packaging the root scripts
 src/asr_test/
   config.py                      shared, engine-agnostic settings
   utils.py                       resample_linear, pcm16_to_float32, float32_to_pcm16
-  agent.py                       orchestrator: threads + queues wiring; feed_audio/start/shutdown
-                                  are the transport-agnostic entry points main.py and server.py
-                                  both drive
+  agent.py                       orchestrator: threads + queues wiring; feed_audio/on_text_message/
+                                  start/shutdown are the transport-agnostic entry points main.py
+                                  and server.py both drive
+  storage.py                     SessionStore — SQLite session/turn history (create/add_turn/
+                                  set_title/delete_session/list_sessions/get_session)
+  null_engines.py                NullTts/NullVad — no-op stand-ins for text-mode sessions; kept
+                                  outside tts/ and vad/ on purpose, see the file's own docstring
   interfaces/
     vad.py, stt.py, tts.py, llm.py, audio_sink.py   abstract base classes (the swap contracts)
   audio/
     output.py                    LocalAudioSink(AudioSinkBase) — playback ring buffer, click-free underrun handling
     ws_sink.py                   WebSocketAudioSink(AudioSinkBase) — same contract, paced by a timer thread instead of a device callback
+    null_sink.py                 NullAudioSink(AudioSinkBase) — no-op, for text-mode sessions
   vad/silero.py                  SileroVad(VadBase)
   stt/onnx_asr_engine.py         OnnxAsrEngine(SttBase)
   tts/kokoro.py                  KokoroTts(TtsBase)
   tts/supertonic.py              SupertonicTts(TtsBase)
-  llm/langchain_llm.py           LangChainLlm(LlmBase) — ChatOpenAI + bound tools, hand-rolled tool loop
-  llm/tools.py                    get_current_time, web search (Tavily, needs TAVILY_API_KEY)
+  llm/langchain_llm.py           LangChainLlm(LlmBase) — ChatOpenAI/AzureChatOpenAI + bound
+                                  tools, hand-rolled tool loop, usage/cost/context-window
+                                  reporting, generate_title()
+  llm/provider.py                resolve_provider() — env-var backend selection (local/openai/azure)
+  llm/pricing.py                 per-token cost table + env overrides
+  llm/context_window.py          context-window lookup (live for local, table for cloud)
+  llm/tools.py                   get_current_time, web search (Tavily, needs TAVILY_API_KEY)
   llm/openai_compatible.py       OpenAiCompatibleLlm(LlmBase) — plain OpenAI SDK, no tool calling, kept for reference/tests
 tests/                           pytest suite (fakes.py holds shared no-hardware/no-network test doubles); run with `uv run pytest`
 ```
+
+### Code standards
+
+`uv run ruff check .` is the lint gate — unused imports, unsorted imports,
+deprecated syntax, and common bug patterns (e.g. `zip()` without
+`strict=`). Config lives in `pyproject.toml`'s `[tool.ruff]` (line length
+is a generous 120, matching this codebase's existing style of long
+explanatory inline comments). `ruff format` is intentionally **not**
+enforced — it would reformat nearly every file to its own opinionated
+line-wrapping style with no correctness benefit, on top of formatting
+Python code fences inside `docs/*.md`, which isn't wanted for planning
+documents. Run it manually (`uv run ruff format --diff src tests *.py`,
+excluding `docs/`) only if you want to see what it would change.
 
 `Agent` is built by dependency injection —
 `Agent(vad=..., stt=..., tts=..., llm=..., trigger_word=..., audio_sink=..., on_event=...)`

@@ -44,7 +44,7 @@ class KokoroTts(TtsBase):
         model_path = hf_hub_download(repo, "model.onnx")
         voices_path = hf_hub_download(repo, "voices.json")
 
-        with open(voices_path, "r", encoding="utf-8") as f:
+        with open(voices_path, encoding="utf-8") as f:
             voices = json.load(f)
         if voice not in voices:
             raise ValueError(f"voice '{voice}' missing; have {sorted(voices)[:12]}")
@@ -97,5 +97,5 @@ class KokoroTts(TtsBase):
         from huggingface_hub import hf_hub_download
 
         voices_path = hf_hub_download(repo, "voices.json")
-        with open(voices_path, "r", encoding="utf-8") as f:
+        with open(voices_path, encoding="utf-8") as f:
             return sorted(json.load(f))

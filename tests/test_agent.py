@@ -1,10 +1,10 @@
 import time
 
 import numpy as np
+from fakes import FakeAudioSink, FakeLlm, FakeStt, FakeTts, FakeVad
 
 from asr_test import config
 from asr_test.agent import Agent
-from fakes import FakeAudioSink, FakeLlm, FakeStt, FakeTts, FakeVad
 
 
 def _build_agent(**overrides):
