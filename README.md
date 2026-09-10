@@ -67,7 +67,7 @@ This creates `.venv/` and installs everything, including this project
 itself (editable), so `main.py` can `from asr_test... import ...`.
 
 Then start LM Studio, load a model, and start its local server (default
-`http://localhost:1234/v1` — matches `OpenAiCompatibleLlm`'s default; see
+`http://localhost:1234/v1` — matches `LangChainLlm`'s default; see
 Configuration below if yours differs).
 
 ### Optional: Supertonic TTS
@@ -227,6 +227,93 @@ These are forwarded to `server.py` as the same `/ws` query params the
 browser client uses — see `server.py`'s own module docstring for the
 full query-param reference.
 
+### VAD tuning
+
+All three run modes let you tune Silero VAD's sensitivity and
+turn-taking without touching code:
+
+```
+uv run main.py --vad-threshold 0.35        # lower = more sensitive (default: 0.5)
+uv run main.py --vad-min-silence-ms 800    # shorter pause before a turn ends (default: MIN_SILENCE_MS)
+uv run main.py --vad-speech-pad-ms 200     # less padding kept around detected speech (default: SPEECH_PAD_MS)
+
+uv run ws_client.py --vad-threshold 0.35 --vad-min-silence-ms 800
+```
+
+forwarded to `server.py` as `vad_threshold`/`vad_min_silence_ms`/
+`vad_speech_pad_ms` query params (same as above); the browser client has
+matching "vad sensitivity"/"pause length"/"speech padding" fields in its
+config panel. `vad_threshold` must be in `[0, 1]`; all three are
+validated before the session starts — an invalid value gets an `error`
+event and the socket is closed rather than silently falling back.
+
+### LLM: LangChain + tool calling
+
+The LLM stage (`src/asr_test/llm/langchain_llm.py`, `LangChainLlm`) runs
+on `langchain` + `langchain-openai`'s `ChatOpenAI` instead of talking to
+the OpenAI SDK directly — same LM Studio (or any OpenAI-compatible)
+backend, no new server required. `LlmBase.stream(messages, cancel)`'s
+contract is unchanged, so `Agent`, `server.py`, and every other caller
+needed no changes.
+
+This unlocks tool calling: the model can call a bound tool
+mid-conversation and get its result folded back in before finishing its
+answer. The tool-execution loop (invoke, check `tool_calls`, run the
+tool, append its result, invoke again — bounded by
+`max_tool_rounds=3`) is hand-rolled per LangChain's own documented "Tool
+Execution Loop" pattern, not `create_agent` — that owns its own
+conversation memory (`AgentState` + a checkpointer), which would
+duplicate the history `Agent` already tracks in `self.conversation`.
+
+Tools bound by default (`src/asr_test/llm/tools.py`):
+- **`get_current_time`** — always on, no setup. A voice assistant with
+  no sense of the current date/time is asked about it constantly.
+- **web search** (via [Tavily](https://tavily.com/), free tier available)
+  — only enabled if `TAVILY_API_KEY` is set in the environment; skipped
+  (with a startup log line) otherwise, so search being unconfigured
+  doesn't stop the agent from starting.
+
+```
+# PowerShell
+$env:TAVILY_API_KEY = "tvly-..."
+uv run main.py
+
+# bash
+export TAVILY_API_KEY=tvly-...
+uv run main.py
+```
+
+Pass a custom `tools=[...]` list to `LangChainLlm(...)` to add more —
+any LangChain `BaseTool` (including a plain `@tool`-decorated function)
+works.
+
+**Backend selection** (env vars, decided once per run — no in-session picker):
+
+| Backend | Selected by | Other vars |
+|---|---|---|
+| Local (default) | *(none of the below set)* | — talks to LM Studio, same as before |
+| OpenAI | `OPENAI_API_KEY` | `OPENAI_MODEL` (default `gpt-4o-mini`) |
+| Azure OpenAI | `AZURE_OPENAI_API_KEY` (wins if both are set) | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`, `AZURE_OPENAI_API_VERSION` (default `2026-01-01-preview`) |
+
+Every turn's token usage and an estimated cost are printed alongside the
+existing `llm: ttft ...` timing line, and included as a `usage` field on
+the server's `bot_text` websocket event. Cost is always `$0` on the
+local backend. For OpenAI, a small built-in price table covers a couple
+of common models (a point-in-time snapshot — likely to drift; override
+with `OPENAI_PRICE_INPUT_PER_1K`/`OPENAI_PRICE_OUTPUT_PER_1K`, both in
+$/1K tokens). Azure pricing varies per contract/region and has no
+built-in default — set `AZURE_PRICE_INPUT_PER_1K`/`AZURE_PRICE_OUTPUT_PER_1K`
+yourself, or cost shows as unavailable.
+
+Context-window size is also reported (`usage["context_window"]`, and in
+the console line as `.../<n> context`). For the local backend it's read
+live from LM Studio's own REST API v0 (no setup needed). OpenAI and
+Azure have no API that exposes this at all, so it comes from the same
+kind of small built-in table + env override as pricing —
+`OPENAI_CONTEXT_WINDOW`/`AZURE_CONTEXT_WINDOW` (plain integer, tokens)
+— and is `None`/omitted from the console line if unset and the model
+isn't in the built-in table.
+
 ## Latency
 
 Real numbers, not estimates — aggregated from actual `TTFA = stt + llm_ttft
@@ -342,11 +429,12 @@ implementation instead, so swapping an engine doesn't require touching
 - `src/asr_test/stt/onnx_asr_engine.py` — `OnnxAsrEngine`
 - `src/asr_test/tts/kokoro.py` — `KokoroTts`
 - `src/asr_test/tts/supertonic.py` — `SupertonicTts`
-- `src/asr_test/llm/openai_compatible.py` — `OpenAiCompatibleLlm` (base
-  URL, API key, model name, system prompt — this is where you'd point at
-  a different LM Studio model or port; conversation history length is
-  `config.HISTORY_TURNS`, owned by `Agent` instead — see Configuration
-  above)
+- `src/asr_test/llm/langchain_llm.py` — `LangChainLlm` (base URL, API
+  key, model name, system prompt, tools, `max_tool_rounds` — this is
+  where you'd point at a different LM Studio model or port;
+  conversation history length is `config.HISTORY_TURNS`, owned by
+  `Agent` instead — see Configuration above and "LLM: LangChain + tool
+  calling" below)
 
 ### TTS engine choice
 
@@ -385,7 +473,9 @@ src/asr_test/
   stt/onnx_asr_engine.py         OnnxAsrEngine(SttBase)
   tts/kokoro.py                  KokoroTts(TtsBase)
   tts/supertonic.py              SupertonicTts(TtsBase)
-  llm/openai_compatible.py       OpenAiCompatibleLlm(LlmBase)
+  llm/langchain_llm.py           LangChainLlm(LlmBase) — ChatOpenAI + bound tools, hand-rolled tool loop
+  llm/tools.py                    get_current_time, web search (Tavily, needs TAVILY_API_KEY)
+  llm/openai_compatible.py       OpenAiCompatibleLlm(LlmBase) — plain OpenAI SDK, no tool calling, kept for reference/tests
 tests/                           pytest suite (fakes.py holds shared no-hardware/no-network test doubles); run with `uv run pytest`
 ```
 
