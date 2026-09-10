@@ -59,6 +59,7 @@ from asr_test.agent import Agent
 from asr_test.audio.null_sink import NullAudioSink
 from asr_test.audio.ws_sink import WebSocketAudioSink
 from asr_test.interfaces import LlmBase, SttBase, TtsBase, VadBase
+from asr_test.null_engines import NullTts, NullVad
 from asr_test.storage import SessionStore
 from asr_test.utils import pcm16_to_float32
 from asr_test.vad import SileroVad
@@ -212,12 +213,16 @@ def create_app(
             await websocket.close(code=1008)
             return
 
-        tts = await get_tts(tts_engine, voice)
+        # Text-mode sessions never synthesize audio at all, so skip
+        # constructing (and warming/loading) a real TTS engine for one —
+        # NullTts stands in instead. Same reasoning for VAD further below.
+        tts = NullTts() if mode == "text" else await get_tts(tts_engine, voice)
         llm = await get_llm(llm_model)
 
         session_id = uuid.uuid4().hex
+        stored_tts_engine = None if mode == "text" else tts_engine
         try:
-            store.create_session(session_id, mode=mode, tts_engine=tts_engine, llm_model=llm_model)
+            store.create_session(session_id, mode=mode, tts_engine=stored_tts_engine, llm_model=llm_model)
         except Exception as e:
             print(f"  session store error (create_session): {e}")
 
@@ -226,7 +231,7 @@ def create_app(
             "session_id": session_id,
             "input_sample_rate": config.MIC_RATE,
             "output_sample_rate": tts.sample_rate,
-            "tts_engine": tts_engine,
+            "tts_engine": stored_tts_engine,
             "llm_model": llm_model,
         })
 
@@ -250,10 +255,14 @@ def create_app(
 
             asyncio.run_coroutine_threadsafe(_send(), loop)
 
-        vad = vad_factory(
-            threshold=vad_threshold,
-            min_silence_ms=vad_min_silence_ms,
-            speech_pad_ms=vad_speech_pad_ms,
+        vad = (
+            NullVad()
+            if mode == "text"
+            else vad_factory(
+                threshold=vad_threshold,
+                min_silence_ms=vad_min_silence_ms,
+                speech_pad_ms=vad_speech_pad_ms,
+            )
         )
         sink = (
             NullAudioSink()

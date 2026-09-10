@@ -292,6 +292,58 @@ def test_ws_rejects_invalid_mode(monkeypatch):
         assert "mode" in msg["message"]
 
 
+def test_ws_text_mode_never_calls_vad_factory(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    calls = []
+
+    def spy_vad_factory(**kwargs):
+        calls.append(kwargs)
+        return FakeVad(start_at=1, end_at=3)
+
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm("hi there"),
+        vad_factory=spy_vad_factory,
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?mode=text") as ws:
+        ws.receive_json()  # ready
+        ws.send_json({"text": "hello there"})
+        ws.receive_json()  # user_text
+        ws.receive_json()  # bot_text
+
+    assert calls == []
+
+
+def test_ws_text_mode_never_constructs_a_real_tts_engine(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    before = FakeTts.instances_created
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm("hi there"),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    # create_app() eagerly warms the default (engine, voice="") combo at
+    # startup regardless of mode -- snapshot after that, not before.
+    before = FakeTts.instances_created
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?mode=text") as ws:
+        ws.receive_json()  # ready
+        ws.send_json({"text": "hello there"})
+        ws.receive_json()  # user_text
+        ws.receive_json()  # bot_text
+
+    assert FakeTts.instances_created == before
+
+
 def test_ready_event_includes_session_id(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     store = SessionStore(":memory:")

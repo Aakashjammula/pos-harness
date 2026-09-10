@@ -12,10 +12,12 @@ class SileroVad(VadBase):
         sample_rate: int = 16000,
         min_silence_ms: int = 900,
         speech_pad_ms: int = 300,
+        threshold: float = 0.5,
     ):
         self._model = load_silero_vad(onnx=True)
         self._iterator = VADIterator(
             self._model,
+            threshold=threshold,
             sampling_rate=sample_rate,
             min_silence_duration_ms=min_silence_ms,
             speech_pad_ms=speech_pad_ms,
