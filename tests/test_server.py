@@ -5,9 +5,9 @@ from fakes import FakeLlm, FakeStt, FakeTts, FakeVad
 from starlette.testclient import TestClient
 
 from asr_test import config
+from asr_test.cli.server import _default_llm_models, create_app
 from asr_test.storage import SessionStore
 from asr_test.utils import float32_to_pcm16
-from server import _default_llm_models, create_app
 
 
 def _make_client(monkeypatch):
@@ -55,7 +55,7 @@ def test_two_concurrent_sessions_have_independent_history(monkeypatch):
 
 
 def test_options_endpoint_lists_tts_voices_and_llm_models(monkeypatch):
-    monkeypatch.setattr("server._default_llm_models", lambda base_url, fallback: ["model-a", "model-b"])
+    monkeypatch.setattr("asr_test.cli.server._default_llm_models", lambda base_url, fallback: ["model-a", "model-b"])
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -79,7 +79,7 @@ def test_default_llm_models_falls_back_when_lm_studio_unreachable(monkeypatch):
         def get(self, *a, **kw):
             raise ConnectionError("no server")
 
-    monkeypatch.setattr("server.requests", _BoomSession())
+    monkeypatch.setattr("asr_test.cli.server.requests", _BoomSession())
 
     assert _default_llm_models("http://localhost:1234/v1", "fallback-model") == ["fallback-model"]
 
@@ -647,3 +647,19 @@ def test_resuming_a_session_does_not_regenerate_its_title(monkeypatch):
 
     assert fake_llm.title_calls == []
     assert store.get_session("s1")["session"]["title"] == "Original title"
+
+
+def test_index_page_is_served():
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    resp = client.get("/")
+
+    assert resp.status_code == 200
+    assert "Voice Agent" in resp.text
