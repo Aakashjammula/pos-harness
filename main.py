@@ -37,13 +37,22 @@ Usage:
     # Mute: once running, press Enter in this terminal to toggle
     # muting the mic (frames are dropped before VAD ever sees them, so
     # the agent stays idle) — press Enter again to unmute.
+
+    # Tweak VAD sensitivity/turn-taking (defaults match config.py):
+    uv run main.py --vad-threshold 0.35        # lower = more sensitive (catches quieter speech, more false positives)
+    uv run main.py --vad-min-silence-ms 800    # shorter pause before a turn is considered finished
+    uv run main.py --vad-speech-pad-ms 200     # less padding kept around detected speech
 """
 
 import argparse
+import uuid
 
+from asr_test import config
 from asr_test.agent import Agent
+from asr_test.storage import SessionStore
 from asr_test.tts import KokoroTts, SupertonicTts
 from asr_test.utils import list_input_devices, resolve_input_device, start_mute_toggle_listener
+from asr_test.vad import SileroVad
 
 _TTS_ENGINES = {
     "kokoro": KokoroTts,
@@ -77,6 +86,23 @@ def main():
         "--list-mics", action="store_true",
         help="Print available input devices and exit.",
     )
+    parser.add_argument(
+        "--vad-threshold", type=float, default=0.5, metavar="0-1",
+        help="Speech probability threshold (default: 0.5, Silero's own "
+             "default). Lower = more sensitive (catches quieter speech, "
+             "more false positives); higher = less sensitive.",
+    )
+    parser.add_argument(
+        "--vad-min-silence-ms", type=int, default=config.MIN_SILENCE_MS,
+        help=f"How long a pause must last before a turn is considered "
+             f"finished (default: {config.MIN_SILENCE_MS}). Lower = "
+             f"snappier but risks cutting off mid-sentence pauses.",
+    )
+    parser.add_argument(
+        "--vad-speech-pad-ms", type=int, default=config.SPEECH_PAD_MS,
+        help=f"Padding kept on each side of detected speech (default: "
+             f"{config.SPEECH_PAD_MS}).",
+    )
     args = parser.parse_args()
 
     if args.list_mics:
@@ -84,12 +110,37 @@ def main():
             print(line)
         return
 
+    if not (0.0 <= args.vad_threshold <= 1.0):
+        parser.error(f"--vad-threshold must be in [0, 1], got {args.vad_threshold}")
+
     device = resolve_input_device(args.mic)
 
     tts_kwargs = {"voice": args.voice} if args.voice else {}
     tts = _TTS_ENGINES[args.tts](**tts_kwargs)
 
-    agent = Agent(tts=tts, trigger_word=args.trigger_word)
+    vad = SileroVad(
+        sample_rate=config.MIC_RATE,
+        threshold=args.vad_threshold,
+        min_silence_ms=args.vad_min_silence_ms,
+        speech_pad_ms=args.vad_speech_pad_ms,
+    )
+
+    session_store = SessionStore(config.SESSIONS_DB_PATH)
+    session_id = uuid.uuid4().hex
+    session_store.create_session(
+        session_id, mode="voice", tts_engine=args.tts, llm_model="lfm2.5-230m"
+    )
+
+    def on_event(name: str, data: dict) -> None:
+        try:
+            if name == "user_text":
+                session_store.add_turn(session_id, "user", data["text"])
+            elif name == "bot_text":
+                session_store.add_turn(session_id, "assistant", data["text"], data.get("usage"))
+        except Exception as e:
+            print(f"  session store error: {e}")
+
+    agent = Agent(vad=vad, tts=tts, trigger_word=args.trigger_word, on_event=on_event)
     start_mute_toggle_listener(agent.muted)
     agent.run(device=device)
 
