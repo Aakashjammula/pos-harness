@@ -12,10 +12,10 @@ def _clear_provider_env(monkeypatch):
     monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     # Default every test in this file to no real network call for the
-    # context-window lookup (Task 2b's local branch hits LM Studio's
-    # REST API) — test_context_window_resolved_once_at_construction
-    # below overrides this per-test with its own monkeypatch.setattr.
-    monkeypatch.setattr("asr_test.llm.langchain_llm.get_context_window", lambda provider: None)
+    # context-window lookup (local's provider hits LM Studio's REST
+    # API) — test_context_window_resolved_once_at_construction below
+    # overrides this per-test with its own monkeypatch.setattr.
+    monkeypatch.setattr("asr_test.llm.langchain_llm.context_window_for", lambda provider: None)
 
 
 def _text_chunk(content):
@@ -40,7 +40,7 @@ def _usage_chunk(input_tokens, output_tokens):
 
 
 class _FakeRunnable:
-    """Stands in for `ChatOpenAI(...).bind_tools([...])`. `rounds` is a
+    """Stands in for `build_model(...).bind_tools([...])`. `rounds` is a
     list of chunk-lists, one per stream() call — lets a test script a
     tool-call round followed by a final text round."""
 
@@ -57,7 +57,7 @@ def _make_llm(monkeypatch, runnable, tools=()):
     mock_model = MagicMock()
     mock_model.bind_tools.return_value = runnable
     mock_model.stream = runnable.stream  # used verbatim when tools=[] (no bind_tools wrapping)
-    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", lambda **kw: mock_model)
+    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
     return LangChainLlm(tools=list(tools), warmup=False)
 
 
@@ -90,7 +90,6 @@ def test_stream_executes_tool_call_then_streams_final_answer(monkeypatch):
     assert len(runnable.stream_calls) == 2
     fake_tool.invoke.assert_called_once_with({})
 
-    # second round's messages include the tool-call AI message + its ToolMessage result
     second_round_messages = runnable.stream_calls[1]
     tool_messages = [m for m in second_round_messages if m.__class__.__name__ == "ToolMessage"]
     assert len(tool_messages) == 1
@@ -130,91 +129,23 @@ def test_stream_bounds_tool_loop_at_max_tool_rounds(monkeypatch):
     assert len(runnable.stream_calls) == 2
 
 
-def test_local_provider_builds_chat_openai_with_lm_studio_defaults(monkeypatch):
-    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    captured_kwargs = {}
+def test_init_passes_expected_kwargs_to_build_model(monkeypatch):
+    captured = {}
 
-    def fake_chat_openai(**kwargs):
-        captured_kwargs.update(kwargs)
+    def fake_build_model(provider, **kwargs):
+        captured.update(kwargs)
         mock_model = MagicMock()
-        mock_model.bind_tools.return_value = _FakeRunnable([[_text_chunk("hi")]])
+        mock_model.bind_tools.return_value = _FakeRunnable([])
         return mock_model
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", fake_chat_openai)
+    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", fake_build_model)
 
-    llm = LangChainLlm(tools=[], warmup=False)
+    LangChainLlm(max_tokens=99, timeout=12, tools=[], warmup=False)
 
-    assert llm.provider.name == "local"
-    assert captured_kwargs["base_url"] == "http://localhost:1234/v1"
-    assert captured_kwargs["api_key"] == "lm-studio"
-    assert captured_kwargs["model"] == "lfm2.5-230m"
-    assert captured_kwargs["stream_usage"] is True
-
-
-def test_openai_provider_builds_chat_openai_without_base_url(monkeypatch):
-    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")
-    captured_kwargs = {}
-
-    def fake_chat_openai(**kwargs):
-        captured_kwargs.update(kwargs)
-        mock_model = MagicMock()
-        mock_model.bind_tools.return_value = _FakeRunnable([[_text_chunk("hi")]])
-        return mock_model
-
-    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", fake_chat_openai)
-
-    llm = LangChainLlm(tools=[], warmup=False)
-
-    assert llm.provider.name == "openai"
-    assert captured_kwargs["base_url"] is None
-    assert captured_kwargs["api_key"] == "sk-test"
-    assert captured_kwargs["model"] == "gpt-4o-mini"
-
-
-def test_azure_provider_builds_azure_chat_openai(monkeypatch):
-    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-key")
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com/")
-    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "my-deployment")
-    captured_kwargs = {}
-
-    def fake_azure_chat_openai(**kwargs):
-        captured_kwargs.update(kwargs)
-        mock_model = MagicMock()
-        mock_model.bind_tools.return_value = _FakeRunnable([[_text_chunk("hi")]])
-        return mock_model
-
-    monkeypatch.setattr("asr_test.llm.langchain_llm.AzureChatOpenAI", fake_azure_chat_openai)
-
-    llm = LangChainLlm(tools=[], warmup=False)
-
-    assert llm.provider.name == "azure"
-    assert captured_kwargs["azure_endpoint"] == "https://example.openai.azure.com/"
-    assert captured_kwargs["azure_deployment"] == "my-deployment"
-    assert captured_kwargs["api_key"] == "azure-key"
-    assert captured_kwargs["api_version"] == "2026-01-01-preview"
-
-
-def test_model_kwarg_overrides_env_derived_model(monkeypatch):
-    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
-    captured_kwargs = {}
-
-    def fake_chat_openai(**kwargs):
-        captured_kwargs.update(kwargs)
-        mock_model = MagicMock()
-        mock_model.bind_tools.return_value = _FakeRunnable([[_text_chunk("hi")]])
-        return mock_model
-
-    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", fake_chat_openai)
-
-    llm = LangChainLlm(model="gpt-4o-mini", tools=[], warmup=False)
-
-    assert llm.provider.model == "gpt-4o-mini"
-    assert captured_kwargs["model"] == "gpt-4o-mini"
+    assert captured["max_tokens"] == 99
+    assert captured["temperature"] == 0.7
+    assert captured["timeout"] == 12
+    assert captured["stream_usage"] is True
 
 
 def test_warmup_failure_message_omits_lm_studio_hint_for_non_local(monkeypatch, capsys):
@@ -223,7 +154,7 @@ def test_warmup_failure_message_omits_lm_studio_hint_for_non_local(monkeypatch, 
     mock_model = MagicMock()
     mock_model.invoke.side_effect = RuntimeError("boom")
     mock_model.bind_tools.return_value = _FakeRunnable([])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", lambda **kw: mock_model)
+    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
 
     LangChainLlm(tools=[], warmup=True, warmup_attempts=1)
 
@@ -237,7 +168,7 @@ def test_warmup_retries_on_failure_and_succeeds_before_attempts_exhausted(monkey
     mock_model = MagicMock()
     mock_model.invoke.side_effect = [ConnectionError("not up yet"), MagicMock()]
     mock_model.bind_tools.return_value = _FakeRunnable([])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", lambda **kw: mock_model)
+    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
 
     LangChainLlm(tools=[], warmup=True, warmup_attempts=3, warmup_backoff_base=1.0)
 
@@ -252,7 +183,7 @@ def test_warmup_gives_up_and_logs_after_exhausting_attempts(monkeypatch, capsys)
     mock_model = MagicMock()
     mock_model.invoke.side_effect = ConnectionError("still not up")
     mock_model.bind_tools.return_value = _FakeRunnable([])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", lambda **kw: mock_model)
+    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
 
     LangChainLlm(tools=[], warmup=True, warmup_attempts=3, warmup_backoff_base=1.0)
 
@@ -266,14 +197,14 @@ def test_context_window_resolved_once_at_construction(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     mock_model = MagicMock()
     mock_model.bind_tools.return_value = _FakeRunnable([[_text_chunk("hi")]])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", lambda **kw: mock_model)
+    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
     calls = []
 
-    def fake_get_context_window(provider):
+    def fake_context_window_for(provider):
         calls.append(provider)
         return 131072
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.get_context_window", fake_get_context_window)
+    monkeypatch.setattr("asr_test.llm.langchain_llm.context_window_for", fake_context_window_for)
 
     llm = LangChainLlm(tools=[], warmup=False)
 
@@ -345,7 +276,7 @@ def test_stream_usage_includes_tool_calls_made(monkeypatch):
 def test_stream_usage_includes_resolved_context_window(monkeypatch):
     runnable = _FakeRunnable([[_text_chunk("hi"), _usage_chunk(10, 5)]])
     llm = _make_llm(monkeypatch, runnable, tools=[])
-    llm._context_window = 131072  # simulate what Task 4's __init__ would have resolved
+    llm._context_window = 131072  # simulate what __init__ would have resolved
 
     usage = {}
     list(llm.stream([{"role": "user", "content": "hi"}], threading.Event(), usage))
@@ -366,11 +297,11 @@ def test_stream_retries_context_window_lookup_on_next_turn_when_still_none(monke
 
     calls = []
 
-    def fake_get_context_window(provider):
+    def fake_context_window_for(provider):
         calls.append(provider)
         return 131072
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.get_context_window", fake_get_context_window)
+    monkeypatch.setattr("asr_test.llm.langchain_llm.context_window_for", fake_context_window_for)
 
     usage1 = {}
     list(llm.stream([{"role": "user", "content": "hi"}], threading.Event(), usage1))

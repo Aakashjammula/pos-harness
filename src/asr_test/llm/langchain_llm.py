@@ -6,12 +6,9 @@ from collections.abc import Iterator
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
-from langchain_openai import AzureChatOpenAI, ChatOpenAI
 
 from ..interfaces.llm import LlmBase
-from .context_window import get_context_window
-from .pricing import estimate_cost
-from .provider import resolve_provider
+from .providers import build_model, context_window_for, estimate_cost, resolve_provider
 from .tools import default_tools
 
 
@@ -44,13 +41,15 @@ class LangChainLlm(LlmBase):
         warmup_backoff_base: float = 1.0,
     ):
         self.provider = resolve_provider(model_override=model)
-        self._context_window = get_context_window(self.provider)
+        self._context_window = context_window_for(self.provider)
         self.system_prompt = system_prompt
         self.max_tool_rounds = max_tool_rounds
         self.tools = default_tools() if tools is None else tools
         self._tools_by_name = {t.name: t for t in self.tools}
 
-        self._model = self._build_model(max_tokens=max_tokens, timeout=timeout)
+        self._model = build_model(
+            self.provider, max_tokens=max_tokens, temperature=0.7, timeout=timeout, stream_usage=True
+        )
         self._runnable = self._model.bind_tools(self.tools) if self.tools else self._model
 
         if warmup:
@@ -73,7 +72,7 @@ class LangChainLlm(LlmBase):
                 retried = f" (attempt {attempt + 1}/{attempts})" if attempt else ""
                 print(f"  llm warm-up: {time.perf_counter() - t0:.2f}s{retried}")
                 if self._context_window is None:
-                    self._context_window = get_context_window(self.provider)
+                    self._context_window = context_window_for(self.provider)
                 return
             except Exception as e:
                 last_error = e
@@ -102,23 +101,6 @@ class LangChainLlm(LlmBase):
             return title or None
         except Exception:
             return None
-
-    def _build_model(self, max_tokens: int, timeout: float):
-        common = dict(max_tokens=max_tokens, temperature=0.7, timeout=timeout, stream_usage=True)
-        if self.provider.name == "azure":
-            return AzureChatOpenAI(
-                azure_endpoint=self.provider.azure_endpoint,
-                azure_deployment=self.provider.azure_deployment,
-                api_version=self.provider.api_version,
-                api_key=self.provider.api_key,
-                **common,
-            )
-        return ChatOpenAI(
-            base_url=self.provider.base_url,
-            api_key=self.provider.api_key,
-            model=self.provider.model,
-            **common,
-        )
 
     def stream(
         self, messages: list[dict], cancel: threading.Event, usage: dict | None = None
@@ -167,12 +149,12 @@ class LangChainLlm(LlmBase):
             # startup before LM Studio itself had finished starting, which
             # would otherwise leave context_window permanently None for the
             # life of this (cached, shared) instance.
-            self._context_window = get_context_window(self.provider)
+            self._context_window = context_window_for(self.provider)
         input_tokens = meta.get("input_tokens")
         output_tokens = meta.get("output_tokens")
         cost = None
         if input_tokens is not None and output_tokens is not None:
-            cost = estimate_cost(self.provider.name, self.provider.model, input_tokens, output_tokens)
+            cost = estimate_cost(self.provider, input_tokens, output_tokens)
         usage.update({
             "provider": self.provider.name,
             "model": self.provider.model,
