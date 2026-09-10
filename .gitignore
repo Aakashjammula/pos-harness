@@ -21,3 +21,7 @@ wheels/
 # Ad-hoc screenshots/output from manual or Playwright-driven UI checks
 /.playwright-mcp/
 /*.png
+
+# Local session/turn history (SQLite, see src/asr_test/storage.py) — personal conversation data
+/sessions.db
+/sessions.db-*

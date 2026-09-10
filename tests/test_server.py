@@ -19,6 +19,7 @@ def _make_client(monkeypatch):
         llm_factory=lambda model: fake_llm,
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
     )
     return TestClient(app), fake_llm
 
@@ -60,6 +61,7 @@ def test_options_endpoint_lists_tts_voices_and_llm_models(monkeypatch):
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
     )
     client = TestClient(app)
 
@@ -96,6 +98,7 @@ def test_create_app_eagerly_warms_default_tts_and_llm():
         llm_factory=llm_factory,
         default_tts_engine="kokoro",
         default_llm_model="default-model",
+        session_store=SessionStore(":memory:"),
     )
 
     assert FakeTts.instances_created - before_tts == 1
@@ -111,6 +114,7 @@ def test_tts_engine_cache_reuses_instance_for_same_voice(monkeypatch):
         llm_factory=lambda model: fake_llm,
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
     )
     # Snapshot *after* create_app() — it now eagerly warms the default
     # (engine, voice="") combo at startup, which is a different cache key
@@ -134,6 +138,7 @@ def test_ws_query_params_select_voice_and_llm_model(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
     )
     client = TestClient(app)
 
@@ -158,6 +163,7 @@ def test_ws_vad_query_params_are_passed_to_vad_factory(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=spy_vad_factory,
         default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
     )
     client = TestClient(app)
 
@@ -177,6 +183,7 @@ def test_ws_rejects_out_of_range_vad_threshold(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
     )
     client = TestClient(app)
 
@@ -194,6 +201,7 @@ def test_ws_rejects_non_numeric_vad_param(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
     )
     client = TestClient(app)
 
@@ -211,6 +219,7 @@ def test_ws_rejects_negative_vad_min_silence_ms(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
     )
     client = TestClient(app)
 
