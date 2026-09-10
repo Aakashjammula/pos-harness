@@ -10,6 +10,7 @@ from langchain_openai import AzureChatOpenAI, ChatOpenAI
 
 from ..interfaces.llm import LlmBase
 from .context_window import get_context_window
+from .pricing import estimate_cost
 from .provider import resolve_provider
 from .tools import default_tools
 
@@ -76,12 +77,16 @@ class LangChainLlm(LlmBase):
             **common,
         )
 
-    def stream(self, messages: list[dict], cancel: threading.Event) -> Iterator[str]:
+    def stream(
+        self, messages: list[dict], cancel: threading.Event, usage: dict | None = None
+    ) -> Iterator[str]:
         full: list[BaseMessage] = [SystemMessage(self.system_prompt)]
         for m in messages:
             full.append(
                 HumanMessage(m["content"]) if m["role"] == "user" else AIMessage(m["content"])
             )
+
+        tool_calls_made: list[dict] = []
 
         for _ in range(self.max_tool_rounds):
             if cancel.is_set():
@@ -96,12 +101,35 @@ class LangChainLlm(LlmBase):
                     yield chunk.content
 
             if accumulated is None or not accumulated.tool_calls:
+                if usage is not None and accumulated is not None:
+                    self._fill_usage(usage, accumulated, tool_calls_made)
                 return
 
             full.append(accumulated)
             for call in accumulated.tool_calls:
                 if cancel.is_set():
                     return
+                tool_calls_made.append({"name": call["name"], "args": call["args"]})
                 tool_ = self._tools_by_name.get(call["name"])
                 result = tool_.invoke(call["args"]) if tool_ is not None else f"unknown tool: {call['name']}"
                 full.append(ToolMessage(content=str(result), tool_call_id=call["id"]))
+
+    def _fill_usage(self, usage: dict, accumulated, tool_calls_made: list[dict]) -> None:
+        meta = getattr(accumulated, "usage_metadata", None)
+        if not meta:
+            return  # backend didn't report it — leave usage as {}, not zeroed
+        input_tokens = meta.get("input_tokens")
+        output_tokens = meta.get("output_tokens")
+        cost = None
+        if input_tokens is not None and output_tokens is not None:
+            cost = estimate_cost(self.provider.name, self.provider.model, input_tokens, output_tokens)
+        usage.update({
+            "provider": self.provider.name,
+            "model": self.provider.model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": meta.get("total_tokens"),
+            "cost_usd": cost,
+            "tool_calls": tool_calls_made,
+            "context_window": self._context_window,
+        })

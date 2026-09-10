@@ -29,6 +29,16 @@ def _tool_call_chunk(name, args, call_id):
     )
 
 
+def _usage_chunk(input_tokens, output_tokens):
+    chunk = AIMessageChunk(content="")
+    chunk.usage_metadata = {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    }
+    return chunk
+
+
 class _FakeRunnable:
     """Stands in for `ChatOpenAI(...).bind_tools([...])`. `rounds` is a
     list of chunk-lists, one per stream() call — lets a test script a
@@ -240,3 +250,75 @@ def test_context_window_resolved_once_at_construction(monkeypatch):
 
     assert llm._context_window == 131072
     assert len(calls) == 1  # called once at construction, not per stream() call
+
+
+def test_stream_populates_usage_dict_for_plain_text_reply(monkeypatch):
+    monkeypatch.delenv("OPENAI_PRICE_INPUT_PER_1K", raising=False)
+    monkeypatch.delenv("OPENAI_PRICE_OUTPUT_PER_1K", raising=False)
+    runnable = _FakeRunnable([[_text_chunk("hi"), _usage_chunk(100, 20)]])
+    llm = _make_llm(monkeypatch, runnable, tools=[])
+
+    usage = {}
+    result = list(llm.stream([{"role": "user", "content": "hi"}], threading.Event(), usage))
+
+    assert result == ["hi"]
+    assert usage["provider"] == "local"
+    assert usage["model"] == "lfm2.5-230m"
+    assert usage["input_tokens"] == 100
+    assert usage["output_tokens"] == 20
+    assert usage["total_tokens"] == 120
+    assert usage["cost_usd"] == 0.0  # local is always free
+    assert usage["tool_calls"] == []
+    assert usage["context_window"] is None  # _make_llm's LangChainLlm has no LM Studio to query in tests
+
+
+def test_stream_usage_none_by_default_does_not_error(monkeypatch):
+    runnable = _FakeRunnable([[_text_chunk("hi"), _usage_chunk(10, 5)]])
+    llm = _make_llm(monkeypatch, runnable, tools=[])
+
+    result = list(llm.stream([{"role": "user", "content": "hi"}], threading.Event()))
+
+    assert result == ["hi"]  # no exception with usage left as default None
+
+
+def test_stream_usage_left_empty_when_backend_reports_no_metadata(monkeypatch):
+    runnable = _FakeRunnable([[_text_chunk("hi")]])  # no usage_metadata attached
+    llm = _make_llm(monkeypatch, runnable, tools=[])
+
+    usage = {}
+    list(llm.stream([{"role": "user", "content": "hi"}], threading.Event(), usage))
+
+    assert usage == {}
+
+
+def test_stream_usage_includes_tool_calls_made(monkeypatch):
+    fake_tool = MagicMock()
+    fake_tool.name = "get_current_time"
+    fake_tool.invoke.return_value = "Monday, 2026-09-10 12:00 UTC"
+
+    runnable = _FakeRunnable(
+        [
+            [_tool_call_chunk("get_current_time", {}, "call_1")],
+            [_text_chunk("It's Monday."), _usage_chunk(50, 10)],
+        ]
+    )
+    llm = _make_llm(monkeypatch, runnable, tools=[fake_tool])
+
+    usage = {}
+    result = list(llm.stream([{"role": "user", "content": "what day is it"}], threading.Event(), usage))
+
+    assert result == ["It's Monday."]
+    assert usage["tool_calls"] == [{"name": "get_current_time", "args": {}}]
+    assert usage["input_tokens"] == 50
+    assert usage["output_tokens"] == 10
+
+
+def test_stream_usage_includes_resolved_context_window(monkeypatch):
+    runnable = _FakeRunnable([[_text_chunk("hi"), _usage_chunk(10, 5)]])
+    llm = _make_llm(monkeypatch, runnable, tools=[])
+    llm._context_window = 131072  # simulate what Task 4's __init__ would have resolved
+
+    usage = {}
+    list(llm.stream([{"role": "user", "content": "hi"}], threading.Event(), usage))
+
+    assert usage["context_window"] == 131072
