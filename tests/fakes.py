@@ -40,12 +40,17 @@ class FakeStt(SttBase):
 
 
 class FakeLlm(LlmBase):
-    def __init__(self, reply: str = "hi there"):
+    def __init__(self, reply: str = "hi there", fake_usage: dict | None = None):
         self.reply = reply
         self.calls: list[list[dict]] = []
+        self.fake_usage = fake_usage
 
-    def stream(self, messages: list[dict], cancel: threading.Event) -> Iterator[str]:
+    def stream(
+        self, messages: list[dict], cancel: threading.Event, usage: dict | None = None
+    ) -> Iterator[str]:
         self.calls.append(messages)
+        if usage is not None and self.fake_usage is not None:
+            usage.update(self.fake_usage)
         for word in self.reply.split():
             yield word + " "
 

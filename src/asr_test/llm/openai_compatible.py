@@ -42,7 +42,9 @@ class OpenAiCompatibleLlm(LlmBase):
             except Exception as e:
                 print(f"  llm warm-up failed ({e}) — is LM Studio running?")
 
-    def stream(self, messages: list[dict], cancel: threading.Event) -> Iterator[str]:
+    def stream(
+        self, messages: list[dict], cancel: threading.Event, usage: dict | None = None
+    ) -> Iterator[str]:
         full_messages = [{"role": "system", "content": self.system_prompt}] + messages
 
         completion = self.client.chat.completions.create(

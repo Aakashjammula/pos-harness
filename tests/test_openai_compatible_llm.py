@@ -52,3 +52,17 @@ def test_stream_stops_on_cancel(monkeypatch):
             cancel.set()
 
     assert pieces == ["a"]
+
+
+def test_stream_accepts_and_ignores_usage_param(monkeypatch):
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [_fake_chunk("hi"), _fake_chunk(None)]
+    monkeypatch.setattr("asr_test.llm.openai_compatible.OpenAI", lambda **kw: mock_client)
+
+    llm = OpenAiCompatibleLlm(warmup=False)
+    cancel = threading.Event()
+    usage = {}
+    result = list(llm.stream([{"role": "user", "content": "hi"}], cancel, usage))
+
+    assert result == ["hi"]
+    assert usage == {}  # OpenAiCompatibleLlm doesn't populate it — accepted for interface conformance only
