@@ -40,6 +40,8 @@ class LangChainLlm(LlmBase):
         tools: list[BaseTool] | None = None,
         max_tool_rounds: int = 3,   # bounded — avoid an infinite tool-call loop
         warmup: bool = True,
+        warmup_attempts: int = 3,        # bounded backoff, not a long block — see _warmup()
+        warmup_backoff_base: float = 1.0,
     ):
         self.provider = resolve_provider(model_override=model)
         self._context_window = get_context_window(self.provider)
@@ -52,13 +54,33 @@ class LangChainLlm(LlmBase):
         self._runnable = self._model.bind_tools(self.tools) if self.tools else self._model
 
         if warmup:
+            self._warmup(warmup_attempts, warmup_backoff_base)
+
+    def _warmup(self, attempts: int, backoff_base: float) -> None:
+        """A few quick retries (short bounded backoff, not a long block —
+        this runs at server startup and must not stall it for long)
+        rather than one attempt, since the common failure mode observed
+        in practice is a race: the server starts before LM Studio's own
+        local server has finished coming up, not LM Studio being
+        genuinely absent. If every attempt fails, context_window still
+        gets a lazy per-turn retry later (see _fill_usage) as a further
+        safety net for anything slower than this covers."""
+        last_error: Exception | None = None
+        for attempt in range(attempts):
             t0 = time.perf_counter()
             try:
                 self._model.invoke([HumanMessage("hi")], max_tokens=1)
-                print(f"  llm warm-up: {time.perf_counter() - t0:.2f}s")
+                retried = f" (attempt {attempt + 1}/{attempts})" if attempt else ""
+                print(f"  llm warm-up: {time.perf_counter() - t0:.2f}s{retried}")
+                if self._context_window is None:
+                    self._context_window = get_context_window(self.provider)
+                return
             except Exception as e:
-                hint = " — is LM Studio running?" if self.provider.name == "local" else ""
-                print(f"  llm warm-up failed ({e}){hint}")
+                last_error = e
+                if attempt < attempts - 1:
+                    time.sleep(backoff_base * (2 ** attempt))
+        hint = " — is LM Studio running?" if self.provider.name == "local" else ""
+        print(f"  llm warm-up failed after {attempts} attempts ({last_error}){hint}")
 
     def _build_model(self, max_tokens: int, timeout: float):
         common = dict(max_tokens=max_tokens, temperature=0.7, timeout=timeout, stream_usage=True)
@@ -118,6 +140,13 @@ class LangChainLlm(LlmBase):
         meta = getattr(accumulated, "usage_metadata", None)
         if not meta:
             return  # backend didn't report it — leave usage as {}, not zeroed
+        if self._context_window is None:
+            # Retried per-turn (not just once at __init__) so a transient
+            # failure self-heals -- e.g. the LLM was constructed at server
+            # startup before LM Studio itself had finished starting, which
+            # would otherwise leave context_window permanently None for the
+            # life of this (cached, shared) instance.
+            self._context_window = get_context_window(self.provider)
         input_tokens = meta.get("input_tokens")
         output_tokens = meta.get("output_tokens")
         cost = None

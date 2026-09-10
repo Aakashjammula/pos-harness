@@ -225,11 +225,40 @@ def test_warmup_failure_message_omits_lm_studio_hint_for_non_local(monkeypatch, 
     mock_model.bind_tools.return_value = _FakeRunnable([])
     monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", lambda **kw: mock_model)
 
-    LangChainLlm(tools=[], warmup=True)
+    LangChainLlm(tools=[], warmup=True, warmup_attempts=1)
 
     out = capsys.readouterr().out
     assert "llm warm-up failed" in out
     assert "LM Studio" not in out
+
+
+def test_warmup_retries_on_failure_and_succeeds_before_attempts_exhausted(monkeypatch, capsys):
+    monkeypatch.setattr("asr_test.llm.langchain_llm.time.sleep", lambda seconds: None)
+    mock_model = MagicMock()
+    mock_model.invoke.side_effect = [ConnectionError("not up yet"), MagicMock()]
+    mock_model.bind_tools.return_value = _FakeRunnable([])
+    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", lambda **kw: mock_model)
+
+    LangChainLlm(tools=[], warmup=True, warmup_attempts=3, warmup_backoff_base=1.0)
+
+    out = capsys.readouterr().out
+    assert mock_model.invoke.call_count == 2
+    assert "llm warm-up:" in out
+    assert "llm warm-up failed" not in out
+
+
+def test_warmup_gives_up_and_logs_after_exhausting_attempts(monkeypatch, capsys):
+    monkeypatch.setattr("asr_test.llm.langchain_llm.time.sleep", lambda seconds: None)
+    mock_model = MagicMock()
+    mock_model.invoke.side_effect = ConnectionError("still not up")
+    mock_model.bind_tools.return_value = _FakeRunnable([])
+    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", lambda **kw: mock_model)
+
+    LangChainLlm(tools=[], warmup=True, warmup_attempts=3, warmup_backoff_base=1.0)
+
+    out = capsys.readouterr().out
+    assert mock_model.invoke.call_count == 3
+    assert "llm warm-up failed after 3 attempts" in out
 
 
 def test_context_window_resolved_once_at_construction(monkeypatch):
@@ -322,3 +351,33 @@ def test_stream_usage_includes_resolved_context_window(monkeypatch):
     list(llm.stream([{"role": "user", "content": "hi"}], threading.Event(), usage))
 
     assert usage["context_window"] == 131072
+
+
+def test_stream_retries_context_window_lookup_on_next_turn_when_still_none(monkeypatch):
+    # Simulates: LM Studio wasn't reachable yet when LangChainLlm was
+    # constructed (context_window stays None), then comes up before the
+    # next turn -- the lookup should self-heal without recreating the LLM.
+    runnable = _FakeRunnable([
+        [_text_chunk("hi"), _usage_chunk(10, 5)],
+        [_text_chunk("hi"), _usage_chunk(10, 5)],
+    ])
+    llm = _make_llm(monkeypatch, runnable, tools=[])
+    assert llm._context_window is None  # autouse fixture makes construction return None
+
+    calls = []
+
+    def fake_get_context_window(provider):
+        calls.append(provider)
+        return 131072
+
+    monkeypatch.setattr("asr_test.llm.langchain_llm.get_context_window", fake_get_context_window)
+
+    usage1 = {}
+    list(llm.stream([{"role": "user", "content": "hi"}], threading.Event(), usage1))
+    assert usage1["context_window"] == 131072
+    assert len(calls) == 1
+
+    usage2 = {}
+    list(llm.stream([{"role": "user", "content": "hi again"}], threading.Event(), usage2))
+    assert usage2["context_window"] == 131072
+    assert len(calls) == 1  # not retried again once resolved
