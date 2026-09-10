@@ -121,6 +121,34 @@ def test_on_event_fires_interrupted_on_barge_in():
     assert ("interrupted", {}) in events
 
 
+def test_bot_text_event_includes_usage_when_llm_reports_it(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    events: list[tuple[str, dict]] = []
+    fake_usage = {
+        "provider": "local", "model": "lfm2.5-230m",
+        "input_tokens": 12, "output_tokens": 4, "total_tokens": 16,
+        "cost_usd": 0.0, "tool_calls": [], "context_window": 131072,
+    }
+    agent = _build_agent(
+        vad=FakeVad(start_at=1, end_at=3), stt=FakeStt("hello"),
+        llm=FakeLlm("hi there", fake_usage=fake_usage),
+        on_event=lambda name, data: events.append((name, data)),
+    )
+    threads = agent.start()
+    try:
+        frame = np.zeros(config.FRAME, dtype=np.float32)
+        for _ in range(3):
+            agent.feed_audio(frame)
+        deadline = time.time() + 2.0
+        while not any(name == "bot_text" for name, _ in events) and time.time() < deadline:
+            time.sleep(0.02)
+
+        bot_events = [data for name, data in events if name == "bot_text"]
+        assert bot_events == [{"text": "hi there ", "usage": fake_usage}]
+    finally:
+        agent.shutdown(threads)
+
+
 def test_feed_audio_drops_frames_while_muted():
     agent = _build_agent()
     agent.muted.set()

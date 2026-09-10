@@ -13,7 +13,7 @@ import sounddevice as sd
 from . import config
 from .audio.output import LocalAudioSink
 from .interfaces import AudioSinkBase, LlmBase, SttBase, TtsBase, VadBase
-from .llm import OpenAiCompatibleLlm
+from .llm import LangChainLlm
 from .stt import OnnxAsrEngine
 from .tts import KokoroTts
 from .vad import SileroVad
@@ -40,7 +40,7 @@ class Agent:
         )
         self.stt = stt or OnnxAsrEngine()
         self.tts = tts or KokoroTts()
-        self.llm = llm or OpenAiCompatibleLlm()
+        self.llm = llm or LangChainLlm()
 
         # Matches the trigger phrase (case-insensitive, word boundary so
         # "computer" doesn't match "computers"), plus any trailing
@@ -339,8 +339,9 @@ class Agent:
         ]
 
         t_start = time.perf_counter()
+        usage: dict = {}
         try:
-            for piece in self.llm.stream(messages, self.cancel):
+            for piece in self.llm.stream(messages, self.cancel, usage):
                 if self.cancel.is_set() or turn != self.current_turn():
                     return
                 if ttft is None:
@@ -363,12 +364,30 @@ class Agent:
             self.m_llm.append(total)
             if config.VERBOSE_TIMING:
                 print(f"      llm: ttft {ttft:.2f}s / total {total:.2f}s")
+            if usage:
+                cost = usage.get("cost_usd")
+                cost_str = f"${cost:.4f}" if cost is not None else "n/a"
+                tools_str = ", ".join(c["name"] for c in usage.get("tool_calls", [])) or "none"
+                context_window = usage.get("context_window")
+                total_str = (
+                    f"{usage.get('total_tokens')} total / {context_window} context"
+                    if context_window is not None
+                    else f"{usage.get('total_tokens')} total"
+                )
+                print(
+                    f"      tokens: {usage.get('input_tokens')} in / "
+                    f"{usage.get('output_tokens')} out ({total_str})"
+                    f"   cost: {cost_str}   tools: {tools_str}"
+                )
 
         if full_response:
             joined = "".join(full_response)
             self.conversation.append({"role": "user", "content": text})
             self.conversation.append({"role": "assistant", "content": joined})
-            self._on_event("bot_text", {"text": joined})
+            payload = {"text": joined}
+            if usage:
+                payload["usage"] = usage
+            self._on_event("bot_text", payload)
 
         if spoken:
             print(f"BOT:  {' '.join(spoken)}")
