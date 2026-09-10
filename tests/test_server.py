@@ -228,6 +228,70 @@ def test_ws_rejects_negative_vad_min_silence_ms(monkeypatch):
         assert msg["event"] == "error"
 
 
+def test_ws_text_mode_accepts_json_text_and_replies_with_bot_text(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm("hi there"),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?mode=text") as ws:
+        ws.receive_json()  # ready
+        ws.send_json({"text": "hello there"})
+
+        user_event = ws.receive_json()
+        bot_event = ws.receive_json()
+
+    assert user_event == {"event": "user_text", "text": "hello there"}
+    assert bot_event["event"] == "bot_text"
+    assert bot_event["text"] == "hi there "
+
+
+def test_ws_text_mode_never_sends_binary_audio(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm("hi there"),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?mode=text") as ws:
+        ws.receive_json()  # ready
+        ws.send_json({"text": "hello there"})
+        ws.receive_json()  # user_text
+        ws.receive_json()  # bot_text
+        # Starlette's TestClient raises if a message arrives in an
+        # unexpected shape, so a stray binary frame here would surface
+        # as a failure on one of the two receive_json() calls above.
+
+
+def test_ws_rejects_invalid_mode(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?mode=carrier-pigeon") as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "error"
+        assert "mode" in msg["message"]
+
+
 def test_ready_event_includes_session_id(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     store = SessionStore(":memory:")

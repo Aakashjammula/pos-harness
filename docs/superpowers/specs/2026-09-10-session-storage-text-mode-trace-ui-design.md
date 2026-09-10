@@ -154,9 +154,18 @@ class SessionStore:
   running off the event loop elsewhere in this file.) When
   `mode == "voice"`: today's `receive_bytes()` + `feed_audio()` loop,
   unchanged.
-- `WebSocketAudioSink` is still constructed either way — in text mode
-  it simply never receives a `push()` call, so no audio bytes are ever
-  sent to the client. No special-casing needed there either.
+- **Correction found during implementation:** `WebSocketAudioSink` is
+  *not* safe to construct unconditionally — its background thread
+  starts pacing and sending blocks (including silence, once the buffer
+  is empty) immediately at construction, regardless of whether
+  anything is ever `push()`ed (confirmed by reading `ws_sink.py`'s
+  `_run()`: it ticks and calls `_schedule_send()` every
+  `blocksize/rate` seconds unconditionally). A text-mode session would
+  therefore stream continuous silent binary frames even though no TTS
+  ever runs. Fix: a new `NullAudioSink(AudioSinkBase)`
+  (`src/asr_test/audio/null_sink.py`) — every method a no-op,
+  `playing` always `False` — constructed instead of `WebSocketAudioSink`
+  when `mode == "text"`.
 
 ### Browser UI (`static/index.html`)
 
