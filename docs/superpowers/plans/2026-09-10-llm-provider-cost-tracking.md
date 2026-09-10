@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let `LangChainLlm` run against local LM Studio, OpenAI, or Azure OpenAI (chosen via env vars at startup), and surface per-turn token usage + a cost estimate to `Agent`'s console output and the `bot_text` websocket event, without breaking the existing shared-instance statelessness guarantee.
+**Goal:** Let `LangChainLlm` run against local LM Studio, OpenAI, or Azure OpenAI (chosen via env vars at startup), and surface per-turn token usage, context-window size, and a cost estimate to `Agent`'s console output and the `bot_text` websocket event, without breaking the existing shared-instance statelessness guarantee.
 
 **Architecture:** A new `resolve_provider()` picks a backend from env vars and returns a small `ProviderConfig`; `LangChainLlm` uses it to build either `ChatOpenAI` or `AzureChatOpenAI`. Usage data flows out of `stream()` via a caller-owned mutable dict (same pattern as the existing `cancel: threading.Event` parameter) instead of instance state, so one `LangChainLlm` can still be shared safely across concurrent server sessions. `Agent` passes that dict in and does something with it once the turn completes.
 
@@ -16,6 +16,7 @@
 - Precedence: `AZURE_OPENAI_API_KEY` set → azure; else `OPENAI_API_KEY` set → openai; else → local (default, matches today's behavior).
 - One `LangChainLlm` class handles all three backends — no per-backend subclasses.
 - Cost is always `$0.0` for local. OpenAI/Azure cost comes from `PRICING` table entries or `{PROVIDER}_PRICE_INPUT_PER_1K`/`..._OUTPUT_PER_1K` env overrides; `None` ("n/a") if neither exists.
+- Context window: local resolves it live from LM Studio's REST API v0 (`GET {host}/api/v0/models`, a different base path than `/v1/models`); OpenAI/Azure have no such API at all (confirmed via research) and use a small table + `{PROVIDER}_CONTEXT_WINDOW` env override instead, same pattern as pricing. Resolved once at `LangChainLlm.__init__`, never per-turn.
 - `LlmBase.stream()` gains one new optional parameter: `usage: dict | None = None`. Existing implementations accept it for interface conformance but ignore it — no behavior change, no existing test may break.
 - Missing required env var for the selected backend raises `RuntimeError` naming the missing var — fail fast at construction, never silently fall back to local.
 - The full existing suite (`uv run pytest tests/ -q`, 48 tests as of this plan) must stay green after every task.
@@ -382,6 +383,200 @@ git commit -m "feat: add LLM pricing table and cost estimation"
 
 ---
 
+### Task 2b: Context-window size lookup
+
+**Files:**
+- Create: `src/asr_test/llm/context_window.py`
+- Test: `tests/test_context_window.py`
+
+**Interfaces:**
+- Consumes: `ProviderConfig` from Task 1 (`src/asr_test/llm/provider.py`) — only its `.name`, `.model`, `.base_url` fields.
+- Produces: `CONTEXT_WINDOWS: dict[tuple[str, str], int]`, `get_context_window(provider: ProviderConfig) -> int | None`. Task 4 calls this once at `LangChainLlm.__init__` time (never per-turn — a live HTTP call to LM Studio on every turn would add latency to the voice loop) and stores the result as `self._context_window`; Task 5 reads that stored value into `usage["context_window"]`.
+
+Local (LM Studio) exposes context length live via its REST API v0 —
+`GET {host}/api/v0/models` returns each model's `max_context_length`.
+This is a **different base path** than the OpenAI-compatible
+`/v1/models` this project already calls elsewhere — `host` is
+`provider.base_url` with its trailing `/v1` removed (e.g.
+`http://localhost:1234/v1` -> `http://localhost:1234`). OpenAI has no
+API for this at all (confirmed via research — long-standing gap, not
+an oversight in this plan) and Azure doesn't either, so both fall back
+to a small built-in table + env override, same pattern as `pricing.py`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `tests/test_context_window.py`:
+
+```python
+from unittest.mock import MagicMock
+
+from asr_test.llm.context_window import get_context_window
+from asr_test.llm.provider import ProviderConfig
+
+
+def _local_provider(model="meta-llama-3.1-8b-instruct"):
+    return ProviderConfig(
+        name="local", model=model,
+        base_url="http://localhost:1234/v1", api_key="lm-studio",
+    )
+
+
+def test_local_queries_lm_studio_v0_models_endpoint(monkeypatch):
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "object": "list",
+        "data": [
+            {"id": "qwen2-vl-7b-instruct", "max_context_length": 32768},
+            {"id": "meta-llama-3.1-8b-instruct", "max_context_length": 131072},
+        ],
+    }
+    mock_response.raise_for_status.return_value = None
+    captured_url = {}
+
+    def fake_get(url, timeout):
+        captured_url["url"] = url
+        return mock_response
+
+    monkeypatch.setattr("asr_test.llm.context_window.requests.get", fake_get)
+
+    window = get_context_window(_local_provider())
+
+    assert window == 131072
+    assert captured_url["url"] == "http://localhost:1234/api/v0/models"
+
+
+def test_local_returns_none_when_model_not_found_in_response(monkeypatch):
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"object": "list", "data": [{"id": "other-model", "max_context_length": 4096}]}
+    mock_response.raise_for_status.return_value = None
+    monkeypatch.setattr("asr_test.llm.context_window.requests.get", lambda url, timeout: mock_response)
+
+    assert get_context_window(_local_provider(model="not-listed")) is None
+
+
+def test_local_returns_none_on_request_failure(monkeypatch):
+    def fake_get(url, timeout):
+        raise ConnectionError("LM Studio not running")
+
+    monkeypatch.setattr("asr_test.llm.context_window.requests.get", fake_get)
+
+    assert get_context_window(_local_provider()) is None
+
+
+def test_openai_known_model_uses_built_in_table(monkeypatch):
+    monkeypatch.delenv("OPENAI_CONTEXT_WINDOW", raising=False)
+    provider = ProviderConfig(name="openai", model="gpt-4o-mini", api_key="sk-test")
+
+    assert get_context_window(provider) == 128_000
+
+
+def test_openai_unknown_model_with_no_override_returns_none(monkeypatch):
+    monkeypatch.delenv("OPENAI_CONTEXT_WINDOW", raising=False)
+    provider = ProviderConfig(name="openai", model="some-unlisted-model", api_key="sk-test")
+
+    assert get_context_window(provider) is None
+
+
+def test_azure_has_no_built_in_default(monkeypatch):
+    monkeypatch.delenv("AZURE_CONTEXT_WINDOW", raising=False)
+    provider = ProviderConfig(name="azure", model="my-deployment", api_key="azure-key")
+
+    assert get_context_window(provider) is None
+
+
+def test_env_override_wins_for_openai(monkeypatch):
+    monkeypatch.setenv("OPENAI_CONTEXT_WINDOW", "200000")
+    provider = ProviderConfig(name="openai", model="gpt-4o-mini", api_key="sk-test")
+
+    assert get_context_window(provider) == 200000
+
+
+def test_env_override_enables_azure(monkeypatch):
+    monkeypatch.setenv("AZURE_CONTEXT_WINDOW", "128000")
+    provider = ProviderConfig(name="azure", model="my-deployment", api_key="azure-key")
+
+    assert get_context_window(provider) == 128000
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `uv run pytest tests/test_context_window.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'asr_test.llm.context_window'`
+
+- [ ] **Step 3: Write the implementation**
+
+Create `src/asr_test/llm/context_window.py`:
+
+```python
+"""Context-window size lookup, paired with pricing.py's tables. Local
+(LM Studio) exposes this live via its REST API v0 -- see
+https://lmstudio.ai/docs/developer/rest/endpoints -- a DIFFERENT base
+path (/api/v0/...) than the OpenAI-compatible /v1/models this project
+calls elsewhere for the model-name dropdown. OpenAI's API has no
+endpoint that returns a model's context window at all (confirmed via
+research, not an oversight); Azure doesn't either, since it also
+depends on which base model was deployed. Both fall back to a small
+built-in table, same env-override pattern as pricing.py."""
+
+from __future__ import annotations
+
+import os
+
+import requests
+
+from .provider import ProviderConfig
+
+CONTEXT_WINDOWS: dict[tuple[str, str], int] = {
+    # (provider, model) -> max context window, in tokens.
+    # Best-effort snapshot, same caveat as pricing.py's PRICING table --
+    # override via {PROVIDER}_CONTEXT_WINDOW if this has changed or a
+    # new model needs one.
+    ("openai", "gpt-4o-mini"): 128_000,
+    ("openai", "gpt-4o"): 128_000,
+}
+
+
+def _local_context_window(base_url: str | None, model: str) -> int | None:
+    host = (base_url or "").removesuffix("/v1")
+    try:
+        resp = requests.get(f"{host}/api/v0/models", timeout=3)
+        resp.raise_for_status()
+        for entry in resp.json().get("data", []):
+            if entry.get("id") == model:
+                return entry.get("max_context_length")
+    except Exception:
+        return None
+    return None
+
+
+def get_context_window(provider: ProviderConfig) -> int | None:
+    if provider.name == "local":
+        return _local_context_window(provider.base_url, provider.model)
+
+    env_val = os.environ.get(f"{provider.name.upper()}_CONTEXT_WINDOW")
+    if env_val is not None:
+        return int(env_val)
+
+    return CONTEXT_WINDOWS.get((provider.name, provider.model))
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `uv run pytest tests/test_context_window.py -v`
+Expected: PASS (9 tests)
+
+Then run: `uv run pytest tests/ -q`
+Expected: PASS, all tests green
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/asr_test/llm/context_window.py tests/test_context_window.py
+git commit -m "feat: add context-window size lookup (live for local, table for cloud)"
+```
+
+---
+
 ### Task 3: `LlmBase.stream()` gains an optional `usage` parameter (interface conformance)
 
 **Files:**
@@ -532,7 +727,7 @@ Run: `uv run pytest tests/test_openai_compatible_llm.py tests/test_fakes.py -v`
 Expected: PASS (5 new tests)
 
 Then run: `uv run pytest tests/ -q`
-Expected: PASS, 51 tests (48 existing + 3 new fakes tests — the `test_stream_accepts_and_ignores_usage_param` and pricing/provider tests from Tasks 1-2 are already counted separately above; this full-suite run is the regression check for this task specifically)
+Expected: PASS, 79 tests (48 existing + 11 from Task 1 + 7 from Task 2 + 9 from Task 2b + 4 new this task [1 in test_openai_compatible_llm.py + 3 in test_fakes.py] — this full-suite run is the regression check for everything so far)
 
 - [ ] **Step 5: Commit**
 
@@ -550,8 +745,8 @@ git commit -m "feat: add optional usage dict param to LlmBase.stream() contract"
 - Test: `tests/test_langchain_llm.py` (extend existing file)
 
 **Interfaces:**
-- Consumes: `resolve_provider(model_override) -> ProviderConfig` from Task 1 (`src/asr_test/llm/provider.py`).
-- Produces: `LangChainLlm.provider: ProviderConfig` (instance attribute, read by Task 5 when populating usage). `LangChainLlm.__init__` signature becomes `(self, model: str | None = None, system_prompt=..., max_tokens=120, timeout=30, tools=None, max_tool_rounds=3, warmup=True)` — note `base_url`/`api_key` are **removed** as direct constructor params (now derived from the resolved provider); no existing caller in this codebase passes them (`agent.py` calls `LangChainLlm()`, `server.py` calls `LangChainLlm(model=model)`).
+- Consumes: `resolve_provider(model_override) -> ProviderConfig` from Task 1 (`src/asr_test/llm/provider.py`); `get_context_window(provider) -> int | None` from Task 2b (`src/asr_test/llm/context_window.py`).
+- Produces: `LangChainLlm.provider: ProviderConfig` and `LangChainLlm._context_window: int | None` (instance attributes, both read by Task 5 when populating usage). `LangChainLlm.__init__` signature becomes `(self, model: str | None = None, system_prompt=..., max_tokens=120, timeout=30, tools=None, max_tool_rounds=3, warmup=True)` — note `base_url`/`api_key` are **removed** as direct constructor params (now derived from the resolved provider); no existing caller in this codebase passes them (`agent.py` calls `LangChainLlm()`, `server.py` calls `LangChainLlm(model=model)`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -658,6 +853,26 @@ def test_warmup_failure_message_omits_lm_studio_hint_for_non_local(monkeypatch, 
     out = capsys.readouterr().out
     assert "llm warm-up failed" in out
     assert "LM Studio" not in out
+
+
+def test_context_window_resolved_once_at_construction(monkeypatch):
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    mock_model = MagicMock()
+    mock_model.bind_tools.return_value = _FakeRunnable([[_text_chunk("hi")]])
+    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", lambda **kw: mock_model)
+    calls = []
+
+    def fake_get_context_window(provider):
+        calls.append(provider)
+        return 131072
+
+    monkeypatch.setattr("asr_test.llm.langchain_llm.get_context_window", fake_get_context_window)
+
+    llm = LangChainLlm(tools=[], warmup=False)
+
+    assert llm._context_window == 131072
+    assert len(calls) == 1  # called once at construction, not per stream() call
 ```
 
 Also update every **existing** test in `tests/test_langchain_llm.py` that constructs `LangChainLlm(...)` to first clear both provider env vars, since a leftover `OPENAI_API_KEY`/`AZURE_OPENAI_API_KEY` in the test-running shell would otherwise silently switch which branch they exercise. Add this fixture at the top of the file (runs automatically for every test in this file, no per-test change needed):
@@ -670,9 +885,14 @@ import pytest
 def _clear_provider_env(monkeypatch):
     monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # Default every test in this file to no real network call for the
+    # context-window lookup (Task 2b's local branch hits LM Studio's
+    # REST API) — test_context_window_resolved_once_at_construction
+    # below overrides this per-test with its own monkeypatch.setattr.
+    monkeypatch.setattr("asr_test.llm.langchain_llm.get_context_window", lambda provider: None)
 ```
 
-(place this fixture and the `import pytest` near the top of the file, after the existing imports — the four pre-existing tests and `_make_llm` helper need no other change; they'll now reliably resolve to the local branch)
+(place this fixture and the `import pytest` near the top of the file, after the existing imports — the four pre-existing tests and `_make_llm` helper need no other change; they'll now reliably resolve to the local branch, with no network call for context window either)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -695,6 +915,7 @@ from langchain_core.tools import BaseTool
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 
 from ..interfaces.llm import LlmBase
+from .context_window import get_context_window
 from .provider import resolve_provider
 from .tools import default_tools
 
@@ -726,6 +947,7 @@ class LangChainLlm(LlmBase):
         warmup: bool = True,
     ):
         self.provider = resolve_provider(model_override=model)
+        self._context_window = get_context_window(self.provider)
         self.system_prompt = system_prompt
         self.max_tool_rounds = max_tool_rounds
         self.tools = default_tools() if tools is None else tools
@@ -766,7 +988,7 @@ Leave the rest of the file (the `stream` method) untouched for this task — Tas
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_langchain_llm.py -v`
-Expected: PASS (9 tests: 4 pre-existing + 5 new)
+Expected: PASS (10 tests: 4 pre-existing + 6 new)
 
 Then run: `uv run pytest tests/ -q`
 Expected: PASS, all tests green
@@ -787,8 +1009,8 @@ git commit -m "feat: LangChainLlm builds its model from resolve_provider() (loca
 - Test: `tests/test_langchain_llm.py` (extend)
 
 **Interfaces:**
-- Consumes: `estimate_cost(provider, model, input_tokens, output_tokens) -> float | None` from Task 2 (`src/asr_test/llm/pricing.py`); `self.provider` from Task 4.
-- Produces: `LangChainLlm.stream(self, messages, cancel, usage=None)` now fills `usage` in place with keys `provider`, `model`, `input_tokens`, `output_tokens`, `total_tokens`, `cost_usd`, `tool_calls` (a list of `{"name": str, "args": dict}`) once the final tool-loop round finishes — this is what Task 6's `Agent` reads.
+- Consumes: `estimate_cost(provider, model, input_tokens, output_tokens) -> float | None` from Task 2 (`src/asr_test/llm/pricing.py`); `self.provider` and `self._context_window` from Task 4.
+- Produces: `LangChainLlm.stream(self, messages, cancel, usage=None)` now fills `usage` in place with keys `provider`, `model`, `input_tokens`, `output_tokens`, `total_tokens`, `cost_usd`, `tool_calls` (a list of `{"name": str, "args": dict}`), `context_window` once the final tool-loop round finishes — this is what Task 6's `Agent` reads.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -827,6 +1049,7 @@ def test_stream_populates_usage_dict_for_plain_text_reply(monkeypatch):
     assert usage["total_tokens"] == 120
     assert usage["cost_usd"] == 0.0  # local is always free
     assert usage["tool_calls"] == []
+    assert usage["context_window"] is None  # _make_llm's LangChainLlm has no LM Studio to query in tests
 
 
 def test_stream_usage_none_by_default_does_not_error(monkeypatch):
@@ -868,6 +1091,17 @@ def test_stream_usage_includes_tool_calls_made(monkeypatch):
     assert usage["tool_calls"] == [{"name": "get_current_time", "args": {}}]
     assert usage["input_tokens"] == 50
     assert usage["output_tokens"] == 10
+
+
+def test_stream_usage_includes_resolved_context_window(monkeypatch):
+    runnable = _FakeRunnable([[_text_chunk("hi"), _usage_chunk(10, 5)]])
+    llm = _make_llm(monkeypatch, runnable, tools=[])
+    llm._context_window = 131072  # simulate what Task 4's __init__ would have resolved
+
+    usage = {}
+    list(llm.stream([{"role": "user", "content": "hi"}], threading.Event(), usage))
+
+    assert usage["context_window"] == 131072
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -940,13 +1174,14 @@ Replace the `stream` method (everything from `def stream(self, messages: list[di
             "total_tokens": meta.get("total_tokens"),
             "cost_usd": cost,
             "tool_calls": tool_calls_made,
+            "context_window": self._context_window,
         })
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_langchain_llm.py -v`
-Expected: PASS (13 tests: 9 from Task 4 + 4 new)
+Expected: PASS (15 tests: 10 from Task 4 + 5 new)
 
 Then run: `uv run pytest tests/ -q`
 Expected: PASS, all tests green
@@ -981,7 +1216,7 @@ def test_bot_text_event_includes_usage_when_llm_reports_it(monkeypatch):
     fake_usage = {
         "provider": "local", "model": "lfm2.5-230m",
         "input_tokens": 12, "output_tokens": 4, "total_tokens": 16,
-        "cost_usd": 0.0, "tool_calls": [],
+        "cost_usd": 0.0, "tool_calls": [], "context_window": 131072,
     }
     agent = _build_agent(
         vad=FakeVad(start_at=1, end_at=3), stt=FakeStt("hello"),
@@ -1085,9 +1320,15 @@ to:
                 cost = usage.get("cost_usd")
                 cost_str = f"${cost:.4f}" if cost is not None else "n/a"
                 tools_str = ", ".join(c["name"] for c in usage.get("tool_calls", [])) or "none"
+                context_window = usage.get("context_window")
+                total_str = (
+                    f"{usage.get('total_tokens')} total / {context_window} context"
+                    if context_window is not None
+                    else f"{usage.get('total_tokens')} total"
+                )
                 print(
                     f"      tokens: {usage.get('input_tokens')} in / "
-                    f"{usage.get('output_tokens')} out ({usage.get('total_tokens')} total)"
+                    f"{usage.get('output_tokens')} out ({total_str})"
                     f"   cost: {cost_str}   tools: {tools_str}"
                 )
 
@@ -1149,6 +1390,15 @@ with `OPENAI_PRICE_INPUT_PER_1K`/`OPENAI_PRICE_OUTPUT_PER_1K`, both in
 $/1K tokens). Azure pricing varies per contract/region and has no
 built-in default — set `AZURE_PRICE_INPUT_PER_1K`/`AZURE_PRICE_OUTPUT_PER_1K`
 yourself, or cost shows as unavailable.
+
+Context-window size is also reported (`usage["context_window"]`, and in
+the console line as `.../<n> context`). For the local backend it's read
+live from LM Studio's own REST API v0 (no setup needed). OpenAI and
+Azure have no API that exposes this at all, so it comes from the same
+kind of small built-in table + env override as pricing —
+`OPENAI_CONTEXT_WINDOW`/`AZURE_CONTEXT_WINDOW` (plain integer, tokens)
+— and is `None`/omitted from the console line if unset and the model
+isn't in the built-in table.
 ```
 
 - [ ] **Step 2: Verify the full suite is still green (documentation-only change, but confirms nothing else regressed)**
