@@ -197,6 +197,31 @@ def test_voice_mode_agent_still_pushes_to_tts_queue(monkeypatch):
     assert agent.tts_q.qsize() == 1
 
 
+def test_conversation_can_be_seeded_to_resume_a_prior_session():
+    seed = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi there"},
+    ]
+    agent = _build_agent(conversation=seed)
+
+    assert agent.conversation == seed
+
+
+def test_seeded_conversation_is_copied_not_aliased():
+    seed = [{"role": "user", "content": "hello"}]
+    agent = _build_agent(conversation=seed)
+
+    agent.conversation.append({"role": "assistant", "content": "hi"})
+
+    assert seed == [{"role": "user", "content": "hello"}]
+
+
+def test_no_conversation_seed_defaults_to_empty():
+    agent = _build_agent()
+
+    assert agent.conversation == []
+
+
 def test_feed_audio_drops_frames_while_muted():
     agent = _build_agent()
     agent.muted.set()

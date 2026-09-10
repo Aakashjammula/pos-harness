@@ -30,6 +30,7 @@ class Agent:
         audio_sink: AudioSinkBase | None = None,
         on_event: Callable[[str, dict], None] | None = None,
         text_only: bool = False,
+        conversation: list[dict] | None = None,
     ):
         print("Loading models...")
         t0 = time.perf_counter()
@@ -103,7 +104,11 @@ class Agent:
         self.interrupts = 0
         self.turn_start: float | None = None
 
-        self.conversation: list[dict] = []
+        # Seeded from a prior session's stored turns to resume it — see
+        # server.py's ws_endpoint's resume_session_id handling. A plain
+        # copy, not a reference: this Agent must own its own list from
+        # here on (appending to it must never mutate the caller's).
+        self.conversation: list[dict] = list(conversation) if conversation else []
         # UI hook for browser/CLI clients — e.g. "user_text"/"bot_text" for
         # live captions, "interrupted" for barge-in feedback. No-op by
         # default so local mode (main.py) behaves exactly as before.
