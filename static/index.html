@@ -372,7 +372,10 @@
         <span class="mark"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg></span>
         <h1>Voice Agent</h1>
       </div>
-      <div class="conn-pill"><span class="led" id="led"></span><span id="stateText">Disconnected</span></div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button class="secondary" id="historyBtn" style="width:auto;padding:6px 14px;">History</button>
+        <div class="conn-pill"><span class="led" id="led"></span><span id="stateText">Disconnected</span></div>
+      </div>
     </div>
 
     <div class="layout">
@@ -466,6 +469,14 @@
         </div>
       </div>
     </div>
+
+    <div class="panel" id="historyModal" hidden style="position:fixed;inset:40px;z-index:10;overflow-y:auto;max-width:640px;margin:0 auto;">
+      <div class="transcript-header">
+        <h2 id="historyTitle">History</h2>
+        <button class="secondary" id="historyCloseBtn" style="width:auto;padding:4px 10px;">Close</button>
+      </div>
+      <div id="historyBody" style="padding:16px 20px;"></div>
+    </div>
   </div>
 
 <script>
@@ -479,6 +490,8 @@
   const vadThresholdInput = el("vadThreshold"), vadMinSilenceInput = el("vadMinSilenceMs"), vadSpeechPadInput = el("vadSpeechPadMs");
   const transcript = el("transcript"), lineCount = el("lineCount");
   const settingsPanel = el("settingsPanel");
+  const historyBtn = el("historyBtn"), historyModal = el("historyModal");
+  const historyTitle = el("historyTitle"), historyBody = el("historyBody"), historyCloseBtn = el("historyCloseBtn");
   const modeSelect = el("modeSelect");
   const textCompose = el("textCompose"), textInput = el("textInput"), textSendBtn = el("textSendBtn");
 
@@ -849,6 +862,60 @@
     connectBtn.onclick = connect;
     setState("idle", reason || "Not connected");
   }
+
+  // --- history panel ---
+
+  async function openHistoryList() {
+    historyTitle.textContent = "History";
+    historyBody.innerHTML = "Loading…";
+    historyModal.hidden = false;
+    const sessions = await (await fetch("/sessions")).json();
+    if (!sessions.length) {
+      historyBody.textContent = "No past sessions yet.";
+      return;
+    }
+    historyBody.innerHTML = "";
+    for (const s of sessions) {
+      const row = document.createElement("div");
+      row.style.cssText = "padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer;";
+      row.textContent = `${s.created_at}  ·  ${s.mode}  ·  ${s.turn_count} turns`;
+      row.onclick = () => openHistoryDetail(s.id);
+      historyBody.appendChild(row);
+    }
+  }
+
+  async function openHistoryDetail(sessionId) {
+    historyTitle.textContent = "Session " + sessionId.slice(0, 8);
+    historyBody.innerHTML = "Loading…";
+    const detail = await (await fetch(`/sessions/${sessionId}`)).json();
+    historyBody.innerHTML = "";
+    const back = document.createElement("button");
+    back.className = "secondary";
+    back.style.cssText = "width:auto;padding:4px 10px;margin-bottom:12px;";
+    back.textContent = "← All sessions";
+    back.onclick = openHistoryList;
+    historyBody.appendChild(back);
+    for (const turn of detail.turns) {
+      const line = document.createElement("div");
+      line.className = "line " + (turn.role === "user" ? "you" : "bot");
+      const label = turn.role === "user" ? "You" : "Bot";
+      line.innerHTML = `<span class="who">${label}</span><span class="what"></span>`;
+      line.querySelector(".what").textContent = turn.text;
+      historyBody.appendChild(line);
+      if (turn.usage) {
+        const statsLine = formatUsageLine(turn.usage);
+        if (statsLine) {
+          const stats = document.createElement("div");
+          stats.className = "line-stats";
+          stats.textContent = statsLine;
+          historyBody.appendChild(stats);
+        }
+      }
+    }
+  }
+
+  historyBtn.onclick = openHistoryList;
+  historyCloseBtn.onclick = () => { historyModal.hidden = true; };
 
   connectBtn.onclick = connect;
   setState("idle", "Not connected");
