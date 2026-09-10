@@ -145,7 +145,7 @@ def create_app(
 
     @app.get("/")
     async def index():
-        return FileResponse(Path(__file__).parent / "static" / "index.html")
+        return FileResponse(Path(__file__).parent.parent / "static" / "index.html")
 
     @app.get("/options")
     async def options():
@@ -357,10 +357,14 @@ def create_app(
     return app
 
 
-if __name__ == "__main__":
+def run() -> None:
     import uvicorn
 
     from asr_test.stt import OnnxAsrEngine
 
     app = create_app(stt=OnnxAsrEngine())
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+if __name__ == "__main__":
+    run()

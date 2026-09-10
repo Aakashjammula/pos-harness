@@ -32,6 +32,7 @@ packages = ["src/asr_test"]
 
 [project.scripts]
 asr-agent = "asr_test.cli.local:main"
+asr-server = "asr_test.cli.server:run"
 
 [dependency-groups]
 dev = [
