@@ -190,6 +190,24 @@ def create_app(
             await websocket.close(code=1008)
             return
 
+        # Resuming a prior session: seed the new Agent's conversation from
+        # its stored turns and keep writing further turns under the same
+        # session_id, instead of starting a fresh one.
+        resume_session_id = params.get("resume_session_id") or None
+        resumed_conversation = None
+        if resume_session_id:
+            existing = store.get_session(resume_session_id)
+            if existing is None:
+                await websocket.send_json({
+                    "event": "error",
+                    "message": f"no session found with id {resume_session_id!r}",
+                })
+                await websocket.close(code=1008)
+                return
+            resumed_conversation = [
+                {"role": turn["role"], "content": turn["text"]} for turn in existing["turns"]
+            ]
+
         try:
             vad_threshold = float(params.get("vad_threshold", 0.5))
             vad_min_silence_ms = int(params.get("vad_min_silence_ms", config.MIN_SILENCE_MS))
@@ -219,16 +237,18 @@ def create_app(
         tts = NullTts() if mode == "text" else await get_tts(tts_engine, voice)
         llm = await get_llm(llm_model)
 
-        session_id = uuid.uuid4().hex
+        session_id = resume_session_id or uuid.uuid4().hex
         stored_tts_engine = None if mode == "text" else tts_engine
-        try:
-            store.create_session(session_id, mode=mode, tts_engine=stored_tts_engine, llm_model=llm_model)
-        except Exception as e:
-            print(f"  session store error (create_session): {e}")
+        if not resume_session_id:
+            try:
+                store.create_session(session_id, mode=mode, tts_engine=stored_tts_engine, llm_model=llm_model)
+            except Exception as e:
+                print(f"  session store error (create_session): {e}")
 
         await websocket.send_json({
             "event": "ready",
             "session_id": session_id,
+            "resumed": resume_session_id is not None,
             "input_sample_rate": config.MIC_RATE,
             "output_sample_rate": tts.sample_rate,
             "tts_engine": stored_tts_engine,
@@ -272,7 +292,7 @@ def create_app(
         agent = Agent(
             vad=vad, stt=stt, tts=tts, llm=llm,
             trigger_word=trigger_word, audio_sink=sink, on_event=emit,
-            text_only=(mode == "text"),
+            text_only=(mode == "text"), conversation=resumed_conversation,
         )
         threads = agent.start()
         try:

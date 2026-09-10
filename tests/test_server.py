@@ -361,6 +361,63 @@ def test_ready_event_includes_session_id(monkeypatch):
         ready = ws.receive_json()
 
     assert "session_id" in ready and ready["session_id"]
+    assert ready["resumed"] is False
+
+
+def test_ws_resume_session_id_seeds_conversation_and_keeps_writing_to_it(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    store = SessionStore(":memory:")
+    store.create_session("s1", mode="text", tts_engine=None, llm_model="lfm2.5-230m")
+    store.add_turn("s1", "user", "what's your name")
+    store.add_turn("s1", "assistant", "Assistant.")
+    fake_llm = FakeLlm("hi there")
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: fake_llm,
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=store,
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?mode=text&resume_session_id=s1") as ws:
+        ready = ws.receive_json()
+        assert ready["session_id"] == "s1"
+        assert ready["resumed"] is True
+
+        ws.send_json({"text": "hello again"})
+        ws.receive_json()  # user_text
+        ws.receive_json()  # bot_text
+
+    # the LLM call should have seen the prior turns as context
+    assert fake_llm.calls[0][0] == {"role": "user", "content": "what's your name"}
+    assert fake_llm.calls[0][1] == {"role": "assistant", "content": "Assistant."}
+    assert fake_llm.calls[0][-1] == {"role": "user", "content": "hello again"}
+
+    # and the new turns were appended to the SAME stored session, not a new one
+    result = store.get_session("s1")
+    assert [t["text"] for t in result["turns"]] == [
+        "what's your name", "Assistant.", "hello again", "hi there ",
+    ]
+
+
+def test_ws_resume_unknown_session_id_gets_error(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?resume_session_id=does-not-exist") as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "error"
+        assert "does-not-exist" in msg["message"]
 
 
 def test_completed_turn_is_persisted_to_session_store(monkeypatch):
