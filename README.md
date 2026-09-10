@@ -64,7 +64,8 @@ uv sync
 ```
 
 This creates `.venv/` and installs everything, including this project
-itself (editable), so `main.py` can `from asr_test... import ...`.
+itself (editable), so the `asr-agent`/`asr-server`/`asr-client` console
+scripts and `src/asr_test/cli/local.py` can `from asr_test... import ...`.
 
 Then start LM Studio, load a model, and start its local server (default
 `http://localhost:1234/v1` — matches `LangChainLlm`'s default; see
@@ -105,7 +106,7 @@ the trigger phrase is only used to decide whether to respond at all, not
 edited out of what the LLM sees:
 
 ```
-uv run main.py --trigger-word "computer"
+uv run asr-agent --trigger-word "computer"
 ```
 
 Say "computer, what time is it" and the LLM receives the full "computer,
@@ -116,13 +117,13 @@ tune — it's a plain prefix check on the STT output you already have.
 ## Usage
 
 ```
-uv run main.py                              # default: Kokoro, voice af_bella
-uv run main.py --tts supertonic             # use Supertonic instead
-uv run main.py --tts supertonic --voice M1  # + pick its voice
-uv run main.py --tts kokoro --voice af_sky  # or a different Kokoro voice
+uv run asr-agent                              # default: Kokoro, voice af_bella
+uv run asr-agent --tts supertonic             # use Supertonic instead
+uv run asr-agent --tts supertonic --voice M1  # + pick its voice
+uv run asr-agent --tts kokoro --voice af_sky  # or a different Kokoro voice
 
 # trigger word (see "Optional: trigger word" above for setup)
-uv run main.py --trigger-word "computer"
+uv run asr-agent --trigger-word "computer"
 ```
 
 Speak any time, including while the bot is talking (barge-in cancels its
@@ -145,16 +146,16 @@ prints a session summary:
 
 Three ways to run this, all sharing the same VAD/STT/LLM/TTS pipeline:
 
-1. **Local** (`uv run main.py`) — everything in one process, direct
+1. **Local** (`uv run asr-agent`) — everything in one process, direct
    `sounddevice` mic/speaker access. No network involved. This is the
    original mode and still the simplest for single-user local use.
-2. **FastAPI server + browser client** (`uv run server.py`, then open
+2. **FastAPI server + browser client** (`uv run asr-server`, then open
    `http://localhost:8000/`) — the pipeline runs server-side; the
    browser captures your mic and plays responses via a websocket at
    `/ws`. Supports multiple simultaneous browser tabs/users, each with
    independent conversation history.
-3. **FastAPI server + CLI client** (`uv run server.py`, then in another
-   terminal `uv run ws_client.py`) — same server, a Python relay client
+3. **FastAPI server + CLI client** (`uv run asr-server`, then in another
+   terminal `uv run asr-client`) — same server, a Python relay client
    instead of a browser. Useful for scripting/headless use, or testing
    the server without a browser.
 
@@ -173,7 +174,7 @@ headphones with any of the three run modes.
 
 `fastapi`, `uvicorn[standard]`, and `websockets` are dependencies added
 for server mode; `pytest` is a dev-only dependency (`uv run pytest` to
-run the test suite) — neither is needed just to run `main.py`.
+run the test suite) — neither is needed just to run `asr-agent`.
 
 ### Browser client: model/provider selection
 
@@ -200,32 +201,32 @@ automatically.
 All three run modes support picking a specific input device:
 
 ```
-uv run main.py --list-mics              # print available input devices
-uv run main.py --mic "USB"               # by name substring, or an index
-uv run ws_client.py --list-mics
-uv run ws_client.py --mic 3
+uv run asr-agent --list-mics              # print available input devices
+uv run asr-agent --mic "USB"               # by name substring, or an index
+uv run asr-client --list-mics
+uv run asr-client --mic 3
 ```
 
 The browser client has an equivalent microphone dropdown (populated via
 `navigator.mediaDevices.enumerateDevices()` — device labels only appear
 after mic permission has been granted once).
 
-**Mute**: in `main.py`/`ws_client.py`, press Enter in the terminal to
+**Mute**: in `asr-agent`/`asr-client`, press Enter in the terminal to
 toggle muting (frames are dropped before they ever reach VAD, so the
 agent stays idle) — press Enter again to unmute. In the browser, a Mute
 button next to Connect does the same, and also disables the mic track
 so the browser's own hardware-in-use indicator turns off.
 
-### CLI client provider selection (`ws_client.py`)
+### CLI client provider selection (`asr-client`)
 
 ```
-uv run ws_client.py --tts supertonic --voice M1 --llm-model gemma-3-1b-it
-uv run ws_client.py --trigger-word "computer"
+uv run asr-client --tts supertonic --voice M1 --llm-model gemma-3-1b-it
+uv run asr-client --trigger-word "computer"
 ```
 
-These are forwarded to `server.py` as the same `/ws` query params the
-browser client uses — see `server.py`'s own module docstring for the
-full query-param reference.
+These are forwarded to `asr-server` as the same `/ws` query params the
+browser client uses — see `src/asr_test/cli/server.py`'s own module
+docstring for the full query-param reference.
 
 ### VAD tuning
 
@@ -233,14 +234,14 @@ All three run modes let you tune Silero VAD's sensitivity and
 turn-taking without touching code:
 
 ```
-uv run main.py --vad-threshold 0.35        # lower = more sensitive (default: 0.5)
-uv run main.py --vad-min-silence-ms 800    # shorter pause before a turn ends (default: MIN_SILENCE_MS)
-uv run main.py --vad-speech-pad-ms 200     # less padding kept around detected speech (default: SPEECH_PAD_MS)
+uv run asr-agent --vad-threshold 0.35        # lower = more sensitive (default: 0.5)
+uv run asr-agent --vad-min-silence-ms 800    # shorter pause before a turn ends (default: MIN_SILENCE_MS)
+uv run asr-agent --vad-speech-pad-ms 200     # less padding kept around detected speech (default: SPEECH_PAD_MS)
 
-uv run ws_client.py --vad-threshold 0.35 --vad-min-silence-ms 800
+uv run asr-client --vad-threshold 0.35 --vad-min-silence-ms 800
 ```
 
-forwarded to `server.py` as `vad_threshold`/`vad_min_silence_ms`/
+forwarded to `asr-server` as `vad_threshold`/`vad_min_silence_ms`/
 `vad_speech_pad_ms` query params (same as above); the browser client has
 matching "vad sensitivity"/"pause length"/"speech padding" fields in its
 config panel. `vad_threshold` must be in `[0, 1]`; all three are
@@ -253,8 +254,8 @@ The LLM stage (`src/asr_test/llm/langchain_llm.py`, `LangChainLlm`) runs
 on `langchain` + `langchain-openai`'s `ChatOpenAI` instead of talking to
 the OpenAI SDK directly — same LM Studio (or any OpenAI-compatible)
 backend, no new server required. `LlmBase.stream(messages, cancel)`'s
-contract is unchanged, so `Agent`, `server.py`, and every other caller
-needed no changes.
+contract is unchanged, so `Agent`, `asr_test.cli.server`, and every
+other caller needed no changes.
 
 This unlocks tool calling: the model can call a bound tool
 mid-conversation and get its result folded back in before finishing its
@@ -276,11 +277,11 @@ Tools bound by default (`src/asr_test/llm/tools.py`):
 ```
 # PowerShell
 $env:TAVILY_API_KEY = "tvly-..."
-uv run main.py
+uv run asr-agent
 
 # bash
 export TAVILY_API_KEY=tvly-...
-uv run main.py
+uv run asr-agent
 ```
 
 Pass a custom `tools=[...]` list to `LangChainLlm(...)` to add more —
@@ -454,19 +455,21 @@ as a drop-in alternative (different voices/prosody) via `--tts supertonic`.
 ## Architecture
 
 ```
-main.py                          local-mode CLI entrypoint (--tts, --voice, --trigger-word, --vad-*)
-server.py                        FastAPI multi-session websocket server (see "Running" above)
-ws_client.py                     Python CLI relay client for server.py
-static/index.html                browser relay client for server.py — voice/text toggle, live
-                                  transcript, settings, session History sidebar
-conftest.py                      empty — puts the repo root on sys.path so tests can
-                                  `from server import ...` without packaging the root scripts
 src/asr_test/
+  cli/
+    local.py                     local-mode CLI entrypoint (--tts, --voice, --trigger-word, --vad-*)
+                                  — console script: `uv run asr-agent`
+    server.py                    FastAPI multi-session websocket server (see "Running" above)
+                                  — console script: `uv run asr-server`
+    relay_client.py              Python CLI relay client for server.py
+                                  — console script: `uv run asr-client`
+  static/index.html              browser relay client for server.py — voice/text toggle, live
+                                  transcript, settings, session History sidebar
   config.py                      shared, engine-agnostic settings
   utils.py                       resample_linear, pcm16_to_float32, float32_to_pcm16
   agent.py                       orchestrator: threads + queues wiring; feed_audio/on_text_message/
-                                  start/shutdown are the transport-agnostic entry points main.py
-                                  and server.py both drive
+                                  start/shutdown are the transport-agnostic entry points
+                                  cli/local.py and cli/server.py both drive
   storage.py                     SessionStore — SQLite session/turn history (create/add_turn/
                                   set_title/delete_session/list_sessions/get_session)
   null_engines.py                NullTts/NullVad — no-op stand-ins for text-mode sessions; kept
@@ -481,12 +484,12 @@ src/asr_test/
   stt/onnx_asr_engine.py         OnnxAsrEngine(SttBase)
   tts/kokoro.py                  KokoroTts(TtsBase)
   tts/supertonic.py              SupertonicTts(TtsBase)
-  llm/langchain_llm.py           LangChainLlm(LlmBase) — ChatOpenAI/AzureChatOpenAI + bound
-                                  tools, hand-rolled tool loop, usage/cost/context-window
-                                  reporting, generate_title()
-  llm/provider.py                resolve_provider() — env-var backend selection (local/openai/azure)
-  llm/pricing.py                 per-token cost table + env overrides
-  llm/context_window.py          context-window lookup (live for local, table for cloud)
+  llm/langchain_llm.py           LangChainLlm(LlmBase) — bound tools, hand-rolled tool loop,
+                                  usage/cost/context-window reporting, generate_title()
+  llm/providers/                 provider registry — base.py (LlmProviderBase ABC + ProviderConfig),
+                                  registry.py (dispatch), local.py/openai.py/azure.py (one
+                                  self-registering provider each; add a new backend by adding
+                                  one file here, no other file needs to change)
   llm/tools.py                   get_current_time, web search (Tavily, needs TAVILY_API_KEY)
   llm/openai_compatible.py       OpenAiCompatibleLlm(LlmBase) — plain OpenAI SDK, no tool calling, kept for reference/tests
 tests/                           pytest suite (fakes.py holds shared no-hardware/no-network test doubles); run with `uv run pytest`
