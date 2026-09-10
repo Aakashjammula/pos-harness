@@ -40,10 +40,12 @@ class FakeStt(SttBase):
 
 
 class FakeLlm(LlmBase):
-    def __init__(self, reply: str = "hi there", fake_usage: dict | None = None):
+    def __init__(self, reply: str = "hi there", fake_usage: dict | None = None, fake_title: str | None = None):
         self.reply = reply
         self.calls: list[list[dict]] = []
         self.fake_usage = fake_usage
+        self.fake_title = fake_title
+        self.title_calls: list[tuple[str, str]] = []
 
     def stream(
         self, messages: list[dict], cancel: threading.Event, usage: dict | None = None
@@ -53,6 +55,10 @@ class FakeLlm(LlmBase):
             usage.update(self.fake_usage)
         for word in self.reply.split():
             yield word + " "
+
+    def generate_title(self, first_user_message: str, first_bot_message: str) -> str | None:
+        self.title_calls.append((first_user_message, first_bot_message))
+        return self.fake_title
 
 
 class FakeTts(TtsBase):

@@ -69,3 +69,39 @@ def test_add_turn_without_usage_stores_none():
     result = store.get_session("s1")
 
     assert result["turns"][0]["usage"] is None
+
+
+def test_new_session_has_no_title_until_set():
+    store = _store()
+    store.create_session("s1", mode="voice", tts_engine="kokoro", llm_model="m")
+
+    assert store.get_session("s1")["session"]["title"] is None
+    assert store.list_sessions()[0]["title"] is None
+
+
+def test_set_title_updates_session_and_list():
+    store = _store()
+    store.create_session("s1", mode="voice", tts_engine="kokoro", llm_model="m")
+
+    store.set_title("s1", "Weekend trip planning")
+
+    assert store.get_session("s1")["session"]["title"] == "Weekend trip planning"
+    assert store.list_sessions()[0]["title"] == "Weekend trip planning"
+
+
+def test_delete_session_removes_it_and_its_turns():
+    store = _store()
+    store.create_session("s1", mode="voice", tts_engine="kokoro", llm_model="m")
+    store.add_turn("s1", "user", "hello")
+
+    deleted = store.delete_session("s1")
+
+    assert deleted is True
+    assert store.get_session("s1") is None
+    assert store.list_sessions() == []
+
+
+def test_delete_session_unknown_id_returns_false():
+    store = _store()
+
+    assert store.delete_session("does-not-exist") is False

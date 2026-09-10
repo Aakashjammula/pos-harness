@@ -32,6 +32,15 @@ class SessionStore:
                 )
                 """
             )
+            # Migration for DBs created before `title` existed -- CREATE
+            # TABLE IF NOT EXISTS above is a no-op on an already-existing
+            # file, so the column has to be added separately. Sqlite has
+            # no "ADD COLUMN IF NOT EXISTS"; ignore the one error it
+            # raises when the column is already there.
+            try:
+                self._conn.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
+            except sqlite3.OperationalError:
+                pass
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS turns (
@@ -73,11 +82,26 @@ class SessionStore:
             )
             self._conn.commit()
 
+    def set_title(self, session_id: str, title: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET title = ? WHERE id = ?", (title, session_id)
+            )
+            self._conn.commit()
+
+    def delete_session(self, session_id: str) -> bool:
+        """Returns True if a session was deleted, False if id was unknown."""
+        with self._lock:
+            self._conn.execute("DELETE FROM turns WHERE session_id = ?", (session_id,))
+            cursor = self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            self._conn.commit()
+            return cursor.rowcount > 0
+
     def list_sessions(self, limit: int = 50) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT s.id, s.created_at, s.mode, s.tts_engine, s.llm_model,
+                SELECT s.id, s.created_at, s.mode, s.tts_engine, s.llm_model, s.title,
                        COUNT(t.id) AS turn_count
                 FROM sessions s
                 LEFT JOIN turns t ON t.session_id = s.id
@@ -92,7 +116,7 @@ class SessionStore:
     def get_session(self, session_id: str) -> dict | None:
         with self._lock:
             session_row = self._conn.execute(
-                "SELECT id, created_at, mode, tts_engine, llm_model FROM sessions WHERE id = ?",
+                "SELECT id, created_at, mode, tts_engine, llm_model, title FROM sessions WHERE id = ?",
                 (session_id,),
             ).fetchone()
             if session_row is None:
