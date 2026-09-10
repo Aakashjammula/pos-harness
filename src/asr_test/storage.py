@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 class SessionStore:
@@ -65,7 +65,7 @@ class SessionStore:
             self._conn.execute(
                 "INSERT INTO sessions (id, created_at, mode, tts_engine, llm_model) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (session_id, datetime.now(timezone.utc).isoformat(), mode, tts_engine, llm_model),
+                (session_id, datetime.now(UTC).isoformat(), mode, tts_engine, llm_model),
             )
             self._conn.commit()
 
@@ -77,7 +77,7 @@ class SessionStore:
                 (
                     session_id, role, text,
                     json.dumps(usage) if usage is not None else None,
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(UTC).isoformat(),
                 ),
             )
             self._conn.commit()

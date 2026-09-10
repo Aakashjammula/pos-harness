@@ -1,4 +1,3 @@
-from unittest.mock import MagicMock
 
 from asr_test.vad.silero import SileroVad
 

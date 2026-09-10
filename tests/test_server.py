@@ -1,13 +1,13 @@
 import time
 
 import numpy as np
+from fakes import FakeLlm, FakeStt, FakeTts, FakeVad
 from starlette.testclient import TestClient
 
 from asr_test import config
 from asr_test.storage import SessionStore
 from asr_test.utils import float32_to_pcm16
-from fakes import FakeLlm, FakeStt, FakeTts, FakeVad
-from server import create_app, _default_llm_models
+from server import _default_llm_models, create_app
 
 
 def _make_client(monkeypatch):

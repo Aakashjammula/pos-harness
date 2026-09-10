@@ -5,7 +5,7 @@ logic getting harder to read."""
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from langchain_core.tools import BaseTool, tool
 
@@ -14,7 +14,7 @@ from langchain_core.tools import BaseTool, tool
 def get_current_time() -> str:
     """Return the current date and time (UTC). Use this whenever the
     user asks what day/time it is or something that depends on it."""
-    return datetime.now(timezone.utc).strftime("%A, %Y-%m-%d %H:%M UTC")
+    return datetime.now(UTC).strftime("%A, %Y-%m-%d %H:%M UTC")
 
 
 def default_tools() -> list[BaseTool]:
