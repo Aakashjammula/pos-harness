@@ -33,7 +33,14 @@ def _local_context_window(base_url: str | None, model: str) -> int | None:
         resp.raise_for_status()
         for entry in resp.json().get("data", []):
             if entry.get("id") == model:
-                return entry.get("max_context_length")
+                # loaded_context_length is what LM Studio actually configured
+                # for the running instance (e.g. 8192, set in its UI) --
+                # max_context_length is the model's architectural ceiling
+                # (e.g. 128000) and can be much larger than what's really
+                # available. Prefer the real, currently-in-effect value;
+                # only fall back to the ceiling if the model isn't loaded
+                # (loaded_context_length is absent/None in that state).
+                return entry.get("loaded_context_length") or entry.get("max_context_length")
     except Exception:
         return None
     return None
