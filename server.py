@@ -11,12 +11,14 @@ Two endpoints:
                   directions; one JSON "ready" event on connect, then
                   "user_text"/"bot_text"/"interrupted" events for live
                   captions. Config is chosen via query params, e.g.
-                  /ws?tts=kokoro&voice=af_bella&llm_model=lfm2.5-230m&trigger_word=computer
+                  /ws?tts=kokoro&voice=af_bella&llm_model=lfm2.5-230m&trigger_word=computer&vad_threshold=0.5&vad_min_silence_ms=1200&vad_speech_pad_ms=300
                   — all optional, falling back to each engine's own
                   default. Headphones are assumed unconditionally (no echo
                   suppression, full barge-in) — every client is expected to
                   have real mic/speaker isolation; there's no safer
-                  fallback mode.
+                  fallback mode. An invalid vad_* value gets an "error"
+                  event and the socket is closed rather than silently
+                  falling back.
 
 Each connection gets its own Agent (own VAD state, own conversation
 history), but STT and same-(engine,voice)/same-model TTS/LLM instances
@@ -31,26 +33,33 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
 import requests
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
 from asr_test import config
 from asr_test.agent import Agent
 from asr_test.audio.ws_sink import WebSocketAudioSink
 from asr_test.interfaces import LlmBase, SttBase, TtsBase, VadBase
+from asr_test.storage import SessionStore
 from asr_test.utils import pcm16_to_float32
 from asr_test.vad import SileroVad
 
 
-def _default_vad_factory() -> VadBase:
+def _default_vad_factory(
+    threshold: float = 0.5,
+    min_silence_ms: int = config.MIN_SILENCE_MS,
+    speech_pad_ms: int = config.SPEECH_PAD_MS,
+) -> VadBase:
     return SileroVad(
         sample_rate=config.MIC_RATE,
-        min_silence_ms=config.MIN_SILENCE_MS,
-        speech_pad_ms=config.SPEECH_PAD_MS,
+        threshold=threshold,
+        min_silence_ms=min_silence_ms,
+        speech_pad_ms=speech_pad_ms,
     )
 
 
@@ -71,10 +80,11 @@ def create_app(
     stt: SttBase,
     tts_engines: dict[str, type[TtsBase]] | None = None,
     llm_factory: Callable[[str], LlmBase] | None = None,
-    vad_factory: Callable[[], VadBase] = _default_vad_factory,
+    vad_factory: Callable[..., VadBase] = _default_vad_factory,
     default_tts_engine: str = "kokoro",
     default_llm_model: str = "lfm2.5-230m",
     llm_base_url: str = "http://localhost:1234/v1",
+    session_store: SessionStore | None = None,
 ) -> FastAPI:
     if tts_engines is None:
         from asr_test.tts import KokoroTts, SupertonicTts
@@ -82,11 +92,12 @@ def create_app(
         tts_engines = {"kokoro": KokoroTts, "supertonic": SupertonicTts}
 
     if llm_factory is None:
-        from asr_test.llm import OpenAiCompatibleLlm
+        from asr_test.llm import LangChainLlm
 
-        llm_factory = lambda model: OpenAiCompatibleLlm(model=model)  # noqa: E731
+        llm_factory = lambda model: LangChainLlm(model=model)  # noqa: E731
 
     app = FastAPI()
+    store = session_store or SessionStore(config.SESSIONS_DB_PATH)
 
     # Eagerly warm the default (engine, voice)/model combo at startup —
     # before uvicorn ever accepts a connection — so the *first* client
@@ -133,6 +144,17 @@ def create_app(
             "defaults": {"tts_engine": default_tts_engine, "llm_model": default_llm_model},
         }
 
+    @app.get("/sessions")
+    async def list_sessions():
+        return store.list_sessions()
+
+    @app.get("/sessions/{session_id}")
+    async def get_session(session_id: str):
+        result = store.get_session(session_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        return result
+
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket):
         await websocket.accept()
@@ -144,11 +166,42 @@ def create_app(
         llm_model = params.get("llm_model", default_llm_model)
         trigger_word = params.get("trigger_word") or None
 
+        try:
+            vad_threshold = float(params.get("vad_threshold", 0.5))
+            vad_min_silence_ms = int(params.get("vad_min_silence_ms", config.MIN_SILENCE_MS))
+            vad_speech_pad_ms = int(params.get("vad_speech_pad_ms", config.SPEECH_PAD_MS))
+        except ValueError as e:
+            await websocket.send_json({"event": "error", "message": f"invalid vad_* value: {e}"})
+            await websocket.close(code=1008)
+            return
+        if not (0.0 <= vad_threshold <= 1.0):
+            await websocket.send_json({
+                "event": "error",
+                "message": f"vad_threshold must be in [0, 1], got {vad_threshold}",
+            })
+            await websocket.close(code=1008)
+            return
+        if vad_min_silence_ms < 0 or vad_speech_pad_ms < 0:
+            await websocket.send_json({
+                "event": "error",
+                "message": "vad_min_silence_ms/vad_speech_pad_ms must be non-negative",
+            })
+            await websocket.close(code=1008)
+            return
+
         tts = await get_tts(tts_engine, voice)
         llm = await get_llm(llm_model)
 
+        session_id = uuid.uuid4().hex
+        mode = params.get("mode", "voice")
+        try:
+            store.create_session(session_id, mode=mode, tts_engine=tts_engine, llm_model=llm_model)
+        except Exception as e:
+            print(f"  session store error (create_session): {e}")
+
         await websocket.send_json({
             "event": "ready",
+            "session_id": session_id,
             "input_sample_rate": config.MIC_RATE,
             "output_sample_rate": tts.sample_rate,
             "tts_engine": tts_engine,
@@ -156,6 +209,17 @@ def create_app(
         })
 
         def emit(name: str, data: dict) -> None:
+            if name == "user_text":
+                try:
+                    store.add_turn(session_id, "user", data["text"])
+                except Exception as e:
+                    print(f"  session store error (add_turn user): {e}")
+            elif name == "bot_text":
+                try:
+                    store.add_turn(session_id, "assistant", data["text"], data.get("usage"))
+                except Exception as e:
+                    print(f"  session store error (add_turn assistant): {e}")
+
             async def _send():
                 try:
                     await websocket.send_json({"event": name, **data})
@@ -164,9 +228,14 @@ def create_app(
 
             asyncio.run_coroutine_threadsafe(_send(), loop)
 
+        vad = vad_factory(
+            threshold=vad_threshold,
+            min_silence_ms=vad_min_silence_ms,
+            speech_pad_ms=vad_speech_pad_ms,
+        )
         sink = WebSocketAudioSink(websocket, loop, rate=tts.sample_rate, blocksize=config.OUT_BLOCK)
         agent = Agent(
-            vad=vad_factory(), stt=stt, tts=tts, llm=llm,
+            vad=vad, stt=stt, tts=tts, llm=llm,
             trigger_word=trigger_word, audio_sink=sink, on_event=emit,
         )
         threads = agent.start()
