@@ -1,0 +1,114 @@
+"""SQLite-backed session/turn history. Owned entirely by the transport
+layers (server.py, main.py) -- Agent itself never imports this; it only
+ever calls on_event(), and that's where storage hooks in (see
+docs/superpowers/specs/2026-09-10-session-storage-text-mode-trace-ui-design.md).
+A write failure here must never crash a live session -- callers wrap
+add_turn()/create_session() in try/except, this module doesn't swallow
+errors itself so a genuine bug surfaces during development."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+from datetime import datetime, timezone
+
+
+class SessionStore:
+    def __init__(self, path: str = "sessions.db"):
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._lock = threading.Lock()
+        with self._lock:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    tts_engine TEXT,
+                    llm_model TEXT NOT NULL
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS turns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL REFERENCES sessions(id),
+                    role TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    usage_json TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id)"
+            )
+            self._conn.commit()
+
+    def create_session(
+        self, session_id: str, mode: str, tts_engine: str | None, llm_model: str
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO sessions (id, created_at, mode, tts_engine, llm_model) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (session_id, datetime.now(timezone.utc).isoformat(), mode, tts_engine, llm_model),
+            )
+            self._conn.commit()
+
+    def add_turn(self, session_id: str, role: str, text: str, usage: dict | None = None) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO turns (session_id, role, text, usage_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    session_id, role, text,
+                    json.dumps(usage) if usage is not None else None,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            self._conn.commit()
+
+    def list_sessions(self, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT s.id, s.created_at, s.mode, s.tts_engine, s.llm_model,
+                       COUNT(t.id) AS turn_count
+                FROM sessions s
+                LEFT JOIN turns t ON t.session_id = s.id
+                GROUP BY s.id
+                ORDER BY s.created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_session(self, session_id: str) -> dict | None:
+        with self._lock:
+            session_row = self._conn.execute(
+                "SELECT id, created_at, mode, tts_engine, llm_model FROM sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            if session_row is None:
+                return None
+            turn_rows = self._conn.execute(
+                "SELECT role, text, usage_json FROM turns WHERE session_id = ? ORDER BY id",
+                (session_id,),
+            ).fetchall()
+        return {
+            "session": dict(session_row),
+            "turns": [
+                {
+                    "role": row["role"],
+                    "text": row["text"],
+                    "usage": json.loads(row["usage_json"]) if row["usage_json"] else None,
+                }
+                for row in turn_rows
+            ],
+        }

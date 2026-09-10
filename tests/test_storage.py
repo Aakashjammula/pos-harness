@@ -1,0 +1,71 @@
+from asr_test.storage import SessionStore
+
+
+def _store():
+    return SessionStore(":memory:")
+
+
+def test_create_and_list_sessions():
+    store = _store()
+    store.create_session("s1", mode="voice", tts_engine="kokoro", llm_model="lfm2.5-230m")
+    store.create_session("s2", mode="text", tts_engine=None, llm_model="gpt-4o-mini")
+
+    sessions = store.list_sessions()
+
+    assert [s["id"] for s in sessions] == ["s2", "s1"]  # newest first
+    assert sessions[0]["mode"] == "text"
+    assert sessions[0]["tts_engine"] is None
+    assert sessions[1]["tts_engine"] == "kokoro"
+    assert "created_at" in sessions[0]
+
+
+def test_list_sessions_respects_limit():
+    store = _store()
+    for i in range(5):
+        store.create_session(f"s{i}", mode="voice", tts_engine="kokoro", llm_model="m")
+
+    assert len(store.list_sessions(limit=2)) == 2
+
+
+def test_add_turn_and_get_session():
+    store = _store()
+    store.create_session("s1", mode="voice", tts_engine="kokoro", llm_model="m")
+    store.add_turn("s1", "user", "hello")
+    store.add_turn("s1", "assistant", "hi there", usage={"input_tokens": 5, "output_tokens": 3})
+
+    result = store.get_session("s1")
+
+    assert result["session"]["id"] == "s1"
+    assert len(result["turns"]) == 2
+    assert result["turns"][0] == {"role": "user", "text": "hello", "usage": None}
+    assert result["turns"][1] == {
+        "role": "assistant", "text": "hi there",
+        "usage": {"input_tokens": 5, "output_tokens": 3},
+    }
+
+
+def test_get_session_returns_turn_count_in_list_sessions():
+    store = _store()
+    store.create_session("s1", mode="voice", tts_engine="kokoro", llm_model="m")
+    store.add_turn("s1", "user", "hello")
+    store.add_turn("s1", "assistant", "hi")
+
+    sessions = store.list_sessions()
+
+    assert sessions[0]["turn_count"] == 2
+
+
+def test_get_session_unknown_id_returns_none():
+    store = _store()
+
+    assert store.get_session("does-not-exist") is None
+
+
+def test_add_turn_without_usage_stores_none():
+    store = _store()
+    store.create_session("s1", mode="voice", tts_engine="kokoro", llm_model="m")
+    store.add_turn("s1", "user", "hello")
+
+    result = store.get_session("s1")
+
+    assert result["turns"][0]["usage"] is None
