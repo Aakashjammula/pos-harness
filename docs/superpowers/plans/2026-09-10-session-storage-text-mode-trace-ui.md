@@ -726,7 +726,20 @@ git commit -m "feat: add Agent text_only mode and on_text_message() entry point"
 
 **Interfaces:**
 - Consumes: `Agent(text_only=...)` and `Agent.on_text_message()` from Task 4.
-- Produces: `/ws?mode=text|voice` query param, validated the same way as `vad_*`. Task 6 (browser UI) is the client of this.
+- Produces: `/ws?mode=text|voice` query param, validated the same way as `vad_*`; a `NullAudioSink` (new, `src/asr_test/audio/null_sink.py`) used instead of `WebSocketAudioSink` when `mode == "text"`. Task 6 (browser UI) is the client of this.
+
+**Correction found while implementing this task (not anticipated in
+the spec):** `WebSocketAudioSink` cannot be constructed unconditionally
+for both modes as originally planned — its background thread starts
+sending paced blocks (including silence once its buffer is empty)
+immediately at construction, regardless of whether anything is ever
+pushed to it. A text-mode session would otherwise stream continuous
+silent binary frames despite never running TTS, which broke
+`test_ws_text_mode_accepts_json_text_and_replies_with_bot_text` (the
+first binary silence frame arrived before the JSON `user_text`/`bot_text`
+events, confusing the test's `receive_json()` calls). Fix: added
+`NullAudioSink(AudioSinkBase)` — every method a no-op — and construct
+it instead of `WebSocketAudioSink` when `mode == "text"`.
 
 - [ ] **Step 1: Write the failing tests**
 

@@ -4,21 +4,34 @@ FastAPI websocket server — see docs/superpowers/specs/
 2026-09-10-web-ui-provider-selection-design.md (model/provider
 selection, this file's /options + query-param handling).
 
-Two endpoints:
-  GET  /options   what the UI can offer before connecting (TTS engines/
-                  voices, LLM models currently loaded in LM Studio)
-  WS   /ws        binary frames carry raw PCM16 mono audio in both
-                  directions; one JSON "ready" event on connect, then
-                  "user_text"/"bot_text"/"interrupted" events for live
-                  captions. Config is chosen via query params, e.g.
-                  /ws?tts=kokoro&voice=af_bella&llm_model=lfm2.5-230m&trigger_word=computer&vad_threshold=0.5&vad_min_silence_ms=1200&vad_speech_pad_ms=300
-                  — all optional, falling back to each engine's own
-                  default. Headphones are assumed unconditionally (no echo
-                  suppression, full barge-in) — every client is expected to
-                  have real mic/speaker isolation; there's no safer
-                  fallback mode. An invalid vad_* value gets an "error"
-                  event and the socket is closed rather than silently
-                  falling back.
+Four endpoints:
+  GET  /options          what the UI can offer before connecting (TTS
+                         engines/voices, LLM models currently loaded in
+                         LM Studio)
+  GET  /sessions         list of past sessions (id, mode, turn count, ...),
+                         newest first — read-only, see storage.py
+  GET  /sessions/{id}    one session's stored turns, 404 if unknown
+  WS   /ws               binary frames carry raw PCM16 mono audio in both
+                         directions (voice mode only — see mode below); one
+                         JSON "ready" event on connect (includes a
+                         session_id), then "user_text"/"bot_text"/"interrupted"
+                         events for live captions. Config is chosen via
+                         query params, e.g.
+                         /ws?tts=kokoro&voice=af_bella&llm_model=lfm2.5-230m&trigger_word=computer&vad_threshold=0.5&vad_min_silence_ms=1200&vad_speech_pad_ms=300&mode=voice
+                         — all optional, falling back to each engine's own
+                         default. Headphones are assumed unconditionally (no
+                         echo suppression, full barge-in) — every client is
+                         expected to have real mic/speaker isolation; there's
+                         no safer fallback mode. An invalid vad_* value gets
+                         an "error" event and the socket is closed rather
+                         than silently falling back.
+
+                         `mode` is "voice" (default) or "text" — text mode
+                         skips mic/VAD/STT/TTS entirely: the client sends
+                         {"text": "..."} JSON messages instead of PCM audio,
+                         and never receives binary audio frames back. An
+                         invalid mode gets the same error+close treatment as
+                         an invalid vad_* value.
 
 Each connection gets its own Agent (own VAD state, own conversation
 history), but STT and same-(engine,voice)/same-model TTS/LLM instances
@@ -43,6 +56,7 @@ from fastapi.responses import FileResponse
 
 from asr_test import config
 from asr_test.agent import Agent
+from asr_test.audio.null_sink import NullAudioSink
 from asr_test.audio.ws_sink import WebSocketAudioSink
 from asr_test.interfaces import LlmBase, SttBase, TtsBase, VadBase
 from asr_test.storage import SessionStore
@@ -166,6 +180,15 @@ def create_app(
         llm_model = params.get("llm_model", default_llm_model)
         trigger_word = params.get("trigger_word") or None
 
+        mode = params.get("mode", "voice")
+        if mode not in ("voice", "text"):
+            await websocket.send_json({
+                "event": "error",
+                "message": f"mode must be 'voice' or 'text', got {mode!r}",
+            })
+            await websocket.close(code=1008)
+            return
+
         try:
             vad_threshold = float(params.get("vad_threshold", 0.5))
             vad_min_silence_ms = int(params.get("vad_min_silence_ms", config.MIN_SILENCE_MS))
@@ -193,7 +216,6 @@ def create_app(
         llm = await get_llm(llm_model)
 
         session_id = uuid.uuid4().hex
-        mode = params.get("mode", "voice")
         try:
             store.create_session(session_id, mode=mode, tts_engine=tts_engine, llm_model=llm_model)
         except Exception as e:
@@ -233,16 +255,28 @@ def create_app(
             min_silence_ms=vad_min_silence_ms,
             speech_pad_ms=vad_speech_pad_ms,
         )
-        sink = WebSocketAudioSink(websocket, loop, rate=tts.sample_rate, blocksize=config.OUT_BLOCK)
+        sink = (
+            NullAudioSink()
+            if mode == "text"
+            else WebSocketAudioSink(websocket, loop, rate=tts.sample_rate, blocksize=config.OUT_BLOCK)
+        )
         agent = Agent(
             vad=vad, stt=stt, tts=tts, llm=llm,
             trigger_word=trigger_word, audio_sink=sink, on_event=emit,
+            text_only=(mode == "text"),
         )
         threads = agent.start()
         try:
-            while True:
-                data = await websocket.receive_bytes()
-                agent.feed_audio(pcm16_to_float32(data))
+            if mode == "text":
+                while True:
+                    msg = await websocket.receive_json()
+                    text = msg.get("text", "")
+                    if text.strip():
+                        await loop.run_in_executor(None, agent.on_text_message, text)
+            else:
+                while True:
+                    data = await websocket.receive_bytes()
+                    agent.feed_audio(pcm16_to_float32(data))
         except WebSocketDisconnect:
             pass
         except Exception as e:
