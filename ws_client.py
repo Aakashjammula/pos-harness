@@ -12,6 +12,7 @@ Usage:
     # Config, forwarded to the server as query params (see server.py):
     uv run ws_client.py --tts supertonic --voice M1 --llm-model gemma-3-1b-it
     uv run ws_client.py --trigger-word "computer"
+    uv run ws_client.py --vad-threshold 0.35 --vad-min-silence-ms 800
 
     # Pick an input device (index or a substring of its name):
     uv run ws_client.py --list-mics
@@ -105,6 +106,20 @@ def main():
         "--list-mics", action="store_true",
         help="Print available input devices and exit.",
     )
+    parser.add_argument(
+        "--vad-threshold", type=float, default=None, metavar="0-1",
+        help="Speech probability threshold (server default: 0.5). Lower = "
+             "more sensitive (catches quieter speech, more false positives).",
+    )
+    parser.add_argument(
+        "--vad-min-silence-ms", type=int, default=None,
+        help="How long a pause must last before a turn is considered "
+             "finished (server default: 1200).",
+    )
+    parser.add_argument(
+        "--vad-speech-pad-ms", type=int, default=None,
+        help="Padding kept on each side of detected speech (server default: 300).",
+    )
     args = parser.parse_args()
 
     if args.list_mics:
@@ -123,6 +138,12 @@ def main():
         params["llm_model"] = args.llm_model
     if args.trigger_word:
         params["trigger_word"] = args.trigger_word
+    if args.vad_threshold is not None:
+        params["vad_threshold"] = args.vad_threshold
+    if args.vad_min_silence_ms is not None:
+        params["vad_min_silence_ms"] = args.vad_min_silence_ms
+    if args.vad_speech_pad_ms is not None:
+        params["vad_speech_pad_ms"] = args.vad_speech_pad_ms
     url = args.url + ("?" + urllib.parse.urlencode(params) if params else "")
 
     try:
