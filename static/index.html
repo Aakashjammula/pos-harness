@@ -356,6 +356,13 @@
   }
   .text-compose input[type="text"] { flex: 1; }
   .text-compose button.primary { flex: none; width: 84px; }
+
+  .line-stats {
+    font-size: 11px;
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    margin: -2px 0 8px 48px;
+  }
 </style>
 </head>
 <body>
@@ -495,6 +502,30 @@
   let turnCount = 0;
   let totalTokens = 0, totalCost = 0, totalCostKnown = false;
 
+  function formatUsageLine(usage) {
+    const parts = [];
+    if (usage.input_tokens != null && usage.output_tokens != null) {
+      const totalPart = usage.context_window != null
+        ? `${usage.total_tokens} total / ${usage.context_window} ctx`
+        : `${usage.total_tokens} total`;
+      parts.push(`${usage.input_tokens} in / ${usage.output_tokens} out (${totalPart})`);
+    }
+    if (usage.cost_usd != null) parts.push(`$${usage.cost_usd.toFixed(4)}`);
+    if (usage.tool_calls && usage.tool_calls.length) {
+      parts.push(`tools: ${usage.tool_calls.map((c) => c.name).join(", ")}`);
+    }
+    return parts.join(" · ");
+  }
+
+  function updateSessionTotals(usage) {
+    if (usage.total_tokens != null) totalTokens += usage.total_tokens;
+    if (usage.cost_usd != null) { totalCost += usage.cost_usd; totalCostKnown = true; }
+    const tokenPart = totalTokens ? `${totalTokens.toLocaleString()} tokens` : "";
+    const costPart = totalCostKnown ? `$${totalCost.toFixed(4)}` : "";
+    lineCount.textContent = [tokenPart, costPart].filter(Boolean).join(" · ")
+      || (turnCount ? `${turnCount}${turnCount === 1 ? " message" : " messages"}` : "");
+  }
+
   // --- helpers ---
 
   function floatToPcm16(input) {
@@ -519,17 +550,29 @@
     return Math.sqrt(sum / float32.length);
   }
 
-  function addLine(who, text) {
+  function addLine(who, text, usage) {
     const line = document.createElement("div");
     line.className = "line " + who;
     const label = { you: "You", bot: "Bot", system: "—" }[who] || who;
     line.innerHTML = `<span class="who">${label}</span><span class="what"></span>`;
     line.querySelector(".what").textContent = text;
     transcript.appendChild(line);
+
+    if (usage) {
+      const statsLine = formatUsageLine(usage);
+      if (statsLine) {
+        const stats = document.createElement("div");
+        stats.className = "line-stats";
+        stats.textContent = statsLine;
+        transcript.appendChild(stats);
+      }
+      updateSessionTotals(usage);
+    }
+
     transcript.scrollTop = transcript.scrollHeight;
     if (who === "you" || who === "bot") {
       turnCount++;
-      lineCount.textContent = turnCount + (turnCount === 1 ? " message" : " messages");
+      if (!usage) lineCount.textContent = turnCount + (turnCount === 1 ? " message" : " messages");
     }
   }
 
@@ -778,7 +821,7 @@
     } else if (msg.event === "user_text") {
       addLine("you", msg.text);
     } else if (msg.event === "bot_text") {
-      addLine("bot", msg.text);
+      addLine("bot", msg.text, msg.usage);
     } else if (msg.event === "interrupted") {
       addLine("system", "Interrupted");
     } else if (msg.event === "error") {
