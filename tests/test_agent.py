@@ -109,7 +109,11 @@ def test_on_event_fires_user_text_and_bot_text(monkeypatch):
             time.sleep(0.02)
 
         assert ("user_text", {"text": "hello"}) in events
-        assert ("bot_text", {"text": "hi there "}) in events
+        bot_events = [data for name, data in events if name == "bot_text"]
+        assert len(bot_events) == 1
+        assert bot_events[0]["text"] == "hi there "
+        assert bot_events[0]["latency"]["ttft"] >= 0
+        assert bot_events[0]["latency"]["total"] >= bot_events[0]["latency"]["ttft"]
     finally:
         agent.shutdown(threads)
 
@@ -144,7 +148,10 @@ def test_bot_text_event_includes_usage_when_llm_reports_it(monkeypatch):
             time.sleep(0.02)
 
         bot_events = [data for name, data in events if name == "bot_text"]
-        assert bot_events == [{"text": "hi there ", "usage": fake_usage}]
+        assert len(bot_events) == 1
+        assert bot_events[0]["text"] == "hi there "
+        assert bot_events[0]["usage"] == fake_usage
+        assert bot_events[0]["latency"]["ttft"] >= 0
     finally:
         agent.shutdown(threads)
 
@@ -172,10 +179,12 @@ def test_on_text_message_fires_user_text_then_bot_text():
 
     agent.on_text_message("hello")
 
-    assert events == [
-        ("user_text", {"text": "hello"}),
-        ("bot_text", {"text": "hi there "}),
-    ]
+    assert events[0] == ("user_text", {"text": "hello"})
+    assert len(events) == 2
+    bot_name, bot_data = events[1]
+    assert bot_name == "bot_text"
+    assert bot_data["text"] == "hi there "
+    assert bot_data["latency"]["ttft"] >= 0
 
 
 def test_voice_mode_agent_still_pushes_to_tts_queue(monkeypatch):

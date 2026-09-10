@@ -377,8 +377,10 @@ class Agent:
         if buf.strip():
             enqueue(buf)
 
+        latency: dict | None = None
         if ttft is not None:
             total = time.perf_counter() - t_start
+            latency = {"ttft": round(ttft, 3), "total": round(total, 3)}
             self.m_ttft.append(ttft)
             self.m_llm.append(total)
             if config.VERBOSE_TIMING:
@@ -406,6 +408,8 @@ class Agent:
             payload = {"text": joined}
             if usage:
                 payload["usage"] = usage
+            if latency is not None:
+                payload["latency"] = latency
             self._on_event("bot_text", payload)
 
         if spoken:
