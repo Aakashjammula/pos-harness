@@ -65,28 +65,38 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  .app {
-    max-width: 980px;
-    margin: 0 auto;
-    padding: 28px 24px 64px;
-  }
+  /* --- shell + sidebar --- */
 
-  /* --- topbar --- */
-
-  .topbar {
+  .shell {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 22px;
+    min-height: 100vh;
+    align-items: stretch;
   }
 
-  .brand {
+  .sidebar {
+    width: 260px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    padding: 18px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+  }
+
+  @media (max-width: 900px) {
+    .shell { flex-direction: column; }
+    .sidebar { width: auto; max-height: 220px; border-right: none; border-bottom: 1px solid var(--border); }
+  }
+
+  .sidebar-brand {
     display: flex;
     align-items: center;
     gap: 10px;
+    padding: 4px 8px 16px;
   }
-
-  .brand .mark {
+  .sidebar-brand .mark {
     width: 26px;
     height: 26px;
     border-radius: 7px;
@@ -96,9 +106,62 @@
     justify-content: center;
     flex-shrink: 0;
   }
-  .brand .mark svg { width: 15px; height: 15px; fill: #fff; }
+  .sidebar-brand .mark svg { width: 15px; height: 15px; fill: #fff; }
+  .sidebar-brand span:last-child { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
 
-  .brand h1 {
+  .sidebar-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-faint);
+    padding: 4px 8px 8px;
+  }
+
+  .sidebar-list { display: flex; flex-direction: column; gap: 2px; }
+
+  .sidebar-empty { padding: 8px; font-size: 12.5px; color: var(--text-faint); }
+
+  .sidebar-row {
+    padding: 9px 8px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 12.5px;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .sidebar-row:hover { background: var(--surface-sunken); color: var(--text); }
+  .sidebar-row .row-mode { color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; }
+
+  .sidebar-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 8px 12px;
+    font-size: 12.5px;
+    color: var(--primary);
+    cursor: pointer;
+    font-weight: 500;
+  }
+
+  /* --- app + topbar --- */
+
+  .app {
+    flex: 1;
+    min-width: 0;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 28px 24px 64px;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 22px;
+  }
+
+  .topbar h1 {
     font-size: 15px;
     font-weight: 600;
     margin: 0;
@@ -285,6 +348,31 @@
 
   .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
+  .mode-toggle {
+    display: flex;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .mode-btn {
+    flex: 1;
+    padding: 6px 0;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    font-family: var(--font-ui);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+  }
+  .mode-btn:hover:not(.active) { color: var(--text); }
+  .mode-btn.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+  .mode-btn:disabled { cursor: not-allowed; opacity: 0.6; }
+
   select, input[type="text"], input[type="number"] {
     width: 100%;
     background: var(--surface-sunken);
@@ -366,116 +454,112 @@
 </style>
 </head>
 <body>
-  <div class="app">
-    <div class="topbar">
-      <div class="brand">
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
         <span class="mark"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg></span>
-        <h1>Voice Agent</h1>
+        <span>Voice Agent</span>
       </div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <button class="secondary" id="historyBtn" style="width:auto;padding:6px 14px;">History</button>
+      <div class="sidebar-title" id="historyTitle">History</div>
+      <div class="sidebar-list" id="historyBody"></div>
+    </aside>
+
+    <div class="app">
+      <div class="topbar">
+        <h1 id="topbarTitle">Voice Agent</h1>
         <div class="conn-pill"><span class="led" id="led"></span><span id="stateText">Disconnected</span></div>
       </div>
-    </div>
 
-    <div class="layout">
-      <div>
-        <div class="panel status-card">
-          <div class="status-row">
-            <div class="status-tile" id="ring"><span id="ringIcon"></span></div>
-            <div class="status-copy">
-              <div class="state-text" id="stateTextCard">Disconnected</div>
-              <div class="status-label" id="statusLabel">Not connected</div>
+      <div class="layout">
+        <div>
+          <div class="panel status-card">
+            <div class="status-row">
+              <div class="status-tile" id="ring"><span id="ringIcon"></span></div>
+              <div class="status-copy">
+                <div class="state-text" id="stateTextCard">Disconnected</div>
+                <div class="status-label" id="statusLabel">Not connected</div>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="primary" id="connectBtn">Connect</button>
+              <button class="secondary" id="muteBtn" disabled>Mute</button>
             </div>
           </div>
-          <div class="actions">
-            <button class="primary" id="connectBtn">Connect</button>
-            <button class="secondary" id="muteBtn" disabled>Mute</button>
-          </div>
-        </div>
 
-        <details class="panel settings-panel" id="settingsPanel">
-          <summary>Voice &amp; model settings <span class="chev">&#8250;</span></summary>
-          <div class="settings-body" id="configPanel">
-            <div class="field-group">
-              <h3>Session type</h3>
-              <div class="field">
-                <label for="modeSelect">Mode</label>
-                <select id="modeSelect">
-                  <option value="voice">Voice</option>
-                  <option value="text">Text</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="field-group">
-              <h3>Model</h3>
-              <div class="field">
-                <label for="ttsEngine">Voice engine</label>
-                <select id="ttsEngine"></select>
-              </div>
-              <div class="field">
-                <label for="ttsVoice">Voice</label>
-                <select id="ttsVoice"></select>
-              </div>
-              <div class="field">
-                <label for="llmModel">LLM model</label>
-                <select id="llmModel"></select>
-              </div>
-            </div>
-
-            <div class="field-group">
-              <h3>Input</h3>
-              <div class="field">
-                <label for="micSelect">Microphone</label>
-                <select id="micSelect"><option value="">System default</option></select>
-              </div>
-              <div class="field">
-                <label for="triggerWord">Wake word (optional)</label>
-                <input type="text" id="triggerWord" placeholder="e.g. computer">
-              </div>
-            </div>
-
-            <div class="field-group">
-              <h3>Voice detection</h3>
-              <div class="field">
-                <label for="vadThreshold">Sensitivity (0&ndash;1)</label>
-                <input type="number" id="vadThreshold" min="0" max="1" step="0.05" value="0.5">
-              </div>
-              <div class="field-row">
-                <div class="field">
-                  <label for="vadMinSilenceMs">Pause length (ms)</label>
-                  <input type="number" id="vadMinSilenceMs" min="0" step="100" value="1200">
-                </div>
-                <div class="field">
-                  <label for="vadSpeechPadMs">Speech padding (ms)</label>
-                  <input type="number" id="vadSpeechPadMs" min="0" step="50" value="300">
+          <details class="panel settings-panel" id="settingsPanel" open>
+            <summary>Settings <span class="chev">&#8250;</span></summary>
+            <div class="settings-body" id="configPanel">
+              <div class="field-group">
+                <h3>Session type</h3>
+                <div class="mode-toggle" role="group" aria-label="Session mode">
+                  <button type="button" class="mode-btn active" id="modeVoiceBtn">Voice</button>
+                  <button type="button" class="mode-btn" id="modeTextBtn">Text</button>
                 </div>
               </div>
+
+              <div class="field-group">
+                <h3>Model</h3>
+                <div id="voiceEngineFields">
+                  <div class="field">
+                    <label for="ttsEngine">Voice engine</label>
+                    <select id="ttsEngine"></select>
+                  </div>
+                  <div class="field">
+                    <label for="ttsVoice">Voice</label>
+                    <select id="ttsVoice"></select>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="llmModel">LLM model</label>
+                  <select id="llmModel"></select>
+                </div>
+              </div>
+
+              <div class="field-group" id="inputGroup">
+                <h3>Input</h3>
+                <div class="field">
+                  <label for="micSelect">Microphone</label>
+                  <select id="micSelect"><option value="">System default</option></select>
+                </div>
+                <div class="field">
+                  <label for="triggerWord">Wake word (optional)</label>
+                  <input type="text" id="triggerWord" placeholder="e.g. computer">
+                </div>
+              </div>
+
+              <div class="field-group" id="vadGroup">
+                <h3>Voice detection</h3>
+                <div class="field">
+                  <label for="vadThreshold">Sensitivity (0&ndash;1)</label>
+                  <input type="number" id="vadThreshold" min="0" max="1" step="0.05" value="0.5">
+                </div>
+                <div class="field-row">
+                  <div class="field">
+                    <label for="vadMinSilenceMs">Pause length (ms)</label>
+                    <input type="number" id="vadMinSilenceMs" min="0" step="100" value="1200">
+                  </div>
+                  <div class="field">
+                    <label for="vadSpeechPadMs">Speech padding (ms)</label>
+                    <input type="number" id="vadSpeechPadMs" min="0" step="50" value="300">
+                  </div>
+                </div>
+              </div>
             </div>
+          </details>
+        </div>
+
+        <div class="panel transcript-panel">
+          <div class="transcript-header">
+            <h2>Conversation</h2>
+            <span class="count" id="lineCount"></span>
           </div>
-        </details>
-      </div>
-
-      <div class="panel transcript-panel">
-        <div class="transcript-header">
-          <h2>Conversation</h2>
-          <span class="count" id="lineCount"></span>
-        </div>
-        <div class="transcript" id="transcript"></div>
-        <div class="text-compose" id="textCompose" hidden>
-          <input type="text" id="textInput" placeholder="Type a message…" disabled>
-          <button class="primary" id="textSendBtn" disabled>Send</button>
+          <div class="transcript" id="transcript"></div>
+          <div class="text-compose" id="textCompose" hidden>
+            <input type="text" id="textInput" placeholder="Type a message…" disabled>
+            <button class="primary" id="textSendBtn" disabled>Send</button>
+          </div>
         </div>
       </div>
-    </div>
-
-    <div class="panel" id="historyModal" hidden style="position:fixed;inset:40px;z-index:10;overflow-y:auto;max-width:640px;margin:0 auto;">
-      <div class="transcript-header">
-        <h2 id="historyTitle">History</h2>
-        <button class="secondary" id="historyCloseBtn" style="width:auto;padding:4px 10px;">Close</button>
-      </div>
-      <div id="historyBody" style="padding:16px 20px;"></div>
     </div>
   </div>
 
@@ -490,9 +574,9 @@
   const vadThresholdInput = el("vadThreshold"), vadMinSilenceInput = el("vadMinSilenceMs"), vadSpeechPadInput = el("vadSpeechPadMs");
   const transcript = el("transcript"), lineCount = el("lineCount");
   const settingsPanel = el("settingsPanel");
-  const historyBtn = el("historyBtn"), historyModal = el("historyModal");
-  const historyTitle = el("historyTitle"), historyBody = el("historyBody"), historyCloseBtn = el("historyCloseBtn");
-  const modeSelect = el("modeSelect");
+  const historyTitle = el("historyTitle"), historyBody = el("historyBody");
+  const modeVoiceBtn = el("modeVoiceBtn"), modeTextBtn = el("modeTextBtn");
+  const voiceEngineFields = el("voiceEngineFields"), inputGroup = el("inputGroup"), vadGroup = el("vadGroup");
   const textCompose = el("textCompose"), textInput = el("textInput"), textSendBtn = el("textSendBtn");
 
   const ICONS = {
@@ -503,9 +587,24 @@
     error: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 1 21h22L12 2Zm1 15h-2v2h2v-2Zm0-7h-2v5h2v-5Z"/></svg>',
   };
 
+  let currentMode = "voice";
+
   function isTextMode() {
-    return modeSelect.value === "text";
+    return currentMode === "text";
   }
+
+  function setMode(mode) {
+    currentMode = mode;
+    modeVoiceBtn.classList.toggle("active", mode === "voice");
+    modeTextBtn.classList.toggle("active", mode === "text");
+    const textMode = mode === "text";
+    voiceEngineFields.hidden = textMode;
+    inputGroup.hidden = textMode;
+    vadGroup.hidden = textMode;
+  }
+
+  modeVoiceBtn.onclick = () => setMode("voice");
+  modeTextBtn.onclick = () => setMode("text");
 
   let options = null;
   let ws = null, connected = false, micMuted = false, currentState = "idle";
@@ -815,6 +914,8 @@
       }
       connected = true;
       configPanel.querySelectorAll("select, input").forEach((f) => (f.disabled = true));
+      modeVoiceBtn.disabled = true;
+      modeTextBtn.disabled = true;
       settingsPanel.open = false;
       connectBtn.textContent = "Disconnect";
       connectBtn.classList.add("disconnect");
@@ -831,6 +932,7 @@
         setState("listening", "Listening — just start talking");
         startSpeakingWatchdog();
       }
+      refreshHistoryList().catch(() => {});
     } else if (msg.event === "user_text") {
       addLine("you", msg.text);
     } else if (msg.event === "bot_text") {
@@ -856,6 +958,8 @@
     if (ws) { ws.onclose = null; ws.close(); ws = null; }
 
     configPanel.querySelectorAll("select, input").forEach((f) => (f.disabled = false));
+    modeVoiceBtn.disabled = false;
+    modeTextBtn.disabled = false;
     connectBtn.textContent = "Connect";
     connectBtn.classList.remove("disconnect");
     connectBtn.disabled = false;
@@ -863,22 +967,35 @@
     setState("idle", reason || "Not connected");
   }
 
-  // --- history panel ---
+  // --- history sidebar ---
 
-  async function openHistoryList() {
+  function formatSessionTimestamp(iso) {
+    try {
+      return new Date(iso).toLocaleString(undefined, {
+        month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+      });
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  async function refreshHistoryList() {
     historyTitle.textContent = "History";
-    historyBody.innerHTML = "Loading…";
-    historyModal.hidden = false;
     const sessions = await (await fetch("/sessions")).json();
+    historyBody.innerHTML = "";
     if (!sessions.length) {
-      historyBody.textContent = "No past sessions yet.";
+      const empty = document.createElement("div");
+      empty.className = "sidebar-empty";
+      empty.textContent = "No past sessions yet.";
+      historyBody.appendChild(empty);
       return;
     }
-    historyBody.innerHTML = "";
     for (const s of sessions) {
       const row = document.createElement("div");
-      row.style.cssText = "padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer;";
-      row.textContent = `${s.created_at}  ·  ${s.mode}  ·  ${s.turn_count} turns`;
+      row.className = "sidebar-row";
+      row.innerHTML =
+        `${formatSessionTimestamp(s.created_at)}` +
+        `<br><span class="row-mode">${s.mode} · ${s.turn_count} turn${s.turn_count === 1 ? "" : "s"}</span>`;
       row.onclick = () => openHistoryDetail(s.id);
       historyBody.appendChild(row);
     }
@@ -889,11 +1006,10 @@
     historyBody.innerHTML = "Loading…";
     const detail = await (await fetch(`/sessions/${sessionId}`)).json();
     historyBody.innerHTML = "";
-    const back = document.createElement("button");
-    back.className = "secondary";
-    back.style.cssText = "width:auto;padding:4px 10px;margin-bottom:12px;";
+    const back = document.createElement("div");
+    back.className = "sidebar-back";
     back.textContent = "← All sessions";
-    back.onclick = openHistoryList;
+    back.onclick = refreshHistoryList;
     historyBody.appendChild(back);
     for (const turn of detail.turns) {
       const line = document.createElement("div");
@@ -914,13 +1030,18 @@
     }
   }
 
-  historyBtn.onclick = openHistoryList;
-  historyCloseBtn.onclick = () => { historyModal.hidden = true; };
-
+  setMode("voice");
   connectBtn.onclick = connect;
   setState("idle", "Not connected");
   loadOptions().catch(() => setState("error", "Couldn't reach the server for options"));
   populateMics();
+  refreshHistoryList().catch(() => {
+    historyBody.innerHTML = "";
+    const err = document.createElement("div");
+    err.className = "sidebar-empty";
+    err.textContent = "Couldn't load history.";
+    historyBody.appendChild(err);
+  });
 })();
 </script>
 </body>
