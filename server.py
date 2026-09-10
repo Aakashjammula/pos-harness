@@ -170,6 +170,12 @@ def create_app(
             raise HTTPException(status_code=404, detail="session not found")
         return result
 
+    @app.delete("/sessions/{session_id}")
+    async def delete_session(session_id: str):
+        if not store.delete_session(session_id):
+            raise HTTPException(status_code=404, detail="session not found")
+        return {"deleted": True}
+
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket):
         await websocket.accept()
@@ -255,8 +261,34 @@ def create_app(
             "llm_model": llm_model,
         })
 
+        # Title generation (like ChatGPT's own "name the chat after the
+        # first exchange"): fires once, after the first assistant reply
+        # of a brand-new session -- never for a resumed one, since it
+        # already has (or already had the chance to get) a title from
+        # its original run, and re-titling from a continuation message
+        # would describe the wrong exchange.
+        last_user_text: str | None = None
+        title_pending = resume_session_id is None
+
+        async def _generate_and_store_title(user_text: str, bot_text: str) -> None:
+            generate_title = getattr(llm, "generate_title", None)
+            if generate_title is None:
+                return
+            try:
+                title = await loop.run_in_executor(None, generate_title, user_text, bot_text)
+            except Exception as e:
+                print(f"  title generation failed: {e}")
+                return
+            if title:
+                try:
+                    store.set_title(session_id, title)
+                except Exception as e:
+                    print(f"  session store error (set_title): {e}")
+
         def emit(name: str, data: dict) -> None:
+            nonlocal last_user_text, title_pending
             if name == "user_text":
+                last_user_text = data["text"]
                 try:
                     store.add_turn(session_id, "user", data["text"])
                 except Exception as e:
@@ -266,6 +298,11 @@ def create_app(
                     store.add_turn(session_id, "assistant", data["text"], data.get("usage"))
                 except Exception as e:
                     print(f"  session store error (add_turn assistant): {e}")
+                if title_pending and last_user_text is not None:
+                    title_pending = False
+                    asyncio.run_coroutine_threadsafe(
+                        _generate_and_store_title(last_user_text, data["text"]), loop
+                    )
 
             async def _send():
                 try:

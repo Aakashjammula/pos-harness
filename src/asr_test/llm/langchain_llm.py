@@ -82,6 +82,27 @@ class LangChainLlm(LlmBase):
         hint = " — is LM Studio running?" if self.provider.name == "local" else ""
         print(f"  llm warm-up failed after {attempts} attempts ({last_error}){hint}")
 
+    def generate_title(self, first_user_message: str, first_bot_message: str) -> str | None:
+        """A short (3-5 word) title summarizing a conversation's topic,
+        the way ChatGPT names each chat after its first exchange. Calls
+        self._model directly (not self._runnable/the tool loop, and not
+        self.system_prompt's voice-assistant persona) -- this is a
+        one-off, non-streaming, unrelated request, not a conversation
+        turn. Returns None on any failure (never raises) so a caller
+        can skip storing a title without special-casing this method."""
+        try:
+            response = self._model.invoke([
+                SystemMessage(
+                    "Summarize the topic of this exchange in 3 to 5 words, as a short "
+                    "chat title. Sentence case, no punctuation, no quotes, no emoji."
+                ),
+                HumanMessage(f"User: {first_user_message}\nAssistant: {first_bot_message}"),
+            ], max_tokens=16)
+            title = (response.content or "").strip().strip('"').strip("'")
+            return title or None
+        except Exception:
+            return None
+
     def _build_model(self, max_tokens: int, timeout: float):
         common = dict(max_tokens=max_tokens, temperature=0.7, timeout=timeout, stream_usage=True)
         if self.provider.name == "azure":

@@ -381,3 +381,39 @@ def test_stream_retries_context_window_lookup_on_next_turn_when_still_none(monke
     list(llm.stream([{"role": "user", "content": "hi again"}], threading.Event(), usage2))
     assert usage2["context_window"] == 131072
     assert len(calls) == 1  # not retried again once resolved
+
+
+def test_generate_title_returns_the_models_response(monkeypatch):
+    runnable = _FakeRunnable([])
+    llm = _make_llm(monkeypatch, runnable, tools=[])
+    llm._model.invoke.return_value = MagicMock(content="Weekend trip planning")
+
+    title = llm.generate_title("where should I go this weekend", "Try the coast, it's lovely this time of year.")
+
+    assert title == "Weekend trip planning"
+
+
+def test_generate_title_strips_surrounding_quotes(monkeypatch):
+    runnable = _FakeRunnable([])
+    llm = _make_llm(monkeypatch, runnable, tools=[])
+    llm._model.invoke.return_value = MagicMock(content='"Weekend trip planning"')
+
+    title = llm.generate_title("where should I go this weekend", "Try the coast.")
+
+    assert title == "Weekend trip planning"
+
+
+def test_generate_title_returns_none_on_failure(monkeypatch):
+    runnable = _FakeRunnable([])
+    llm = _make_llm(monkeypatch, runnable, tools=[])
+    llm._model.invoke.side_effect = ConnectionError("boom")
+
+    assert llm.generate_title("hi", "hello") is None
+
+
+def test_generate_title_returns_none_for_empty_response(monkeypatch):
+    runnable = _FakeRunnable([])
+    llm = _make_llm(monkeypatch, runnable, tools=[])
+    llm._model.invoke.return_value = MagicMock(content="   ")
+
+    assert llm.generate_title("hi", "hello") is None

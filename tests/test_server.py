@@ -517,3 +517,133 @@ def test_get_session_by_unknown_id_returns_404(monkeypatch):
     resp = client.get("/sessions/does-not-exist")
 
     assert resp.status_code == 404
+
+
+def test_delete_session_removes_it(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    store = SessionStore(":memory:")
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=store,
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as ws:
+        ready = ws.receive_json()
+
+    resp = client.delete(f"/sessions/{ready['session_id']}")
+
+    assert resp.status_code == 200
+    assert store.get_session(ready["session_id"]) is None
+
+
+def test_delete_session_unknown_id_returns_404():
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    resp = client.delete("/sessions/does-not-exist")
+
+    assert resp.status_code == 404
+
+
+def test_first_exchange_generates_a_session_title(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    store = SessionStore(":memory:")
+    fake_llm = FakeLlm("hi there", fake_title="Weekend trip planning")
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: fake_llm,
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=store,
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as ws:
+        ready = ws.receive_json()
+        frame = np.zeros(config.FRAME, dtype=np.float32)
+        for _ in range(3):
+            ws.send_bytes(float32_to_pcm16(frame))
+        ws.receive_bytes()
+
+        deadline = time.time() + 2.0
+        result = store.get_session(ready["session_id"])
+        while result["session"]["title"] is None and time.time() < deadline:
+            time.sleep(0.02)
+            result = store.get_session(ready["session_id"])
+
+    assert result["session"]["title"] == "Weekend trip planning"
+    assert fake_llm.title_calls == [("hello", "hi there ")]
+
+
+def test_title_generation_is_not_retriggered_on_later_turns(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    store = SessionStore(":memory:")
+    fake_llm = FakeLlm("hi there", fake_title="Weekend trip planning")
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: fake_llm,
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=store,
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()  # ready
+        frame = np.zeros(config.FRAME, dtype=np.float32)
+        # Two full turns' worth of frames, sent without draining replies in
+        # between -- WebSocketAudioSink streams continuous binary frames
+        # (silence included) on its own timer regardless of turns, so
+        # interleaving receive_bytes() calls with sends here would race
+        # against that stream rather than reliably picking up turn
+        # boundaries. Just wait for both turns to complete server-side.
+        for _ in range(6):
+            ws.send_bytes(float32_to_pcm16(frame))
+
+        deadline = time.time() + 2.0
+        while len(fake_llm.calls) < 2 and time.time() < deadline:
+            time.sleep(0.02)
+
+    assert len(fake_llm.calls) == 2
+    assert len(fake_llm.title_calls) == 1
+
+
+def test_resuming_a_session_does_not_regenerate_its_title(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    store = SessionStore(":memory:")
+    store.create_session("s1", mode="text", tts_engine=None, llm_model="lfm2.5-230m")
+    store.add_turn("s1", "user", "hi")
+    store.add_turn("s1", "assistant", "hello")
+    store.set_title("s1", "Original title")
+    fake_llm = FakeLlm("hi there", fake_title="Should not be used")
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: fake_llm,
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=store,
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?mode=text&resume_session_id=s1") as ws:
+        ws.receive_json()  # ready
+        ws.send_json({"text": "one more thing"})
+        ws.receive_json()  # user_text
+        ws.receive_json()  # bot_text
+
+    assert fake_llm.title_calls == []
+    assert store.get_session("s1")["session"]["title"] == "Original title"
