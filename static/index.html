@@ -112,6 +112,9 @@
   .sidebar-empty { padding: 8px; font-size: 12.5px; color: var(--text-faint); }
 
   .sidebar-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
     padding: 9px 8px;
     border-radius: 8px;
     cursor: pointer;
@@ -120,19 +123,28 @@
     line-height: 1.4;
   }
   .sidebar-row:hover { background: var(--surface-sunken); }
-  .sidebar-row .row-mode { color: var(--text-faint); font-size: 11.5px; }
-
-  .sidebar-back {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 6px 8px 12px;
-    font-size: 12.5px;
-    color: var(--text-muted);
-    cursor: pointer;
-    font-weight: 500;
+  .sidebar-row .row-text { flex: 1; min-width: 0; }
+  .sidebar-row .row-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .sidebar-back:hover { color: var(--text); }
+  .sidebar-row .row-mode {
+    display: block;
+    color: var(--text-faint);
+    font-size: 11.5px;
+    margin-top: 1px;
+  }
+  .sidebar-row .row-delete {
+    flex-shrink: 0;
+    color: var(--text-faint);
+    font-size: 12px;
+    padding: 2px 5px;
+    border-radius: 5px;
+    opacity: 0;
+  }
+  .sidebar-row:hover .row-delete { opacity: 1; }
+  .sidebar-row .row-delete:hover { color: var(--danger); background: var(--danger-tint); }
 
   /* --- main column --- */
 
@@ -947,6 +959,11 @@
       addLine("you", msg.text);
     } else if (msg.event === "bot_text") {
       addLine("bot", msg.text, msg.usage, msg.latency);
+      // The session's title (generated server-side after the first
+      // exchange) may have just landed — refresh the sidebar row for it.
+      // A short delay since generation happens off-thread, after this
+      // event is sent, not before it.
+      setTimeout(() => refreshHistoryList().catch(() => {}), 1500);
     } else if (msg.event === "interrupted") {
       addLine("system", "Interrupted");
     } else if (msg.event === "error") {
@@ -1003,16 +1020,39 @@
     for (const s of sessions) {
       const row = document.createElement("div");
       row.className = "sidebar-row";
-      row.innerHTML =
-        `${formatSessionTimestamp(s.created_at)}` +
-        `<br><span class="row-mode">${s.mode} · ${s.turn_count} turn${s.turn_count === 1 ? "" : "s"}</span>`;
-      row.onclick = () => openHistoryDetail(s.id);
+
+      const textBlock = document.createElement("div");
+      textBlock.className = "row-text";
+      const title = document.createElement("div");
+      title.className = "row-label";
+      title.textContent = s.title || formatSessionTimestamp(s.created_at);
+      textBlock.appendChild(title);
+      const meta = document.createElement("span");
+      meta.className = "row-mode";
+      meta.textContent = `${s.mode} · ${s.turn_count} turn${s.turn_count === 1 ? "" : "s"}`;
+      textBlock.appendChild(meta);
+      row.appendChild(textBlock);
+
+      const delBtn = document.createElement("span");
+      delBtn.className = "row-delete";
+      delBtn.textContent = "✕";
+      delBtn.title = "Delete this chat";
+      delBtn.onclick = async (e) => {
+        e.stopPropagation();
+        if (!confirm("Delete this chat? This can't be undone.")) return;
+        await fetch(`/sessions/${s.id}`, { method: "DELETE" });
+        refreshHistoryList();
+      };
+      row.appendChild(delBtn);
+
+      row.onclick = () => continueSession(s.id);
       historyBody.appendChild(row);
     }
   }
 
-  function continueSession(sessionId, detail) {
-    if (connected) return; // disconnect the live session before switching into another one
+  async function continueSession(sessionId) {
+    const detail = await (await fetch(`/sessions/${sessionId}`)).json();
+    if (connected) disconnect();
 
     setMode(detail.session.mode);
     transcript.innerHTML = "";
@@ -1026,44 +1066,6 @@
     }
     pendingResumeSessionId = sessionId;
     connect();
-  }
-
-  async function openHistoryDetail(sessionId) {
-    historyTitle.textContent = "Session " + sessionId.slice(0, 8);
-    historyBody.innerHTML = "Loading…";
-    const detail = await (await fetch(`/sessions/${sessionId}`)).json();
-    historyBody.innerHTML = "";
-    const back = document.createElement("div");
-    back.className = "sidebar-back";
-    back.textContent = "← All sessions";
-    back.onclick = refreshHistoryList;
-    historyBody.appendChild(back);
-
-    const continueBtn = document.createElement("button");
-    continueBtn.className = "secondary";
-    continueBtn.style.cssText = "width:100%;margin-bottom:14px;";
-    continueBtn.textContent = connected ? "Disconnect first to continue" : "Continue this chat";
-    continueBtn.disabled = connected;
-    continueBtn.onclick = () => continueSession(sessionId, detail);
-    historyBody.appendChild(continueBtn);
-
-    for (const turn of detail.turns) {
-      const line = document.createElement("div");
-      line.className = "line " + (turn.role === "user" ? "you" : "bot");
-      const label = turn.role === "user" ? "You" : "Bot";
-      line.innerHTML = `<span class="who">${label}</span><span class="what"></span>`;
-      line.querySelector(".what").textContent = turn.text;
-      historyBody.appendChild(line);
-      if (turn.usage) {
-        const statsLine = formatUsageLine(turn.usage);
-        if (statsLine) {
-          const stats = document.createElement("div");
-          stats.className = "line-stats";
-          stats.textContent = statsLine;
-          historyBody.appendChild(stats);
-        }
-      }
-    }
   }
 
   setMode("voice");
