@@ -601,21 +601,21 @@ def test_title_generation_is_not_retriggered_on_later_turns(monkeypatch):
     )
     client = TestClient(app)
 
-    with client.websocket_connect("/ws") as ws:
+    # Text mode, not voice: two turns sent as raw PCM frames back-to-back
+    # raced against WebSocketAudioSink's real playback/barge-in timing --
+    # the second turn's frames could land inside the first reply's
+    # barge-in grace window and get silently dropped as a false barge-in
+    # rather than queued as a new segment (found via a real intermittent
+    # full-suite failure: "assert 1 == 2"). Text mode's on_text_message()
+    # has no such timing dependency, so two turns here are deterministic.
+    with client.websocket_connect("/ws?mode=text") as ws:
         ws.receive_json()  # ready
-        frame = np.zeros(config.FRAME, dtype=np.float32)
-        # Two full turns' worth of frames, sent without draining replies in
-        # between -- WebSocketAudioSink streams continuous binary frames
-        # (silence included) on its own timer regardless of turns, so
-        # interleaving receive_bytes() calls with sends here would race
-        # against that stream rather than reliably picking up turn
-        # boundaries. Just wait for both turns to complete server-side.
-        for _ in range(6):
-            ws.send_bytes(float32_to_pcm16(frame))
-
-        deadline = time.time() + 2.0
-        while len(fake_llm.calls) < 2 and time.time() < deadline:
-            time.sleep(0.02)
+        ws.send_json({"text": "hi"})
+        ws.receive_json()  # user_text
+        ws.receive_json()  # bot_text
+        ws.send_json({"text": "another question"})
+        ws.receive_json()  # user_text
+        ws.receive_json()  # bot_text
 
     assert len(fake_llm.calls) == 2
     assert len(fake_llm.title_calls) == 1
