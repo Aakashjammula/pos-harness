@@ -1,7 +1,10 @@
+import time
+
 import numpy as np
 from starlette.testclient import TestClient
 
 from asr_test import config
+from asr_test.storage import SessionStore
 from asr_test.utils import float32_to_pcm16
 from fakes import FakeLlm, FakeStt, FakeTts, FakeVad
 from server import create_app, _default_llm_models
@@ -14,7 +17,7 @@ def _make_client(monkeypatch):
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: fake_llm,
-        vad_factory=lambda: FakeVad(start_at=1, end_at=3),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
     )
     return TestClient(app), fake_llm
@@ -106,7 +109,7 @@ def test_tts_engine_cache_reuses_instance_for_same_voice(monkeypatch):
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: fake_llm,
-        vad_factory=lambda: FakeVad(start_at=1, end_at=3),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
     )
     # Snapshot *after* create_app() — it now eagerly warms the default
@@ -129,7 +132,7 @@ def test_ws_query_params_select_voice_and_llm_model(monkeypatch):
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
-        vad_factory=lambda: FakeVad(start_at=1, end_at=3),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
     )
     client = TestClient(app)
@@ -139,3 +142,196 @@ def test_ws_query_params_select_voice_and_llm_model(monkeypatch):
 
     assert ready["llm_model"] == "custom-model"
     assert "voice-b" in FakeTts.created_voices
+
+
+def test_ws_vad_query_params_are_passed_to_vad_factory(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    captured = {}
+
+    def spy_vad_factory(**kwargs):
+        captured.update(kwargs)
+        return FakeVad(start_at=1, end_at=3)
+
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=spy_vad_factory,
+        default_tts_engine="kokoro",
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect(
+        "/ws?vad_threshold=0.3&vad_min_silence_ms=800&vad_speech_pad_ms=100"
+    ) as ws:
+        ws.receive_json()
+
+    assert captured == {"threshold": 0.3, "min_silence_ms": 800, "speech_pad_ms": 100}
+
+
+def test_ws_rejects_out_of_range_vad_threshold(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?vad_threshold=1.5") as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "error"
+        assert "vad_threshold" in msg["message"]
+
+
+def test_ws_rejects_non_numeric_vad_param(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?vad_threshold=not-a-number") as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "error"
+        assert "vad_" in msg["message"]
+
+
+def test_ws_rejects_negative_vad_min_silence_ms(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?vad_min_silence_ms=-100") as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "error"
+
+
+def test_ready_event_includes_session_id(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    store = SessionStore(":memory:")
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=store,
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as ws:
+        ready = ws.receive_json()
+
+    assert "session_id" in ready and ready["session_id"]
+
+
+def test_completed_turn_is_persisted_to_session_store(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    store = SessionStore(":memory:")
+    fake_usage = {"input_tokens": 5, "output_tokens": 3}
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm("hi there", fake_usage=fake_usage),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=store,
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as ws:
+        ready = ws.receive_json()
+        session_id = ready["session_id"]
+        frame = np.zeros(config.FRAME, dtype=np.float32)
+        for _ in range(3):
+            ws.send_bytes(float32_to_pcm16(frame))
+        ws.receive_bytes()  # first TTS chunk — the bot_text event (and its
+        # store write) can race slightly behind this, since TTS synthesis
+        # runs concurrently with respond()'s own final bookkeeping; poll
+        # below rather than assuming this call already implies the write.
+
+        deadline = time.time() + 2.0
+        result = store.get_session(session_id)
+        while (not result or len(result["turns"]) < 2) and time.time() < deadline:
+            time.sleep(0.02)
+            result = store.get_session(session_id)
+
+    assert result is not None
+    assert result["turns"] == [
+        {"role": "user", "text": "hello", "usage": None},
+        {"role": "assistant", "text": "hi there ", "usage": fake_usage},
+    ]
+
+
+def test_get_sessions_lists_created_sessions(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    store = SessionStore(":memory:")
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=store,
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as ws:
+        ready = ws.receive_json()
+
+    resp = client.get("/sessions")
+
+    assert resp.status_code == 200
+    ids = [s["id"] for s in resp.json()]
+    assert ready["session_id"] in ids
+
+
+def test_get_session_by_id_returns_detail(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    store = SessionStore(":memory:")
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=store,
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as ws:
+        ready = ws.receive_json()
+
+    resp = client.get(f"/sessions/{ready['session_id']}")
+
+    assert resp.status_code == 200
+    assert resp.json()["session"]["id"] == ready["session_id"]
+
+
+def test_get_session_by_unknown_id_returns_404(monkeypatch):
+    store = SessionStore(":memory:")
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        default_tts_engine="kokoro",
+        session_store=store,
+    )
+    client = TestClient(app)
+
+    resp = client.get("/sessions/does-not-exist")
+
+    assert resp.status_code == 404
