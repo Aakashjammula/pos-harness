@@ -526,6 +526,147 @@ def test_ws_text_mode_never_constructs_a_real_tts_engine(monkeypatch):
     assert FakeTts.instances_created == before
 
 
+def test_session_keys_endpoint_returns_a_key_token(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    resp = client.post("/session-keys", json={"openai_api_key": "sk-test"})
+
+    assert resp.status_code == 200
+    assert resp.json()["key_token"]
+
+
+def test_ws_key_token_is_applied_via_llm_env_factory(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    captured = {}
+
+    def spy_llm_env_factory(model, env):
+        captured["model"] = model
+        captured["env"] = dict(env)
+        return FakeLlm("hi there")
+
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        llm_env_factory=spy_llm_env_factory,
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    token = client.post("/session-keys", json={"openai_api_key": "sk-override"}).json()["key_token"]
+    with client.websocket_connect(f"/ws?key_token={token}") as ws:
+        ws.receive_json()  # ready
+
+    assert captured["model"] == "lfm2.5-230m"
+    assert captured["env"]["OPENAI_API_KEY"] == "sk-override"
+
+
+def test_session_keys_maps_azure_and_tavily_fields(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    captured = {}
+
+    def spy_llm_env_factory(model, env):
+        captured["env"] = dict(env)
+        return FakeLlm("hi there")
+
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        llm_env_factory=spy_llm_env_factory,
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    token = client.post("/session-keys", json={
+        "azure_api_key": "az-key",
+        "azure_endpoint": "https://example.openai.azure.com/",
+        "azure_deployment": "my-deployment",
+        "tavily_api_key": "tvly-key",
+    }).json()["key_token"]
+    with client.websocket_connect(f"/ws?key_token={token}") as ws:
+        ws.receive_json()  # ready
+
+    assert captured["env"]["AZURE_OPENAI_API_KEY"] == "az-key"
+    assert captured["env"]["AZURE_OPENAI_ENDPOINT"] == "https://example.openai.azure.com/"
+    assert captured["env"]["AZURE_OPENAI_DEPLOYMENT"] == "my-deployment"
+    assert captured["env"]["TAVILY_API_KEY"] == "tvly-key"
+
+
+def test_ws_key_token_is_single_use(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        llm_env_factory=lambda model, env: FakeLlm("hi there"),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    token = client.post("/session-keys", json={"openai_api_key": "sk-test"}).json()["key_token"]
+    with client.websocket_connect(f"/ws?key_token={token}") as ws:
+        ws.receive_json()  # ready
+
+    with client.websocket_connect(f"/ws?key_token={token}") as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "error"
+        assert "key_token" in msg["message"]
+
+
+def test_ws_unknown_key_token_gets_error(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?key_token=nonexistent-token") as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "error"
+        assert "key_token" in msg["message"]
+
+
+def test_ws_without_key_token_never_calls_llm_env_factory(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    calls = []
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm("hi there"),
+        llm_env_factory=lambda model, env: calls.append((model, env)) or FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()  # ready
+
+    assert calls == []
+
+
 def test_ready_event_includes_session_id(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     store = SessionStore(":memory:")
