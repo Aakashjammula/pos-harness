@@ -1276,24 +1276,53 @@
   function renderConnectionsGraph() {
     const { ReactFlow, Background } = window.ReactFlow;
     const providerLabel = `${options.provider.name} · ${options.provider.model}`;
+
+    // React Flow's default node has no explicit text color, so it
+    // inherits body's `color: var(--text)` -- near-white in dark mode --
+    // on top of the library's own white node background, i.e. invisible
+    // text. Theme every node explicitly so it works in both themes, and
+    // size them up so the diagram fills the frame instead of leaving a
+    // small cluster of tiny boxes in a big empty canvas.
+    const nodeStyle = {
+      background: "var(--surface-sunken)",
+      color: "var(--text)",
+      border: "1px solid var(--border)",
+      borderRadius: "10px",
+      padding: "14px 22px",
+      fontFamily: "var(--font-ui)",
+      fontSize: "15px",
+      fontWeight: 600,
+      minWidth: 190,
+      textAlign: "center",
+    };
+
     const nodes = [
-      { id: "provider", position: { x: 260, y: 0 }, data: { label: providerLabel } },
+      { id: "provider", position: { x: 300, y: 0 }, data: { label: providerLabel }, style: nodeStyle },
       ...options.tools.map((t, i) => ({
         id: t.name,
-        position: { x: i * 240, y: 150 },
+        position: { x: i * 280, y: 180 },
         data: { label: t.enabled ? t.label : `${t.label} (disabled)` },
-        style: t.enabled ? {} : { opacity: 0.45 },
+        style: t.enabled ? nodeStyle : { ...nodeStyle, opacity: 0.5 },
       })),
     ];
     const edges = options.tools.map((t) => ({
-      id: `provider-${t.name}`, source: "provider", target: t.name, animated: t.enabled,
+      id: `provider-${t.name}`,
+      source: "provider",
+      target: t.name,
+      animated: t.enabled,
+      style: { stroke: "var(--text-faint)" },
     }));
 
     const root = ReactDOM.createRoot(connectionsGraph);
     root.render(
       React.createElement(
         ReactFlow,
-        { nodes, edges, fitView: true, nodesDraggable: false, nodesConnectable: false, elementsSelectable: false },
+        {
+          nodes, edges, fitView: true,
+          fitViewOptions: { padding: 0.3, minZoom: 1, maxZoom: 1.6 },
+          nodesDraggable: false, nodesConnectable: false, elementsSelectable: false,
+          proOptions: { hideAttribution: true },
+        },
         React.createElement(Background, null)
       )
     );
