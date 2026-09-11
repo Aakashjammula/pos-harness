@@ -12,13 +12,16 @@ from dataclasses import dataclass
 
 @dataclass
 class ProviderConfig:
-    name: str                        # "local" | "openai" | "azure" | ...
+    name: str                        # "local" | "openai" | "azure" | "anthropic" | "gemini" | "bedrock" | "openrouter"
     model: str
     base_url: str | None = None
     api_key: str | None = None
     azure_endpoint: str | None = None
     azure_deployment: str | None = None
     api_version: str | None = None
+    aws_access_key_id: str | None = None    # bedrock only -- no single api_key, needs AWS-style credentials
+    aws_secret_access_key: str | None = None
+    aws_region: str | None = None
 
 
 class LlmProviderBase(ABC):
