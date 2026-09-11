@@ -302,6 +302,7 @@
     gap: 10px;
     align-content: start;
   }
+  .field-group[hidden] { display: none; }   /* see .chat-shell[hidden]'s comment above */
 
   .field-group h3 {
     margin: 0;
@@ -320,7 +321,7 @@
 
   .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-  select, input[type="text"], input[type="number"] {
+  select, input[type="text"], input[type="number"], input[type="password"] {
     width: 100%;
     background: var(--surface-sunken);
     border: 1px solid transparent;
@@ -332,12 +333,12 @@
     outline: none;
     transition: border-color 150ms ease, box-shadow 150ms ease;
   }
-  select:focus, input[type="text"]:focus, input[type="number"]:focus {
+  select:focus, input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-tint);
   }
   select:disabled, input:disabled { opacity: 0.5; cursor: not-allowed; }
-  input[type="text"]::placeholder { color: var(--text-faint); }
+  input[type="text"]::placeholder, input[type="password"]::placeholder { color: var(--text-faint); }
   input[type="number"] { font-variant-numeric: tabular-nums; }
 
   /* --- chat area --- */
@@ -705,13 +706,27 @@
           </p>
           <div class="settings-body">
             <div class="field-group">
+              <h3>Provider</h3>
+              <div class="field">
+                <label for="keyProvider">LLM backend</label>
+                <select id="keyProvider">
+                  <option value="local">Local (LM Studio) — no key needed</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="azure">Azure OpenAI</option>
+                </select>
+              </div>
+              <p class="settings-hint" id="localKeyHint">
+                LM Studio runs on your own machine and needs no API key.
+              </p>
+            </div>
+            <div class="field-group" id="openaiKeyGroup" hidden>
               <h3>OpenAI</h3>
               <div class="field">
                 <label for="openaiApiKey">API key</label>
                 <input type="password" id="openaiApiKey" autocomplete="off" placeholder="sk-…">
               </div>
             </div>
-            <div class="field-group">
+            <div class="field-group" id="azureKeyGroup" hidden>
               <h3>Azure OpenAI</h3>
               <div class="field">
                 <label for="azureApiKey">API key</label>
@@ -754,9 +769,21 @@
   const ttsEngineSel = el("ttsEngine"), ttsVoiceSel = el("ttsVoice"), llmModelSel = el("llmModel");
   const triggerInput = el("triggerWord"), micSelect = el("micSelect");
   const voiceInputModeSel = el("voiceInputMode"), triggerWordField = el("triggerWordField");
+  const keyProviderSel = el("keyProvider"), localKeyHint = el("localKeyHint");
+  const openaiKeyGroup = el("openaiKeyGroup"), azureKeyGroup = el("azureKeyGroup");
   const openaiApiKeyInput = el("openaiApiKey");
   const azureApiKeyInput = el("azureApiKey"), azureEndpointInput = el("azureEndpoint"), azureDeploymentInput = el("azureDeployment");
   const tavilyApiKeyInput = el("tavilyApiKey");
+
+  function updateKeyProviderFields() {
+    const provider = keyProviderSel.value;
+    localKeyHint.hidden = provider !== "local";
+    openaiKeyGroup.hidden = provider !== "openai";
+    azureKeyGroup.hidden = provider !== "azure";
+  }
+
+  keyProviderSel.addEventListener("change", updateKeyProviderFields);
+  updateKeyProviderFields();
   const vadThresholdInput = el("vadThreshold"), vadMinSilenceInput = el("vadMinSilenceMs"), vadSpeechPadInput = el("vadSpeechPadMs");
   const transcript = el("transcript"), lineCount = el("lineCount");
   const chatShell = el("chatShell"), settingsView = el("settingsView"), settingsBackBtn = el("settingsBackBtn");
@@ -1002,6 +1029,13 @@
     }
     llmModelSel.value = options.defaults.llm_model;
     updateModelChip();
+
+    // Default the key-provider picker to whatever the server is actually
+    // resolving today (from its own env) -- so nothing changes for
+    // anyone who never opens this section.
+    const knownProviders = ["local", "openai", "azure"];
+    keyProviderSel.value = knownProviders.includes(options.provider.name) ? options.provider.name : "local";
+    updateKeyProviderFields();
   }
 
   function populateVoices() {
@@ -1086,12 +1120,33 @@
   // browser storage, never sent anywhere but this one request, and this
   // function reads the fields fresh every connect() call rather than
   // caching them, so nothing lingers beyond what's currently typed in.
+  function keyProviderValidationError() {
+    const provider = keyProviderSel.value;
+    if (provider === "openai" && !openaiApiKeyInput.value.trim()) {
+      return "Enter an OpenAI API key in Settings, or switch Provider back to Local.";
+    }
+    if (provider === "azure" && (
+      !azureApiKeyInput.value.trim() || !azureEndpointInput.value.trim() || !azureDeploymentInput.value.trim()
+    )) {
+      return "Azure needs an API key, endpoint, and deployment in Settings, or switch Provider back to Local.";
+    }
+    return null;
+  }
+
   async function fetchKeyTokenIfNeeded() {
+    // Only the selected provider's fields are ever sent -- switching
+    // Provider back to Local means "no override" even if a key is still
+    // sitting in a now-hidden field from an earlier selection.
+    const provider = keyProviderSel.value;
     const body = {};
-    if (openaiApiKeyInput.value.trim()) body.openai_api_key = openaiApiKeyInput.value.trim();
-    if (azureApiKeyInput.value.trim()) body.azure_api_key = azureApiKeyInput.value.trim();
-    if (azureEndpointInput.value.trim()) body.azure_endpoint = azureEndpointInput.value.trim();
-    if (azureDeploymentInput.value.trim()) body.azure_deployment = azureDeploymentInput.value.trim();
+    if (provider === "openai" && openaiApiKeyInput.value.trim()) {
+      body.openai_api_key = openaiApiKeyInput.value.trim();
+    } else if (provider === "azure") {
+      if (azureApiKeyInput.value.trim()) body.azure_api_key = azureApiKeyInput.value.trim();
+      if (azureEndpointInput.value.trim()) body.azure_endpoint = azureEndpointInput.value.trim();
+      if (azureDeploymentInput.value.trim()) body.azure_deployment = azureDeploymentInput.value.trim();
+    }
+    // Web search is independent of the LLM provider choice.
     if (tavilyApiKeyInput.value.trim()) body.tavily_api_key = tavilyApiKeyInput.value.trim();
     if (Object.keys(body).length === 0) return null;
 
@@ -1132,6 +1187,12 @@
   // --- connect / disconnect ---
 
   async function connect() {
+    const keyError = keyProviderValidationError();
+    if (keyError) {
+      setState("error", keyError);
+      return;
+    }
+
     connectBtn.disabled = true;
     const textMode = isTextMode();
 
