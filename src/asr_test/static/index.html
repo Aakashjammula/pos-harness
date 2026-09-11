@@ -657,7 +657,15 @@
                 <select id="micSelect"><option value="">System default</option></select>
               </div>
               <div class="field">
-                <label for="triggerWord">Wake word (optional)</label>
+                <label for="voiceInputMode">Voice input</label>
+                <select id="voiceInputMode">
+                  <option value="vad">Voice detection (VAD)</option>
+                  <option value="wake_word">Wake word</option>
+                  <option value="push_to_talk">Push to talk (hold Space)</option>
+                </select>
+              </div>
+              <div class="field" id="triggerWordField">
+                <label for="triggerWord">Wake word</label>
                 <input type="text" id="triggerWord" placeholder="e.g. computer">
               </div>
             </div>
@@ -699,6 +707,7 @@
   const configPanel = el("configPanel"), connectBtn = el("connectBtn"), muteBtn = el("muteBtn");
   const ttsEngineSel = el("ttsEngine"), ttsVoiceSel = el("ttsVoice"), llmModelSel = el("llmModel");
   const triggerInput = el("triggerWord"), micSelect = el("micSelect");
+  const voiceInputModeSel = el("voiceInputMode"), triggerWordField = el("triggerWordField");
   const vadThresholdInput = el("vadThreshold"), vadMinSilenceInput = el("vadMinSilenceMs"), vadSpeechPadInput = el("vadSpeechPadMs");
   const transcript = el("transcript"), lineCount = el("lineCount");
   const chatShell = el("chatShell"), settingsView = el("settingsView"), settingsBackBtn = el("settingsBackBtn");
@@ -730,11 +739,39 @@
     const textMode = mode === "text";
     voiceEngineFields.hidden = textMode;
     inputGroup.hidden = textMode;
-    vadGroup.hidden = textMode;
+    updateVoiceInputModeFields();
   }
 
-  modeVoiceBtn.onclick = () => setMode("voice");
-  modeTextBtn.onclick = () => setMode("text");
+  function updateVoiceInputModeFields() {
+    const pushToTalk = voiceInputModeSel.value === "push_to_talk";
+    const wakeWord = voiceInputModeSel.value === "wake_word";
+    vadGroup.hidden = isTextMode() || pushToTalk;
+    triggerWordField.hidden = isTextMode() || !wakeWord;
+  }
+
+  voiceInputModeSel.addEventListener("change", updateVoiceInputModeFields);
+
+  // Switching Voice/Text mid-session (while connected) resumes the SAME
+  // session under the new mode -- a quick disconnect+reconnect, not an
+  // in-place switch. disconnect() intentionally never clears the
+  // transcript itself; connect()'s ws.onopen only clears it when
+  // pendingResumeSessionId is unset, so setting it here keeps every
+  // line already on screen exactly as continueSession() does.
+  function handleModeClick(mode) {
+    if (mode === currentMode) return;
+    if (connected) {
+      const sessionId = currentSessionId;
+      disconnect();
+      setMode(mode);
+      if (sessionId) pendingResumeSessionId = sessionId;
+      connect();
+    } else {
+      setMode(mode);
+    }
+  }
+
+  modeVoiceBtn.onclick = () => handleModeClick("voice");
+  modeTextBtn.onclick = () => handleModeClick("text");
 
   // --- settings page routing (hash-based, no server route --
   // #/settings survives refresh/back-forward without a new endpoint) ---
@@ -761,6 +798,8 @@
 
   let options = null;
   let ws = null, connected = false, micMuted = false, currentState = "idle";
+  let currentSessionId = null;
+  let activeVoiceInputMode = "vad", pttHeld = false;
   let audioCtx, micStream, source, processor, playCtx;
   let outputSampleRate = 16000;
   let nextPlayTime = 0; // running Web Audio timeline cursor for gapless playback scheduling
@@ -991,6 +1030,30 @@
 
   muteBtn.onclick = () => setMuted(!micMuted);
 
+  // --- push-to-talk (hold Space) ---
+
+  function isTypingTarget(target) {
+    const tag = target && target.tagName;
+    return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
+  }
+
+  window.addEventListener("keydown", (e) => {
+    if (e.code !== "Space" || e.repeat) return;
+    if (!connected || isTextMode() || activeVoiceInputMode !== "push_to_talk") return;
+    if (isTypingTarget(e.target) || !ws || ws.readyState !== WebSocket.OPEN) return;
+    e.preventDefault();
+    pttHeld = true;
+    ws.send(JSON.stringify({ event: "ptt_start" }));
+    setState("listening", "Recording — release Space to send");
+  });
+
+  window.addEventListener("keyup", (e) => {
+    if (e.code !== "Space" || !pttHeld) return;
+    pttHeld = false;
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ event: "ptt_stop" }));
+    if (currentState !== "speaking") setState("listening", "Hold Space to talk");
+  });
+
   // --- connect / disconnect ---
 
   async function connect() {
@@ -1012,11 +1075,15 @@
       setState("connecting", "Connecting…");
     }
 
+    activeVoiceInputMode = textMode ? "vad" : voiceInputModeSel.value;
+    pttHeld = false;
+
     const params = new URLSearchParams();
     params.set("mode", textMode ? "text" : "voice");
     params.set("tts", ttsEngineSel.value);
     if (ttsVoiceSel.value) params.set("voice", ttsVoiceSel.value);
     params.set("llm_model", llmModelSel.value);
+    if (!textMode) params.set("voice_input_mode", activeVoiceInputMode);
     if (triggerInput.value.trim()) params.set("trigger_word", triggerInput.value.trim());
     if (vadThresholdInput.value.trim()) params.set("vad_threshold", vadThresholdInput.value.trim());
     if (vadMinSilenceInput.value.trim()) params.set("vad_min_silence_ms", vadMinSilenceInput.value.trim());
@@ -1079,9 +1146,11 @@
       source = audioCtx.createMediaStreamSource(micStream);
       processor = audioCtx.createScriptProcessor(512, 1, 1);
       processor.onaudioprocess = (e) => {
-        if (!micMuted && ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(floatToPcm16(e.inputBuffer.getChannelData(0)));
-        }
+        if (micMuted || !ws || ws.readyState !== WebSocket.OPEN) return;
+        // Push-to-talk streams audio only while the control is held --
+        // every other voice input mode streams continuously, same as today.
+        if (activeVoiceInputMode === "push_to_talk" && !pttHeld) return;
+        ws.send(floatToPcm16(e.inputBuffer.getChannelData(0)));
       };
       source.connect(processor);
       processor.connect(audioCtx.destination);
@@ -1109,9 +1178,8 @@
         nextPlayTime = 0;
       }
       connected = true;
+      currentSessionId = msg.session_id;
       configPanel.querySelectorAll("select, input").forEach((f) => (f.disabled = true));
-      modeVoiceBtn.disabled = true;
-      modeTextBtn.disabled = true;
       if (isSettingsRoute()) location.hash = "";
       connectBtn.textContent = "Disconnect";
       connectBtn.classList.add("disconnect");
@@ -1125,7 +1193,8 @@
         setState("listening", "Type a message below");
       } else {
         muteBtn.disabled = false;
-        setState("listening", "Listening — just start talking");
+        setState("listening", activeVoiceInputMode === "push_to_talk"
+          ? "Hold Space to talk" : "Listening — just start talking");
         startSpeakingWatchdog();
       }
       refreshHistoryList().catch(() => {});
@@ -1147,6 +1216,7 @@
 
   function disconnect(reason) {
     connected = false;
+    pttHeld = false;
     setMuted(false);
     muteBtn.disabled = true;
     textCompose.hidden = true;
@@ -1159,8 +1229,6 @@
     if (ws) { ws.onclose = null; ws.close(); ws = null; }
 
     configPanel.querySelectorAll("select, input").forEach((f) => (f.disabled = false));
-    modeVoiceBtn.disabled = false;
-    modeTextBtn.disabled = false;
     connectBtn.textContent = "Connect";
     connectBtn.classList.remove("disconnect");
     connectBtn.disabled = false;
