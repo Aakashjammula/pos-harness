@@ -134,6 +134,12 @@ class SessionKeysRequest(BaseModel):
     azure_api_key: str | None = None
     azure_endpoint: str | None = None
     azure_deployment: str | None = None
+    anthropic_api_key: str | None = None
+    gemini_api_key: str | None = None
+    openrouter_api_key: str | None = None
+    bedrock_access_key_id: str | None = None
+    bedrock_secret_access_key: str | None = None
+    bedrock_region: str | None = None
     tavily_api_key: str | None = None
 
 
@@ -240,6 +246,18 @@ def create_app(
             overrides["AZURE_OPENAI_ENDPOINT"] = body.azure_endpoint
         if body.azure_deployment:
             overrides["AZURE_OPENAI_DEPLOYMENT"] = body.azure_deployment
+        if body.anthropic_api_key:
+            overrides["ANTHROPIC_API_KEY"] = body.anthropic_api_key
+        if body.gemini_api_key:
+            overrides["GOOGLE_API_KEY"] = body.gemini_api_key
+        if body.openrouter_api_key:
+            overrides["OPENROUTER_API_KEY"] = body.openrouter_api_key
+        if body.bedrock_access_key_id:
+            overrides["AWS_ACCESS_KEY_ID"] = body.bedrock_access_key_id
+        if body.bedrock_secret_access_key:
+            overrides["AWS_SECRET_ACCESS_KEY"] = body.bedrock_secret_access_key
+        if body.bedrock_region:
+            overrides["AWS_REGION"] = body.bedrock_region
         if body.tavily_api_key:
             overrides["TAVILY_API_KEY"] = body.tavily_api_key
 
