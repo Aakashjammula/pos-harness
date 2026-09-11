@@ -606,6 +606,36 @@ def test_session_keys_maps_azure_and_tavily_fields(monkeypatch):
     assert captured["env"]["TAVILY_API_KEY"] == "tvly-key"
 
 
+def test_session_keys_maps_local_fields(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    captured = {}
+
+    def spy_llm_env_factory(model, env):
+        captured["env"] = dict(env)
+        return FakeLlm("hi there")
+
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        llm_env_factory=spy_llm_env_factory,
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    token = client.post("/session-keys", json={
+        "local_api_key": "real-lm-studio-token",
+        "local_base_url": "http://192.168.1.50:1234/v1",
+    }).json()["key_token"]
+    with client.websocket_connect(f"/ws?key_token={token}") as ws:
+        ws.receive_json()  # ready
+
+    assert captured["env"]["LOCAL_API_KEY"] == "real-lm-studio-token"
+    assert captured["env"]["LOCAL_BASE_URL"] == "http://192.168.1.50:1234/v1"
+
+
 def test_ws_key_token_is_single_use(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     app = create_app(
