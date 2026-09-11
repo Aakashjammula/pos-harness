@@ -281,6 +281,14 @@
   }
   .settings-section-title:first-child { margin-top: 12px; }
 
+  .settings-hint {
+    margin: 4px 0 14px;
+    max-width: 640px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--text-faint);
+  }
+
   .settings-body {
     padding: 4px 0 20px;
     display: grid;
@@ -689,6 +697,44 @@
             </div>
           </div>
 
+          <div class="settings-section-title">API keys</div>
+          <p class="settings-hint">
+            Optional. Leave blank to use whatever the server's own environment has
+            configured. Kept in server memory for this connection only — never saved to
+            disk, never sent anywhere else, and not pre-filled on reload.
+          </p>
+          <div class="settings-body">
+            <div class="field-group">
+              <h3>OpenAI</h3>
+              <div class="field">
+                <label for="openaiApiKey">API key</label>
+                <input type="password" id="openaiApiKey" autocomplete="off" placeholder="sk-…">
+              </div>
+            </div>
+            <div class="field-group">
+              <h3>Azure OpenAI</h3>
+              <div class="field">
+                <label for="azureApiKey">API key</label>
+                <input type="password" id="azureApiKey" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="azureEndpoint">Endpoint</label>
+                <input type="text" id="azureEndpoint" placeholder="https://…openai.azure.com/">
+              </div>
+              <div class="field">
+                <label for="azureDeployment">Deployment</label>
+                <input type="text" id="azureDeployment">
+              </div>
+            </div>
+            <div class="field-group">
+              <h3>Web search</h3>
+              <div class="field">
+                <label for="tavilyApiKey">Tavily API key</label>
+                <input type="password" id="tavilyApiKey" autocomplete="off" placeholder="tvly-…">
+              </div>
+            </div>
+          </div>
+
           <div class="settings-section-title">Connections</div>
           <div class="field-group">
             <div id="connectionsStatus" class="connections-status"></div>
@@ -708,6 +754,9 @@
   const ttsEngineSel = el("ttsEngine"), ttsVoiceSel = el("ttsVoice"), llmModelSel = el("llmModel");
   const triggerInput = el("triggerWord"), micSelect = el("micSelect");
   const voiceInputModeSel = el("voiceInputMode"), triggerWordField = el("triggerWordField");
+  const openaiApiKeyInput = el("openaiApiKey");
+  const azureApiKeyInput = el("azureApiKey"), azureEndpointInput = el("azureEndpoint"), azureDeploymentInput = el("azureDeployment");
+  const tavilyApiKeyInput = el("tavilyApiKey");
   const vadThresholdInput = el("vadThreshold"), vadMinSilenceInput = el("vadMinSilenceMs"), vadSpeechPadInput = el("vadSpeechPadMs");
   const transcript = el("transcript"), lineCount = el("lineCount");
   const chatShell = el("chatShell"), settingsView = el("settingsView"), settingsBackBtn = el("settingsBackBtn");
@@ -1030,6 +1079,32 @@
 
   muteBtn.onclick = () => setMuted(!micMuted);
 
+  // --- API keys (Settings page) ---
+
+  // Held in server memory only for the lifetime of one connection (see
+  // src/asr_test/cli/server.py's POST /session-keys) -- never written to
+  // browser storage, never sent anywhere but this one request, and this
+  // function reads the fields fresh every connect() call rather than
+  // caching them, so nothing lingers beyond what's currently typed in.
+  async function fetchKeyTokenIfNeeded() {
+    const body = {};
+    if (openaiApiKeyInput.value.trim()) body.openai_api_key = openaiApiKeyInput.value.trim();
+    if (azureApiKeyInput.value.trim()) body.azure_api_key = azureApiKeyInput.value.trim();
+    if (azureEndpointInput.value.trim()) body.azure_endpoint = azureEndpointInput.value.trim();
+    if (azureDeploymentInput.value.trim()) body.azure_deployment = azureDeploymentInput.value.trim();
+    if (tavilyApiKeyInput.value.trim()) body.tavily_api_key = tavilyApiKeyInput.value.trim();
+    if (Object.keys(body).length === 0) return null;
+
+    const res = await fetch("/session-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`session-keys request failed: ${res.status}`);
+    const data = await res.json();
+    return data.key_token;
+  }
+
   // --- push-to-talk (hold Space) ---
 
   function isTypingTarget(target) {
@@ -1075,6 +1150,16 @@
       setState("connecting", "Connecting…");
     }
 
+    let keyToken = null;
+    try {
+      keyToken = await fetchKeyTokenIfNeeded();
+    } catch (e) {
+      setState("error", "Couldn't apply your API key(s) — check the server and try again");
+      connectBtn.disabled = false;
+      if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+      return;
+    }
+
     activeVoiceInputMode = textMode ? "vad" : voiceInputModeSel.value;
     pttHeld = false;
 
@@ -1083,6 +1168,7 @@
     params.set("tts", ttsEngineSel.value);
     if (ttsVoiceSel.value) params.set("voice", ttsVoiceSel.value);
     params.set("llm_model", llmModelSel.value);
+    if (keyToken) params.set("key_token", keyToken);
     if (!textMode) params.set("voice_input_mode", activeVoiceInputMode);
     if (triggerInput.value.trim()) params.set("trigger_word", triggerInput.value.trim());
     if (vadThresholdInput.value.trim()) params.set("vad_threshold", vadThresholdInput.value.trim());
