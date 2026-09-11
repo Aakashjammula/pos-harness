@@ -134,9 +134,9 @@ class LangChainLlm(LlmBase):
             for call in accumulated.tool_calls:
                 if cancel.is_set():
                     return
-                tool_calls_made.append({"name": call["name"], "args": call["args"]})
                 tool_ = self._tools_by_name.get(call["name"])
                 result = tool_.invoke(call["args"]) if tool_ is not None else f"unknown tool: {call['name']}"
+                tool_calls_made.append({"name": call["name"], "args": call["args"], "result": str(result)})
                 full.append(ToolMessage(content=str(result), tool_call_id=call["id"]))
 
     def _fill_usage(self, usage: dict, accumulated, tool_calls_made: list[dict]) -> None:

@@ -30,3 +30,15 @@ def default_tools() -> list[BaseTool]:
     else:
         print("  TAVILY_API_KEY not set — web search tool disabled")
     return tools
+
+
+def tool_status() -> list[dict]:
+    """Declarative status for the browser's Connections diagram
+    (GET /options) -- mirrors default_tools()'s enablement logic
+    without constructing real tool instances (no network calls, no
+    langchain_tavily import), so /options stays cheap to call on every
+    page load."""
+    return [
+        {"name": "get_current_time", "label": "Current time", "enabled": True},
+        {"name": "web_search", "label": "Web search", "enabled": bool(os.environ.get("TAVILY_API_KEY"))},
+    ]
