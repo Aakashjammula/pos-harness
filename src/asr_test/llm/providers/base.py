@@ -6,6 +6,7 @@ for why this replaced a scattered if/elif branching approach."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -30,11 +31,15 @@ class LlmProviderBase(ABC):
     priority: int   # lower = checked first; the fallback provider uses the highest number
 
     @abstractmethod
-    def detect(self) -> bool:
-        """True if this provider's required env var(s) are present."""
+    def detect(self, env: Mapping[str, str]) -> bool:
+        """True if this provider's required var(s) are present in env
+        -- real os.environ by default, but see registry.resolve_provider()'s
+        env= parameter: a per-connection override (e.g. an API key typed
+        into the browser's Settings page) can be overlaid on top of it
+        without this provider ever knowing the difference."""
 
     @abstractmethod
-    def resolve(self, model_override: str | None) -> ProviderConfig:
+    def resolve(self, model_override: str | None, env: Mapping[str, str]) -> ProviderConfig:
         """Build this provider's config. May raise RuntimeError if
         detect() returned True but other required config is missing."""
 

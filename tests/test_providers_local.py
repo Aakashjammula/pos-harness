@@ -1,3 +1,4 @@
+import os
 from unittest.mock import MagicMock
 
 from asr_test.llm.providers.base import ProviderConfig
@@ -9,11 +10,11 @@ def _local_provider(model="meta-llama-3.1-8b-instruct"):
 
 
 def test_detect_is_always_true():
-    assert LocalProvider().detect() is True
+    assert LocalProvider().detect(os.environ) is True
 
 
 def test_resolve_defaults_when_no_model_override():
-    provider = LocalProvider().resolve(model_override=None)
+    provider = LocalProvider().resolve(model_override=None, env=os.environ)
 
     assert provider.name == "local"
     assert provider.model == "lfm2.5-230m"
@@ -22,7 +23,7 @@ def test_resolve_defaults_when_no_model_override():
 
 
 def test_resolve_model_override_wins():
-    provider = LocalProvider().resolve(model_override="custom-model")
+    provider = LocalProvider().resolve(model_override="custom-model", env=os.environ)
 
     assert provider.model == "custom-model"
 

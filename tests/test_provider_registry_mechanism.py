@@ -28,10 +28,10 @@ class _FakeProvider(LlmProviderBase):
     priority = 100
     detected = True
 
-    def detect(self):
+    def detect(self, env):
         return self.detected
 
-    def resolve(self, model_override):
+    def resolve(self, model_override, env):
         return ProviderConfig(name=self.name, model=model_override or "fake-default-model")
 
     def build_model(self, provider, **model_kwargs):
@@ -59,14 +59,14 @@ def test_resolve_provider_checks_providers_in_priority_order():
         name = "high"
         priority = 0
 
-        def resolve(self, model_override):
+        def resolve(self, model_override, env):
             return ProviderConfig(name="high", model="high-model")
 
     class _LowPriority(_FakeProvider):
         name = "low"
         priority = 50
 
-        def resolve(self, model_override):
+        def resolve(self, model_override, env):
             return ProviderConfig(name="low", model="low-model")
 
     register(_LowPriority)
@@ -93,6 +93,52 @@ def test_resolve_provider_skips_providers_that_dont_detect():
     provider = resolve_provider()
 
     assert provider.name == "fallback"
+
+
+def test_resolve_provider_threads_env_override_into_detect_and_resolve():
+    seen = {}
+
+    class _EnvAwareProvider(_FakeProvider):
+        name = "env-aware"
+        priority = 0
+
+        def detect(self, env):
+            seen["detect_env"] = env
+            return "SOME_KEY" in env
+
+        def resolve(self, model_override, env):
+            seen["resolve_env"] = env
+            return ProviderConfig(name="env-aware", model="m")
+
+    register(_EnvAwareProvider)
+
+    provider = resolve_provider(env={"SOME_KEY": "sk-override"})
+
+    assert provider.name == "env-aware"
+    assert seen["detect_env"] == {"SOME_KEY": "sk-override"}
+    assert seen["resolve_env"] == {"SOME_KEY": "sk-override"}
+
+
+def test_resolve_provider_defaults_env_to_os_environ(monkeypatch):
+    monkeypatch.setenv("SOME_KEY", "from-real-environment")
+    seen = {}
+
+    class _EnvAwareProvider(_FakeProvider):
+        name = "env-aware"
+        priority = 0
+
+        def detect(self, env):
+            seen["value"] = env.get("SOME_KEY")
+            return True
+
+        def resolve(self, model_override, env):
+            return ProviderConfig(name="env-aware", model="m")
+
+    register(_EnvAwareProvider)
+
+    resolve_provider()  # no env= passed -- should fall back to os.environ
+
+    assert seen["value"] == "from-real-environment"
 
 
 def test_build_model_dispatches_to_the_matching_registered_provider():

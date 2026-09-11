@@ -5,6 +5,9 @@ which imports local.py/openai.py/azure.py for exactly this side effect)."""
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
+
 from .base import LlmProviderBase, ProviderConfig
 
 _REGISTRY: dict[str, LlmProviderBase] = {}
@@ -15,10 +18,18 @@ def register(cls: type[LlmProviderBase]) -> type[LlmProviderBase]:
     return cls
 
 
-def resolve_provider(model_override: str | None = None) -> ProviderConfig:
+def resolve_provider(
+    model_override: str | None = None, env: Mapping[str, str] | None = None
+) -> ProviderConfig:
+    """env defaults to the real process environment -- pass an overlay
+    (e.g. {**os.environ, "OPENAI_API_KEY": "..."}) to resolve against a
+    per-connection override instead, without any provider needing to
+    know the difference (see base.py's detect()/resolve())."""
+    if env is None:
+        env = os.environ
     for provider in sorted(_REGISTRY.values(), key=lambda p: p.priority):
-        if provider.detect():
-            return provider.resolve(model_override)
+        if provider.detect(env):
+            return provider.resolve(model_override, env)
     raise RuntimeError(
         "no LLM provider available -- this should be unreachable if a "
         "fallback provider (priority high enough, detect() always True) is registered"

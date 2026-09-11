@@ -18,23 +18,23 @@ class AzureProvider(LlmProviderBase):
     name = "azure"
     priority = 0   # checked first
 
-    def detect(self) -> bool:
-        return bool(os.environ.get("AZURE_OPENAI_API_KEY"))
+    def detect(self, env) -> bool:
+        return bool(env.get("AZURE_OPENAI_API_KEY"))
 
-    def resolve(self, model_override: str | None) -> ProviderConfig:
-        api_key = os.environ["AZURE_OPENAI_API_KEY"]
-        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    def resolve(self, model_override: str | None, env) -> ProviderConfig:
+        api_key = env["AZURE_OPENAI_API_KEY"]
+        endpoint = env.get("AZURE_OPENAI_ENDPOINT")
         if not endpoint:
             raise RuntimeError(
                 "AZURE_OPENAI_ENDPOINT is required when AZURE_OPENAI_API_KEY is set"
             )
-        deployment = model_override or os.environ.get("AZURE_OPENAI_DEPLOYMENT")
+        deployment = model_override or env.get("AZURE_OPENAI_DEPLOYMENT")
         if not deployment:
             raise RuntimeError(
                 "AZURE_OPENAI_DEPLOYMENT is required when AZURE_OPENAI_API_KEY is "
                 "set (or pass model=... to override it)"
             )
-        api_version = os.environ.get("AZURE_OPENAI_API_VERSION", _DEFAULT_API_VERSION)
+        api_version = env.get("AZURE_OPENAI_API_VERSION", _DEFAULT_API_VERSION)
         return ProviderConfig(
             name=self.name,
             model=deployment,

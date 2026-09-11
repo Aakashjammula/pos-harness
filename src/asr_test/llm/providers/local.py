@@ -19,10 +19,10 @@ class LocalProvider(LlmProviderBase):
     name = "local"
     priority = 100   # fallback -- always matches, checked last
 
-    def detect(self) -> bool:
+    def detect(self, env) -> bool:
         return True
 
-    def resolve(self, model_override: str | None) -> ProviderConfig:
+    def resolve(self, model_override: str | None, env) -> ProviderConfig:
         return ProviderConfig(
             name=self.name,
             model=model_override or _DEFAULT_MODEL,
