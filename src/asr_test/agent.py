@@ -120,6 +120,15 @@ class Agent:
         # funnel through feed_audio().
         self.muted = threading.Event()
 
+        # Push-to-talk's own buffer -- deliberately separate from
+        # speech_buf/mic_q/vad_thread. Push-to-talk never runs VAD at
+        # all (the caller already knows exactly when speech starts/
+        # stops from explicit ptt_start()/ptt_stop() calls), so this is
+        # fed directly by feed_ptt_frame() and handed to seg_q on
+        # ptt_stop() -- from there, worker_thread/STT/LLM/TTS are 100%
+        # shared with the VAD path.
+        self._ptt_buf: list[np.ndarray] = []
+
         # Text-mode sessions never synthesize/play audio — see
         # respond()'s enqueue(), which checks this flag before pushing
         # to tts_q. Everything else about a turn (LLM streaming,
@@ -161,6 +170,35 @@ class Agent:
         if self.muted.is_set():
             return
         self.mic_q.put(frame)
+
+    def feed_ptt_frame(self, frame: np.ndarray) -> None:
+        """Push-to-talk's transport-agnostic entry point -- bypasses
+        mic_q/vad_thread entirely, since the caller (a websocket
+        handler driven by explicit ptt_start/ptt_stop protocol events)
+        already knows exactly when speech starts and stops. Dropped
+        while muted, same as feed_audio()."""
+        if self.muted.is_set():
+            return
+        self._ptt_buf.append(frame)
+
+    def ptt_start(self) -> None:
+        """Called when the user presses the push-to-talk control.
+        Holding it down while a reply is still playing is push-to-talk's
+        equivalent of VAD's barge-in detection -- it always interrupts."""
+        if self.audio_out.playing:
+            self.interrupt()
+        self._ptt_buf = []
+
+    def ptt_stop(self) -> None:
+        """Called when the user releases the push-to-talk control. Hands
+        the whole held-down utterance to seg_q exactly the way
+        vad_thread's "speech end" branch does -- worker_thread onward
+        is unaware whether a segment came from VAD or push-to-talk."""
+        if not self._ptt_buf:
+            return
+        seg = np.concatenate(self._ptt_buf)
+        self._ptt_buf = []
+        self.seg_q.put((self.current_turn(), seg))
 
     def start(self) -> list[threading.Thread]:
         """Spawn the vad/worker/tts threads without opening any input
