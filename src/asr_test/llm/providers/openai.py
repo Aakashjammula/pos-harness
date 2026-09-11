@@ -32,12 +32,12 @@ class OpenAIProvider(LlmProviderBase):
     name = "openai"
     priority = 10
 
-    def detect(self) -> bool:
-        return bool(os.environ.get("OPENAI_API_KEY"))
+    def detect(self, env) -> bool:
+        return bool(env.get("OPENAI_API_KEY"))
 
-    def resolve(self, model_override: str | None) -> ProviderConfig:
-        api_key = os.environ["OPENAI_API_KEY"]
-        model = model_override or os.environ.get("OPENAI_MODEL", _DEFAULT_MODEL)
+    def resolve(self, model_override: str | None, env) -> ProviderConfig:
+        api_key = env["OPENAI_API_KEY"]
+        model = model_override or env.get("OPENAI_MODEL", _DEFAULT_MODEL)
         return ProviderConfig(name=self.name, model=model, api_key=api_key)
 
     def build_model(self, provider: ProviderConfig, **model_kwargs):

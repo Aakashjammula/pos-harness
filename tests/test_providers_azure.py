@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from asr_test.llm.providers.azure import AzureProvider
@@ -11,13 +13,13 @@ def _azure_provider(model="my-deployment"):
 def test_detect_true_when_api_key_set(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-key")
 
-    assert AzureProvider().detect() is True
+    assert AzureProvider().detect(os.environ) is True
 
 
 def test_detect_false_when_api_key_not_set(monkeypatch):
     monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
 
-    assert AzureProvider().detect() is False
+    assert AzureProvider().detect(os.environ) is False
 
 
 def test_resolve_raises_when_endpoint_missing(monkeypatch):
@@ -26,7 +28,7 @@ def test_resolve_raises_when_endpoint_missing(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "my-deployment")
 
     with pytest.raises(RuntimeError, match="AZURE_OPENAI_ENDPOINT"):
-        AzureProvider().resolve(model_override=None)
+        AzureProvider().resolve(model_override=None, env=os.environ)
 
 
 def test_resolve_raises_when_deployment_missing_and_no_override(monkeypatch):
@@ -35,7 +37,7 @@ def test_resolve_raises_when_deployment_missing_and_no_override(monkeypatch):
     monkeypatch.delenv("AZURE_OPENAI_DEPLOYMENT", raising=False)
 
     with pytest.raises(RuntimeError, match="AZURE_OPENAI_DEPLOYMENT"):
-        AzureProvider().resolve(model_override=None)
+        AzureProvider().resolve(model_override=None, env=os.environ)
 
 
 def test_resolve_model_override_wins_over_deployment_env_var(monkeypatch):
@@ -43,7 +45,7 @@ def test_resolve_model_override_wins_over_deployment_env_var(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com/")
     monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "my-deployment")
 
-    provider = AzureProvider().resolve(model_override="other-deployment")
+    provider = AzureProvider().resolve(model_override="other-deployment", env=os.environ)
 
     assert provider.model == "other-deployment"
     assert provider.azure_deployment == "other-deployment"
@@ -55,7 +57,7 @@ def test_resolve_api_version_env_var_overrides_default(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "my-deployment")
     monkeypatch.setenv("AZURE_OPENAI_API_VERSION", "2025-05-01")
 
-    provider = AzureProvider().resolve(model_override=None)
+    provider = AzureProvider().resolve(model_override=None, env=os.environ)
 
     assert provider.api_version == "2025-05-01"
 
@@ -66,7 +68,7 @@ def test_resolve_api_version_defaults_when_not_set(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "my-deployment")
     monkeypatch.delenv("AZURE_OPENAI_API_VERSION", raising=False)
 
-    provider = AzureProvider().resolve(model_override=None)
+    provider = AzureProvider().resolve(model_override=None, env=os.environ)
 
     assert provider.api_version == "2026-01-01-preview"
 

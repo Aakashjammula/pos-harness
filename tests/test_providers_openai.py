@@ -1,3 +1,5 @@
+import os
+
 from asr_test.llm.providers.base import ProviderConfig
 from asr_test.llm.providers.openai import OpenAIProvider
 
@@ -9,20 +11,20 @@ def _openai_provider(model="gpt-4o-mini"):
 def test_detect_true_when_api_key_set(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    assert OpenAIProvider().detect() is True
+    assert OpenAIProvider().detect(os.environ) is True
 
 
 def test_detect_false_when_api_key_not_set(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    assert OpenAIProvider().detect() is False
+    assert OpenAIProvider().detect(os.environ) is False
 
 
 def test_resolve_uses_default_model_when_no_override_or_env(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
 
-    provider = OpenAIProvider().resolve(model_override=None)
+    provider = OpenAIProvider().resolve(model_override=None, env=os.environ)
 
     assert provider.name == "openai"
     assert provider.api_key == "sk-test"
@@ -34,7 +36,7 @@ def test_resolve_model_env_var_used_when_no_override(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
 
-    provider = OpenAIProvider().resolve(model_override=None)
+    provider = OpenAIProvider().resolve(model_override=None, env=os.environ)
 
     assert provider.model == "gpt-4o"
 
@@ -43,7 +45,7 @@ def test_resolve_model_override_wins_over_env_var(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
 
-    provider = OpenAIProvider().resolve(model_override="gpt-4o-mini")
+    provider = OpenAIProvider().resolve(model_override="gpt-4o-mini", env=os.environ)
 
     assert provider.model == "gpt-4o-mini"
 
