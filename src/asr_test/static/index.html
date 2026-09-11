@@ -164,6 +164,11 @@
     display: flex;
     flex-direction: column;
   }
+  /* .chat-shell/.settings-view both set their own `display`, which ties
+     in specificity with the browser's default `[hidden] { display: none }`
+     rule -- without this, toggling the `hidden` attribute does nothing
+     and both views render stacked at once. */
+  .chat-shell[hidden], .settings-view[hidden] { display: none; }
 
   .topbar {
     display: flex;
@@ -1311,8 +1316,18 @@
       .then(() => {
         // @xyflow/react's UMD build is compiled against the automatic
         // JSX runtime internally, even though we call React.createElement
-        // ourselves below -- it expects this global to exist.
-        window.jsxRuntime = { jsx: React.createElement, jsxs: React.createElement, Fragment: React.Fragment };
+        // ourselves below -- it expects this global to exist. The
+        // automatic runtime's jsx(type, props, key) passes `key` as a
+        // separate third argument (not inside props), which plain
+        // React.createElement(type, props) alone would silently drop --
+        // producing "missing key" warnings for every list ReactFlow
+        // renders internally. Thread it through by hand instead.
+        function jsxShim(type, props, key) {
+          const { children, ...rest } = props || {};
+          if (key !== undefined) rest.key = key;
+          return React.createElement(type, rest, children);
+        }
+        window.jsxRuntime = { jsx: jsxShim, jsxs: jsxShim, Fragment: React.Fragment };
         return loadScript(`https://unpkg.com/@xyflow/react@${XYFLOW_VERSION}/dist/umd/index.js`);
       })
       .then(() => loadStylesheet(`https://unpkg.com/@xyflow/react@${XYFLOW_VERSION}/dist/style.css`))
