@@ -710,14 +710,26 @@
               <div class="field">
                 <label for="keyProvider">LLM backend</label>
                 <select id="keyProvider">
-                  <option value="local">Local (LM Studio) — no key needed</option>
+                  <option value="" selected>— Select provider —</option>
+                  <option value="local">Local (LM Studio)</option>
                   <option value="openai">OpenAI</option>
                   <option value="azure">Azure OpenAI</option>
                 </select>
               </div>
-              <p class="settings-hint" id="localKeyHint">
-                LM Studio runs on your own machine and needs no API key.
+              <p class="settings-hint" id="providerUnsetHint">
+                Select a provider above before connecting.
               </p>
+            </div>
+            <div class="field-group" id="localKeyGroup" hidden>
+              <h3>Local (LM Studio)</h3>
+              <div class="field">
+                <label for="localApiKey">API key (optional)</label>
+                <input type="password" id="localApiKey" autocomplete="off" placeholder="only if Require Authentication is on">
+              </div>
+              <div class="field">
+                <label for="localBaseUrl">Base URL (optional)</label>
+                <input type="text" id="localBaseUrl" placeholder="http://localhost:1234/v1">
+              </div>
             </div>
             <div class="field-group" id="openaiKeyGroup" hidden>
               <h3>OpenAI</h3>
@@ -769,15 +781,17 @@
   const ttsEngineSel = el("ttsEngine"), ttsVoiceSel = el("ttsVoice"), llmModelSel = el("llmModel");
   const triggerInput = el("triggerWord"), micSelect = el("micSelect");
   const voiceInputModeSel = el("voiceInputMode"), triggerWordField = el("triggerWordField");
-  const keyProviderSel = el("keyProvider"), localKeyHint = el("localKeyHint");
-  const openaiKeyGroup = el("openaiKeyGroup"), azureKeyGroup = el("azureKeyGroup");
+  const keyProviderSel = el("keyProvider"), providerUnsetHint = el("providerUnsetHint");
+  const localKeyGroup = el("localKeyGroup"), openaiKeyGroup = el("openaiKeyGroup"), azureKeyGroup = el("azureKeyGroup");
+  const localApiKeyInput = el("localApiKey"), localBaseUrlInput = el("localBaseUrl");
   const openaiApiKeyInput = el("openaiApiKey");
   const azureApiKeyInput = el("azureApiKey"), azureEndpointInput = el("azureEndpoint"), azureDeploymentInput = el("azureDeployment");
   const tavilyApiKeyInput = el("tavilyApiKey");
 
   function updateKeyProviderFields() {
     const provider = keyProviderSel.value;
-    localKeyHint.hidden = provider !== "local";
+    providerUnsetHint.hidden = !!provider;
+    localKeyGroup.hidden = provider !== "local";
     openaiKeyGroup.hidden = provider !== "openai";
     azureKeyGroup.hidden = provider !== "azure";
   }
@@ -1029,13 +1043,11 @@
     }
     llmModelSel.value = options.defaults.llm_model;
     updateModelChip();
-
-    // Default the key-provider picker to whatever the server is actually
-    // resolving today (from its own env) -- so nothing changes for
-    // anyone who never opens this section.
-    const knownProviders = ["local", "openai", "azure"];
-    keyProviderSel.value = knownProviders.includes(options.provider.name) ? options.provider.name : "local";
-    updateKeyProviderFields();
+    // The Provider picker deliberately does NOT auto-select from
+    // options.provider (the server's current default) -- Connect stays
+    // blocked (see keyProviderValidationError()) until a provider is
+    // explicitly chosen here, even if the server already has a working
+    // one configured.
   }
 
   function populateVoices() {
@@ -1122,6 +1134,9 @@
   // caching them, so nothing lingers beyond what's currently typed in.
   function keyProviderValidationError() {
     const provider = keyProviderSel.value;
+    if (!provider) {
+      return "Select a provider in Settings before connecting.";
+    }
     if (provider === "openai" && !openaiApiKeyInput.value.trim()) {
       return "Enter an OpenAI API key in Settings, or switch Provider back to Local.";
     }
@@ -1139,7 +1154,10 @@
     // sitting in a now-hidden field from an earlier selection.
     const provider = keyProviderSel.value;
     const body = {};
-    if (provider === "openai" && openaiApiKeyInput.value.trim()) {
+    if (provider === "local") {
+      if (localApiKeyInput.value.trim()) body.local_api_key = localApiKeyInput.value.trim();
+      if (localBaseUrlInput.value.trim()) body.local_base_url = localBaseUrlInput.value.trim();
+    } else if (provider === "openai" && openaiApiKeyInput.value.trim()) {
       body.openai_api_key = openaiApiKeyInput.value.trim();
     } else if (provider === "azure") {
       if (azureApiKeyInput.value.trim()) body.azure_api_key = azureApiKeyInput.value.trim();
