@@ -289,6 +289,37 @@
     color: var(--text-faint);
   }
 
+  /* --- provider list (radio rows, not a dropdown -- lets every
+     provider's configured/unconfigured status show at a glance) --- */
+
+  .provider-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-width: 420px;
+    margin-bottom: 4px;
+  }
+  .provider-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13.5px;
+  }
+  .provider-row:hover { background: var(--surface-sunken); }
+  .provider-row input[type="radio"] { flex-shrink: 0; accent-color: var(--accent); }
+  .provider-name { flex: 1; }
+  .provider-status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-faint);
+    flex-shrink: 0;
+  }
+  .provider-status.configured { background: var(--accent); }
+
   .settings-body {
     padding: 4px 0 20px;
     display: grid;
@@ -704,22 +735,48 @@
             configured. Kept in server memory for this connection only — never saved to
             disk, never sent anywhere else, and not pre-filled on reload.
           </p>
+          <div class="provider-list" role="radiogroup" aria-label="LLM backend provider">
+            <label class="provider-row">
+              <input type="radio" name="keyProvider" value="local">
+              <span class="provider-name">Local (LM Studio)</span>
+              <span class="provider-status" data-provider="local"></span>
+            </label>
+            <label class="provider-row">
+              <input type="radio" name="keyProvider" value="openai">
+              <span class="provider-name">OpenAI</span>
+              <span class="provider-status" data-provider="openai"></span>
+            </label>
+            <label class="provider-row">
+              <input type="radio" name="keyProvider" value="azure">
+              <span class="provider-name">Azure OpenAI</span>
+              <span class="provider-status" data-provider="azure"></span>
+            </label>
+            <label class="provider-row">
+              <input type="radio" name="keyProvider" value="anthropic">
+              <span class="provider-name">Anthropic</span>
+              <span class="provider-status" data-provider="anthropic"></span>
+            </label>
+            <label class="provider-row">
+              <input type="radio" name="keyProvider" value="gemini">
+              <span class="provider-name">Google Gemini</span>
+              <span class="provider-status" data-provider="gemini"></span>
+            </label>
+            <label class="provider-row">
+              <input type="radio" name="keyProvider" value="bedrock">
+              <span class="provider-name">AWS Bedrock</span>
+              <span class="provider-status" data-provider="bedrock"></span>
+            </label>
+            <label class="provider-row">
+              <input type="radio" name="keyProvider" value="openrouter">
+              <span class="provider-name">OpenRouter</span>
+              <span class="provider-status" data-provider="openrouter"></span>
+            </label>
+          </div>
+          <p class="settings-hint" id="providerUnsetHint">
+            Select a provider above before connecting. ● configured &nbsp;○ not configured (optional for Local).
+          </p>
+
           <div class="settings-body">
-            <div class="field-group">
-              <h3>Provider</h3>
-              <div class="field">
-                <label for="keyProvider">LLM backend</label>
-                <select id="keyProvider">
-                  <option value="" selected>— Select provider —</option>
-                  <option value="local">Local (LM Studio)</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="azure">Azure OpenAI</option>
-                </select>
-              </div>
-              <p class="settings-hint" id="providerUnsetHint">
-                Select a provider above before connecting.
-              </p>
-            </div>
             <div class="field-group" id="localKeyGroup" hidden>
               <h3>Local (LM Studio)</h3>
               <div class="field">
@@ -753,6 +810,42 @@
                 <input type="text" id="azureDeployment">
               </div>
             </div>
+            <div class="field-group" id="anthropicKeyGroup" hidden>
+              <h3>Anthropic</h3>
+              <div class="field">
+                <label for="anthropicApiKey">API key</label>
+                <input type="password" id="anthropicApiKey" autocomplete="off" placeholder="sk-ant-…">
+              </div>
+            </div>
+            <div class="field-group" id="geminiKeyGroup" hidden>
+              <h3>Google Gemini</h3>
+              <div class="field">
+                <label for="geminiApiKey">API key</label>
+                <input type="password" id="geminiApiKey" autocomplete="off">
+              </div>
+            </div>
+            <div class="field-group" id="bedrockKeyGroup" hidden>
+              <h3>AWS Bedrock</h3>
+              <div class="field">
+                <label for="bedrockAccessKeyId">Access key ID</label>
+                <input type="text" id="bedrockAccessKeyId" autocomplete="off" placeholder="AKIA…">
+              </div>
+              <div class="field">
+                <label for="bedrockSecretAccessKey">Secret access key</label>
+                <input type="password" id="bedrockSecretAccessKey" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="bedrockRegion">Region (optional)</label>
+                <input type="text" id="bedrockRegion" placeholder="us-east-1">
+              </div>
+            </div>
+            <div class="field-group" id="openrouterKeyGroup" hidden>
+              <h3>OpenRouter</h3>
+              <div class="field">
+                <label for="openrouterApiKey">API key</label>
+                <input type="password" id="openrouterApiKey" autocomplete="off" placeholder="sk-or-…">
+              </div>
+            </div>
             <div class="field-group">
               <h3>Web search</h3>
               <div class="field">
@@ -781,22 +874,67 @@
   const ttsEngineSel = el("ttsEngine"), ttsVoiceSel = el("ttsVoice"), llmModelSel = el("llmModel");
   const triggerInput = el("triggerWord"), micSelect = el("micSelect");
   const voiceInputModeSel = el("voiceInputMode"), triggerWordField = el("triggerWordField");
-  const keyProviderSel = el("keyProvider"), providerUnsetHint = el("providerUnsetHint");
-  const localKeyGroup = el("localKeyGroup"), openaiKeyGroup = el("openaiKeyGroup"), azureKeyGroup = el("azureKeyGroup");
+  const providerRadios = Array.from(document.querySelectorAll('input[name="keyProvider"]'));
+  const providerUnsetHint = el("providerUnsetHint");
+  const keyGroupsByProvider = {
+    local: el("localKeyGroup"), openai: el("openaiKeyGroup"), azure: el("azureKeyGroup"),
+    anthropic: el("anthropicKeyGroup"), gemini: el("geminiKeyGroup"),
+    bedrock: el("bedrockKeyGroup"), openrouter: el("openrouterKeyGroup"),
+  };
   const localApiKeyInput = el("localApiKey"), localBaseUrlInput = el("localBaseUrl");
   const openaiApiKeyInput = el("openaiApiKey");
   const azureApiKeyInput = el("azureApiKey"), azureEndpointInput = el("azureEndpoint"), azureDeploymentInput = el("azureDeployment");
+  const anthropicApiKeyInput = el("anthropicApiKey");
+  const geminiApiKeyInput = el("geminiApiKey");
+  const bedrockAccessKeyIdInput = el("bedrockAccessKeyId"), bedrockSecretAccessKeyInput = el("bedrockSecretAccessKey"), bedrockRegionInput = el("bedrockRegion");
+  const openrouterApiKeyInput = el("openrouterApiKey");
   const tavilyApiKeyInput = el("tavilyApiKey");
 
-  function updateKeyProviderFields() {
-    const provider = keyProviderSel.value;
-    providerUnsetHint.hidden = !!provider;
-    localKeyGroup.hidden = provider !== "local";
-    openaiKeyGroup.hidden = provider !== "openai";
-    azureKeyGroup.hidden = provider !== "azure";
+  function getSelectedProvider() {
+    return providerRadios.find((r) => r.checked)?.value || "";
   }
 
-  keyProviderSel.addEventListener("change", updateKeyProviderFields);
+  // A provider counts as "configured" once its REQUIRED field(s) are
+  // filled -- Local's fields are both optional, so it's always
+  // considered configured (nothing needed to use the server's own
+  // default local setup).
+  function isProviderConfigured(provider) {
+    if (provider === "local") return true;
+    if (provider === "openai") return !!openaiApiKeyInput.value.trim();
+    if (provider === "azure") {
+      return !!(azureApiKeyInput.value.trim() && azureEndpointInput.value.trim() && azureDeploymentInput.value.trim());
+    }
+    if (provider === "anthropic") return !!anthropicApiKeyInput.value.trim();
+    if (provider === "gemini") return !!geminiApiKeyInput.value.trim();
+    if (provider === "bedrock") {
+      return !!(bedrockAccessKeyIdInput.value.trim() && bedrockSecretAccessKeyInput.value.trim());
+    }
+    if (provider === "openrouter") return !!openrouterApiKeyInput.value.trim();
+    return false;
+  }
+
+  function updateProviderStatusDots() {
+    for (const dot of document.querySelectorAll(".provider-status")) {
+      dot.classList.toggle("configured", isProviderConfigured(dot.dataset.provider));
+    }
+  }
+
+  function updateKeyProviderFields() {
+    const provider = getSelectedProvider();
+    providerUnsetHint.hidden = !!provider;
+    for (const [name, group] of Object.entries(keyGroupsByProvider)) {
+      group.hidden = provider !== name;
+    }
+    updateProviderStatusDots();
+  }
+
+  for (const radio of providerRadios) radio.addEventListener("change", updateKeyProviderFields);
+  [
+    openaiApiKeyInput, azureApiKeyInput, azureEndpointInput, azureDeploymentInput,
+    anthropicApiKeyInput, geminiApiKeyInput,
+    bedrockAccessKeyIdInput, bedrockSecretAccessKeyInput, bedrockRegionInput,
+    openrouterApiKeyInput,
+  ].forEach((input) => input.addEventListener("input", updateProviderStatusDots));
   updateKeyProviderFields();
   const vadThresholdInput = el("vadThreshold"), vadMinSilenceInput = el("vadMinSilenceMs"), vadSpeechPadInput = el("vadSpeechPadMs");
   const transcript = el("transcript"), lineCount = el("lineCount");
@@ -1132,18 +1270,18 @@
   // browser storage, never sent anywhere but this one request, and this
   // function reads the fields fresh every connect() call rather than
   // caching them, so nothing lingers beyond what's currently typed in.
+  const PROVIDER_LABELS = {
+    openai: "OpenAI", azure: "Azure", anthropic: "Anthropic", gemini: "Gemini",
+    bedrock: "AWS Bedrock", openrouter: "OpenRouter",
+  };
+
   function keyProviderValidationError() {
-    const provider = keyProviderSel.value;
+    const provider = getSelectedProvider();
     if (!provider) {
       return "Select a provider in Settings before connecting.";
     }
-    if (provider === "openai" && !openaiApiKeyInput.value.trim()) {
-      return "Enter an OpenAI API key in Settings, or switch Provider back to Local.";
-    }
-    if (provider === "azure" && (
-      !azureApiKeyInput.value.trim() || !azureEndpointInput.value.trim() || !azureDeploymentInput.value.trim()
-    )) {
-      return "Azure needs an API key, endpoint, and deployment in Settings, or switch Provider back to Local.";
+    if (provider !== "local" && !isProviderConfigured(provider)) {
+      return `Fill in your ${PROVIDER_LABELS[provider]} API key in Settings, or switch Provider back to Local.`;
     }
     return null;
   }
@@ -1152,7 +1290,7 @@
     // Only the selected provider's fields are ever sent -- switching
     // Provider back to Local means "no override" even if a key is still
     // sitting in a now-hidden field from an earlier selection.
-    const provider = keyProviderSel.value;
+    const provider = getSelectedProvider();
     const body = {};
     if (provider === "local") {
       if (localApiKeyInput.value.trim()) body.local_api_key = localApiKeyInput.value.trim();
@@ -1163,6 +1301,16 @@
       if (azureApiKeyInput.value.trim()) body.azure_api_key = azureApiKeyInput.value.trim();
       if (azureEndpointInput.value.trim()) body.azure_endpoint = azureEndpointInput.value.trim();
       if (azureDeploymentInput.value.trim()) body.azure_deployment = azureDeploymentInput.value.trim();
+    } else if (provider === "anthropic" && anthropicApiKeyInput.value.trim()) {
+      body.anthropic_api_key = anthropicApiKeyInput.value.trim();
+    } else if (provider === "gemini" && geminiApiKeyInput.value.trim()) {
+      body.gemini_api_key = geminiApiKeyInput.value.trim();
+    } else if (provider === "bedrock") {
+      if (bedrockAccessKeyIdInput.value.trim()) body.bedrock_access_key_id = bedrockAccessKeyIdInput.value.trim();
+      if (bedrockSecretAccessKeyInput.value.trim()) body.bedrock_secret_access_key = bedrockSecretAccessKeyInput.value.trim();
+      if (bedrockRegionInput.value.trim()) body.bedrock_region = bedrockRegionInput.value.trim();
+    } else if (provider === "openrouter" && openrouterApiKeyInput.value.trim()) {
+      body.openrouter_api_key = openrouterApiKeyInput.value.trim();
     }
     // Web search is independent of the LLM provider choice.
     if (tavilyApiKeyInput.value.trim()) body.tavily_api_key = tavilyApiKeyInput.value.trim();
