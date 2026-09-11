@@ -1,3 +1,4 @@
+import json
 import time
 
 import numpy as np
@@ -8,6 +9,20 @@ from asr_test import config
 from asr_test.cli.server import _default_llm_models, create_app
 from asr_test.storage import SessionStore
 from asr_test.utils import float32_to_pcm16
+
+
+def _receive_json_skipping_audio(ws, max_messages=200):
+    """WebSocketAudioSink streams a continuous background silence
+    block the instant it's constructed (see its own docstring/tests) --
+    in voice mode a real reply's binary frames can legitimately arrive
+    interleaved with any JSON event, at any time. Tests that care about
+    a specific JSON event (not just "some audio eventually arrives")
+    need to skip past those, not assume the very next message is it."""
+    for _ in range(max_messages):
+        message = ws.receive()
+        if "text" in message:
+            return json.loads(message["text"])
+    raise AssertionError("no JSON message arrived within max_messages")
 
 
 def _make_client(monkeypatch):
@@ -254,6 +269,147 @@ def test_ws_rejects_negative_vad_min_silence_ms(monkeypatch):
         assert msg["event"] == "error"
 
 
+def test_ws_rejects_wake_word_mode_without_trigger_word(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?voice_input_mode=wake_word") as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "error"
+        assert "trigger_word" in msg["message"]
+
+
+def test_ws_rejects_invalid_voice_input_mode(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?voice_input_mode=telepathy") as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "error"
+        assert "voice_input_mode" in msg["message"]
+
+
+def test_ws_wake_word_mode_with_trigger_word_is_accepted(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("computer, hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm("hi there"),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?voice_input_mode=wake_word&trigger_word=computer") as ws:
+        ready = ws.receive_json()
+        assert ready["event"] == "ready"
+
+        frame = np.zeros(config.FRAME, dtype=np.float32)
+        for _ in range(3):
+            ws.send_bytes(float32_to_pcm16(frame))
+        reply = ws.receive_bytes()
+
+    assert len(reply) > 0
+
+
+def test_ws_push_to_talk_mode_never_calls_vad_factory(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    calls = []
+
+    def spy_vad_factory(**kwargs):
+        calls.append(kwargs)
+        return FakeVad(start_at=1, end_at=3)
+
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm("hi there"),
+        vad_factory=spy_vad_factory,
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?voice_input_mode=push_to_talk") as ws:
+        ws.receive_json()  # ready
+        ws.send_json({"event": "ptt_start"})
+        frame = np.zeros(config.FRAME, dtype=np.float32)
+        ws.send_bytes(float32_to_pcm16(frame))
+        ws.send_json({"event": "ptt_stop"})
+        _receive_json_skipping_audio(ws)  # user_text
+
+    assert calls == []
+
+
+def test_ws_push_to_talk_produces_a_response_on_ptt_stop(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm("hi there"),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?voice_input_mode=push_to_talk") as ws:
+        ws.receive_json()  # ready
+        ws.send_json({"event": "ptt_start"})
+        frame = np.zeros(config.FRAME, dtype=np.float32)
+        for _ in range(3):
+            ws.send_bytes(float32_to_pcm16(frame))
+        ws.send_json({"event": "ptt_stop"})
+
+        user_event = _receive_json_skipping_audio(ws)
+
+    assert user_event == {"event": "user_text", "text": "hello"}
+
+
+def test_ws_push_to_talk_ignores_trigger_word(monkeypatch):
+    # trigger_word only applies in wake_word mode -- push_to_talk should
+    # respond to plain speech even if a trigger_word happens to be sent.
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm("hi there"),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?voice_input_mode=push_to_talk&trigger_word=computer") as ws:
+        ws.receive_json()  # ready
+        ws.send_json({"event": "ptt_start"})
+        frame = np.zeros(config.FRAME, dtype=np.float32)
+        for _ in range(3):
+            ws.send_bytes(float32_to_pcm16(frame))
+        ws.send_json({"event": "ptt_stop"})
+
+        user_event = _receive_json_skipping_audio(ws)
+
+    assert user_event == {"event": "user_text", "text": "hello"}
+
+
 def test_ws_text_mode_accepts_json_text_and_replies_with_bot_text(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     app = create_app(
@@ -426,6 +582,55 @@ def test_ws_resume_session_id_seeds_conversation_and_keeps_writing_to_it(monkeyp
     assert [t["text"] for t in result["turns"]] == [
         "what's your name", "Assistant.", "hello again", "hi there ",
     ]
+
+
+def test_ws_resuming_with_a_different_mode_updates_the_stored_mode(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    store = SessionStore(":memory:")
+    store.create_session("s1", mode="voice", tts_engine="kokoro", llm_model="lfm2.5-230m")
+    store.add_turn("s1", "user", "hello")
+    store.add_turn("s1", "assistant", "hi there")
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm("hi there"),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=store,
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?mode=text&resume_session_id=s1") as ws:
+        ws.receive_json()  # ready
+        ws.send_json({"text": "switched to text"})
+        ws.receive_json()  # user_text
+        ws.receive_json()  # bot_text
+
+    assert store.get_session("s1")["session"]["mode"] == "text"
+    assert store.list_sessions()[0]["mode"] == "text"
+
+
+def test_ws_resuming_with_the_same_mode_leaves_stored_mode_unchanged(monkeypatch):
+    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    store = SessionStore(":memory:")
+    store.create_session("s1", mode="text", tts_engine=None, llm_model="lfm2.5-230m")
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm("hi there"),
+        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
+        default_tts_engine="kokoro",
+        session_store=store,
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws?mode=text&resume_session_id=s1") as ws:
+        ws.receive_json()  # ready
+        ws.send_json({"text": "hi"})
+        ws.receive_json()  # user_text
+        ws.receive_json()  # bot_text
+
+    assert store.get_session("s1")["session"]["mode"] == "text"
 
 
 def test_ws_resume_unknown_session_id_gets_error(monkeypatch):

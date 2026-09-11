@@ -35,6 +35,20 @@ Four endpoints:
                          invalid mode gets the same error+close treatment as
                          an invalid vad_* value.
 
+                         `voice_input_mode` (voice mode only) is "vad"
+                         (default), "wake_word", or "push_to_talk".
+                         "wake_word" requires trigger_word to also be set
+                         (rejected otherwise) — same underlying continuous
+                         VAD as "vad", just gated on the transcript leading
+                         with the trigger phrase. "push_to_talk" skips VAD
+                         entirely: the client sends {"event":"ptt_start"}
+                         before streaming frames and {"event":"ptt_stop"}
+                         after the last one, and any trigger_word sent
+                         alongside it is ignored. Switching between "voice"
+                         and "text" mode mid-conversation is a plain
+                         reconnect with resume_session_id set to the same
+                         session_id — see the browser client's mode toggle.
+
 Each connection gets its own Agent (own VAD state, own conversation
 history), but STT and same-(engine,voice)/same-model TTS/LLM instances
 are shared across every session that requests them — those hold no
@@ -48,6 +62,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -203,6 +218,27 @@ def create_app(
             await websocket.close(code=1008)
             return
 
+        voice_input_mode = params.get("voice_input_mode", "vad")
+        if voice_input_mode not in ("vad", "wake_word", "push_to_talk"):
+            await websocket.send_json({
+                "event": "error",
+                "message": f"voice_input_mode must be 'vad', 'wake_word', or 'push_to_talk', got {voice_input_mode!r}",
+            })
+            await websocket.close(code=1008)
+            return
+        if voice_input_mode == "wake_word" and not trigger_word:
+            await websocket.send_json({
+                "event": "error",
+                "message": "trigger_word is required when voice_input_mode is 'wake_word'",
+            })
+            await websocket.close(code=1008)
+            return
+        # push_to_talk has already explicitly signaled speech by holding
+        # the control -- a wake phrase would be redundant, so any
+        # trigger_word sent alongside it is ignored rather than honored.
+        if voice_input_mode != "wake_word":
+            trigger_word = None
+
         # Resuming a prior session: seed the new Agent's conversation from
         # its stored turns and keep writing further turns under the same
         # session_id, instead of starting a fresh one.
@@ -257,6 +293,15 @@ def create_app(
                 store.create_session(session_id, mode=mode, tts_engine=stored_tts_engine, llm_model=llm_model)
             except Exception as e:
                 print(f"  session store error (create_session): {e}")
+        elif existing["session"]["mode"] != mode:
+            # A resumed session's stored mode reflects whichever mode it
+            # was most recently used in -- see the mid-session voice/text
+            # switch flow in the browser UI, which resumes the same
+            # session_id under a different mode.
+            try:
+                store.set_mode(session_id, mode)
+            except Exception as e:
+                print(f"  session store error (set_mode): {e}")
 
         await websocket.send_json({
             "event": "ready",
@@ -321,7 +366,7 @@ def create_app(
 
         vad = (
             NullVad()
-            if mode == "text"
+            if mode == "text" or voice_input_mode == "push_to_talk"
             else vad_factory(
                 threshold=vad_threshold,
                 min_silence_ms=vad_min_silence_ms,
@@ -346,6 +391,25 @@ def create_app(
                     text = msg.get("text", "")
                     if text.strip():
                         await loop.run_in_executor(None, agent.on_text_message, text)
+            elif voice_input_mode == "push_to_talk":
+                # Unlike vad/wake_word (audio frames only), push-to-talk
+                # also needs small JSON control messages on the same
+                # connection -- receive_bytes()/receive_json() each raise
+                # if the other shape arrives, so this reads the raw ASGI
+                # message and dispatches on whichever key is present.
+                while True:
+                    message = await websocket.receive()
+                    if message["type"] == "websocket.disconnect":
+                        raise WebSocketDisconnect()
+                    if message.get("bytes") is not None:
+                        agent.feed_ptt_frame(pcm16_to_float32(message["bytes"]))
+                    elif message.get("text") is not None:
+                        control = json.loads(message["text"])
+                        event = control.get("event")
+                        if event == "ptt_start":
+                            agent.ptt_start()
+                        elif event == "ptt_stop":
+                            agent.ptt_stop()
             else:
                 while True:
                     data = await websocket.receive_bytes()
