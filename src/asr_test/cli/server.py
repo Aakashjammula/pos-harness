@@ -7,7 +7,9 @@ selection, this file's /options + query-param handling).
 Four endpoints:
   GET  /options          what the UI can offer before connecting (TTS
                          engines/voices, LLM models currently loaded in
-                         LM Studio)
+                         LM Studio, the active provider, and which tools
+                         are bound/enabled — for the Settings page's
+                         Connections diagram)
   GET  /sessions         list of past sessions (id, mode, turn count, ...),
                          newest first — read-only, see storage.py
   GET  /sessions/{id}    one session's stored turns, 404 if unknown
@@ -59,6 +61,8 @@ from asr_test.agent import Agent
 from asr_test.audio.null_sink import NullAudioSink
 from asr_test.audio.ws_sink import WebSocketAudioSink
 from asr_test.interfaces import LlmBase, SttBase, TtsBase, VadBase
+from asr_test.llm.providers import resolve_provider
+from asr_test.llm.tools import tool_status
 from asr_test.null_engines import NullTts, NullVad
 from asr_test.storage import SessionStore
 from asr_test.utils import pcm16_to_float32
@@ -153,10 +157,13 @@ def create_app(
         llm_models = await loop.run_in_executor(
             None, _default_llm_models, llm_base_url, default_llm_model
         )
+        provider = resolve_provider()
         return {
             "tts": {name: cls.list_voices() for name, cls in tts_engines.items()},
             "llm_models": llm_models,
             "defaults": {"tts_engine": default_tts_engine, "llm_model": default_llm_model},
+            "provider": {"name": provider.name, "model": provider.model},
+            "tools": tool_status(),
         }
 
     @app.get("/sessions")

@@ -268,9 +268,28 @@ def test_stream_usage_includes_tool_calls_made(monkeypatch):
     result = list(llm.stream([{"role": "user", "content": "what day is it"}], threading.Event(), usage))
 
     assert result == ["It's Monday."]
-    assert usage["tool_calls"] == [{"name": "get_current_time", "args": {}}]
+    assert usage["tool_calls"] == [
+        {"name": "get_current_time", "args": {}, "result": "Monday, 2026-09-10 12:00 UTC"}
+    ]
     assert usage["input_tokens"] == 50
     assert usage["output_tokens"] == 10
+
+
+def test_stream_usage_tool_call_result_for_unknown_tool(monkeypatch):
+    runnable = _FakeRunnable(
+        [
+            [_tool_call_chunk("nonexistent_tool", {}, "call_1")],
+            [_text_chunk("done"), _usage_chunk(5, 5)],
+        ]
+    )
+    llm = _make_llm(monkeypatch, runnable, tools=[])
+
+    usage = {}
+    list(llm.stream([{"role": "user", "content": "hi"}], threading.Event(), usage))
+
+    assert usage["tool_calls"] == [
+        {"name": "nonexistent_tool", "args": {}, "result": "unknown tool: nonexistent_tool"}
+    ]
 
 
 def test_stream_usage_includes_resolved_context_window(monkeypatch):

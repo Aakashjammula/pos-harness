@@ -74,6 +74,32 @@ def test_options_endpoint_lists_tts_voices_and_llm_models(monkeypatch):
     assert body["defaults"]["tts_engine"] == "kokoro"
 
 
+def test_options_endpoint_includes_provider_and_tools_for_connections_diagram(monkeypatch):
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setattr("asr_test.cli.server._default_llm_models", lambda base_url, fallback: ["model-a"])
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: FakeLlm(),
+        default_tts_engine="kokoro",
+        session_store=SessionStore(":memory:"),
+    )
+    client = TestClient(app)
+
+    resp = client.get("/options")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["provider"]["name"] == "local"
+    assert body["provider"]["model"]
+    tool_names = {t["name"] for t in body["tools"]}
+    assert tool_names == {"get_current_time", "web_search"}
+    web_search = next(t for t in body["tools"] if t["name"] == "web_search")
+    assert web_search["enabled"] is False  # no TAVILY_API_KEY set
+
+
 def test_default_llm_models_falls_back_when_lm_studio_unreachable(monkeypatch):
     class _BoomSession:
         def get(self, *a, **kw):
