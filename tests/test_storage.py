@@ -89,6 +89,16 @@ def test_set_title_updates_session_and_list():
     assert store.list_sessions()[0]["title"] == "Weekend trip planning"
 
 
+def test_set_mode_updates_session_and_list():
+    store = _store()
+    store.create_session("s1", mode="voice", tts_engine="kokoro", llm_model="m")
+
+    store.set_mode("s1", "text")
+
+    assert store.get_session("s1")["session"]["mode"] == "text"
+    assert store.list_sessions()[0]["mode"] == "text"
+
+
 def test_delete_session_removes_it_and_its_turns():
     store = _store()
     store.create_session("s1", mode="voice", tts_engine="kokoro", llm_model="m")

@@ -9,6 +9,7 @@ errors itself so a genuine bug surfaces during development."""
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from datetime import UTC, datetime
@@ -16,6 +17,9 @@ from datetime import UTC, datetime
 
 class SessionStore:
     def __init__(self, path: str = "sessions.db"):
+        dirname = os.path.dirname(path)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
@@ -86,6 +90,17 @@ class SessionStore:
         with self._lock:
             self._conn.execute(
                 "UPDATE sessions SET title = ? WHERE id = ?", (title, session_id)
+            )
+            self._conn.commit()
+
+    def set_mode(self, session_id: str, mode: str) -> None:
+        """A session's stored mode reflects whichever mode it was most
+        recently used in, not just how it was first created -- see
+        server.py's ws_endpoint, which calls this when a resumed
+        connection's mode differs from what's on record."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET mode = ? WHERE id = ?", (mode, session_id)
             )
             self._conn.commit()
 
