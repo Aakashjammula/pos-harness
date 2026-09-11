@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
@@ -39,12 +39,13 @@ class LangChainLlm(LlmBase):
         warmup: bool = True,
         warmup_attempts: int = 3,        # bounded backoff, not a long block — see _warmup()
         warmup_backoff_base: float = 1.0,
+        env: Mapping[str, str] | None = None,   # defaults to os.environ -- see providers/registry.py
     ):
-        self.provider = resolve_provider(model_override=model)
+        self.provider = resolve_provider(model_override=model, env=env)
         self._context_window = context_window_for(self.provider)
         self.system_prompt = system_prompt
         self.max_tool_rounds = max_tool_rounds
-        self.tools = default_tools() if tools is None else tools
+        self.tools = default_tools(env=env) if tools is None else tools
         self._tools_by_name = {t.name: t for t in self.tools}
 
         self._model = build_model(
