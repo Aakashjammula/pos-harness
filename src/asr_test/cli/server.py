@@ -128,6 +128,8 @@ class SessionKeysRequest(BaseModel):
     scope -- it would otherwise silently fall back to treating this
     as a query parameter instead of a JSON body."""
 
+    local_api_key: str | None = None
+    local_base_url: str | None = None
     openai_api_key: str | None = None
     azure_api_key: str | None = None
     azure_endpoint: str | None = None
@@ -226,6 +228,10 @@ def create_app(
     @app.post("/session-keys")
     async def session_keys(body: SessionKeysRequest):
         overrides: dict[str, str] = {}
+        if body.local_api_key:
+            overrides["LOCAL_API_KEY"] = body.local_api_key
+        if body.local_base_url:
+            overrides["LOCAL_BASE_URL"] = body.local_base_url
         if body.openai_api_key:
             overrides["OPENAI_API_KEY"] = body.openai_api_key
         if body.azure_api_key:

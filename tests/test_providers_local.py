@@ -28,6 +28,38 @@ def test_resolve_model_override_wins():
     assert provider.model == "custom-model"
 
 
+def test_resolve_base_url_env_override_wins(monkeypatch):
+    monkeypatch.setenv("LOCAL_BASE_URL", "http://192.168.1.50:1234/v1")
+
+    provider = LocalProvider().resolve(model_override=None, env=os.environ)
+
+    assert provider.base_url == "http://192.168.1.50:1234/v1"
+
+
+def test_resolve_base_url_defaults_when_not_set(monkeypatch):
+    monkeypatch.delenv("LOCAL_BASE_URL", raising=False)
+
+    provider = LocalProvider().resolve(model_override=None, env=os.environ)
+
+    assert provider.base_url == "http://localhost:1234/v1"
+
+
+def test_resolve_api_key_env_override_wins(monkeypatch):
+    monkeypatch.setenv("LOCAL_API_KEY", "real-lm-studio-token")
+
+    provider = LocalProvider().resolve(model_override=None, env=os.environ)
+
+    assert provider.api_key == "real-lm-studio-token"
+
+
+def test_resolve_api_key_defaults_when_not_set(monkeypatch):
+    monkeypatch.delenv("LOCAL_API_KEY", raising=False)
+
+    provider = LocalProvider().resolve(model_override=None, env=os.environ)
+
+    assert provider.api_key == "lm-studio"
+
+
 def test_price_for_is_always_free():
     assert LocalProvider().price_for(_local_provider()) == (0.0, 0.0)
 

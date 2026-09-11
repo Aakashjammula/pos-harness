@@ -12,6 +12,11 @@ from .base import LlmProviderBase, ProviderConfig
 from .registry import register
 
 _DEFAULT_MODEL = "lfm2.5-230m"
+_DEFAULT_BASE_URL = "http://localhost:1234/v1"
+_DEFAULT_API_KEY = "lm-studio"   # a harmless placeholder -- LM Studio ignores it
+                                 # unless its own "Require Authentication" setting
+                                 # is turned on, in which case LOCAL_API_KEY below
+                                 # must carry its real token.
 
 
 @register
@@ -26,8 +31,8 @@ class LocalProvider(LlmProviderBase):
         return ProviderConfig(
             name=self.name,
             model=model_override or _DEFAULT_MODEL,
-            base_url="http://localhost:1234/v1",
-            api_key="lm-studio",
+            base_url=env.get("LOCAL_BASE_URL", _DEFAULT_BASE_URL),
+            api_key=env.get("LOCAL_API_KEY", _DEFAULT_API_KEY),
         )
 
     def build_model(self, provider: ProviderConfig, **model_kwargs):
