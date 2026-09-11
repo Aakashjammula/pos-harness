@@ -129,6 +129,41 @@ def test_stream_bounds_tool_loop_at_max_tool_rounds(monkeypatch):
     assert len(runnable.stream_calls) == 2
 
 
+def test_init_passes_env_override_to_resolve_provider(monkeypatch):
+    seen = {}
+
+    def fake_resolve_provider(model_override=None, env=None):
+        seen["env"] = env
+        from asr_test.llm.providers import ProviderConfig
+        return ProviderConfig(name="local", model="m", base_url="http://x", api_key="k")
+
+    monkeypatch.setattr("asr_test.llm.langchain_llm.resolve_provider", fake_resolve_provider)
+    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: MagicMock(
+        bind_tools=lambda tools: _FakeRunnable([])
+    ))
+
+    LangChainLlm(env={"OPENAI_API_KEY": "sk-override"}, tools=[], warmup=False)
+
+    assert seen["env"] == {"OPENAI_API_KEY": "sk-override"}
+
+
+def test_init_passes_env_override_to_default_tools_when_tools_not_given(monkeypatch):
+    seen = {}
+
+    def fake_default_tools(env=None):
+        seen["env"] = env
+        return []
+
+    monkeypatch.setattr("asr_test.llm.langchain_llm.default_tools", fake_default_tools)
+    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: MagicMock(
+        bind_tools=lambda tools: _FakeRunnable([])
+    ))
+
+    LangChainLlm(env={"TAVILY_API_KEY": "tvly-override"}, warmup=False)
+
+    assert seen["env"] == {"TAVILY_API_KEY": "tvly-override"}
+
+
 def test_init_passes_expected_kwargs_to_build_model(monkeypatch):
     captured = {}
 
