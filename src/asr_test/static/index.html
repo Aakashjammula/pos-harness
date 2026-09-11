@@ -158,6 +158,13 @@
     top: 0;
   }
 
+  .chat-shell {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
   .topbar {
     display: flex;
     align-items: center;
@@ -220,29 +227,54 @@
   .mode-btn.active { background: var(--bg); color: var(--text); box-shadow: var(--shadow); }
   .mode-btn:disabled { cursor: not-allowed; opacity: 0.6; }
 
-  /* --- settings disclosure --- */
+  /* --- settings page --- */
 
-  .settings-panel {
+  .settings-view {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .settings-topbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 24px;
     border-bottom: 1px solid var(--border);
-    padding: 0 24px;
     flex-shrink: 0;
   }
 
-  .settings-panel summary {
-    list-style: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 12px 0;
-    font-size: 12.5px;
-    font-weight: 500;
+  .settings-back {
+    background: transparent;
+    border: none;
     color: var(--text-muted);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 8px;
   }
-  .settings-panel summary:hover { color: var(--text); }
-  .settings-panel summary::-webkit-details-marker { display: none; }
-  .settings-panel summary .chev { color: var(--text-faint); transition: transform 150ms ease; font-size: 11px; }
-  .settings-panel[open] summary .chev { transform: rotate(90deg); }
+  .settings-back:hover { background: var(--surface-sunken); color: var(--text); }
+
+  .settings-heading { font-size: 14.5px; font-weight: 600; }
+
+  .settings-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 24px 40px;
+  }
+
+  .settings-section-title {
+    margin: 28px 0 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-faint);
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
+  }
+  .settings-section-title:first-child { margin-top: 12px; }
 
   .settings-body {
     padding: 4px 0 20px;
@@ -469,6 +501,71 @@
   }
   .text-compose input[type="text"]:focus { box-shadow: none; }
   .text-compose button.primary { flex: none; }
+
+  /* --- model chip (opens Settings) --- */
+
+  .model-chip-row {
+    max-width: 720px;
+    margin: 0 auto 8px;
+    display: flex;
+    justify-content: center;
+  }
+  .model-chip {
+    border: 1px solid var(--border);
+    background: var(--surface-sunken);
+    color: var(--text-muted);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 13px;
+    border-radius: 100px;
+    cursor: pointer;
+    transition: border-color 120ms ease, color 120ms ease;
+  }
+  .model-chip:hover { border-color: var(--text-muted); color: var(--text); }
+
+  /* --- connections graph --- */
+
+  .connections-status {
+    font-size: 12.5px;
+    color: var(--text-faint);
+    margin-top: 8px;
+  }
+  .connections-graph {
+    width: 100%;
+    height: 320px;
+    margin-top: 10px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  /* --- tool trace --- */
+
+  .tool-trace {
+    font-size: 11px;
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    margin: -10px 0 16px;
+  }
+  .line.you + .tool-trace { text-align: right; }
+  .tool-trace summary { cursor: pointer; list-style: none; }
+  .tool-trace summary::-webkit-details-marker { display: none; }
+  .tool-trace summary:hover { color: var(--text-muted); }
+  .tool-trace-row {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    gap: 8px;
+    padding: 6px 0 0 12px;
+    align-items: baseline;
+  }
+  .tool-trace-name { color: var(--text-muted); font-weight: 600; }
+  .tool-trace-args { color: var(--text-faint); }
+  .tool-trace-result {
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
 </style>
 </head>
 <body>
@@ -483,91 +580,107 @@
     </aside>
 
     <div class="main">
-      <div class="topbar">
-        <div class="mode-toggle" role="group" aria-label="Session mode">
-          <button type="button" class="mode-btn active" id="modeVoiceBtn">Voice</button>
-          <button type="button" class="mode-btn" id="modeTextBtn">Text</button>
+      <div class="chat-shell" id="chatShell">
+        <div class="topbar">
+          <div class="mode-toggle" role="group" aria-label="Session mode">
+            <button type="button" class="mode-btn active" id="modeVoiceBtn">Voice</button>
+            <button type="button" class="mode-btn" id="modeTextBtn">Text</button>
+          </div>
+          <div class="conn-pill">
+            <span class="led" id="led"></span><span id="stateText">Disconnected</span>
+            <span class="count" id="lineCount"></span>
+          </div>
         </div>
-        <div class="conn-pill">
-          <span class="led" id="led"></span><span id="stateText">Disconnected</span>
-          <span class="count" id="lineCount"></span>
+
+        <div class="chat-scroll">
+          <div class="chat-column">
+            <div class="transcript" id="transcript"></div>
+          </div>
+        </div>
+
+        <div class="composer-bar">
+          <div class="model-chip-row">
+            <button type="button" class="model-chip" id="modelChip">Model: —</button>
+          </div>
+          <div class="composer-status">
+            <div class="status-tile" id="ring"><span id="ringIcon"></span></div>
+            <div class="status-copy">
+              <div class="state-text" id="stateTextCard">Disconnected</div>
+              <div class="status-label" id="statusLabel">Not connected</div>
+            </div>
+            <div class="composer-actions">
+              <button class="primary" id="connectBtn">Connect</button>
+              <button class="secondary" id="muteBtn" disabled>Mute</button>
+            </div>
+          </div>
+          <div class="text-compose" id="textCompose" hidden>
+            <input type="text" id="textInput" placeholder="Message the assistant…" disabled>
+            <button class="primary" id="textSendBtn" disabled>Send</button>
+          </div>
         </div>
       </div>
 
-      <details class="settings-panel" id="settingsPanel">
-        <summary><span class="chev">&#8250;</span> Settings</summary>
-        <div class="settings-body" id="configPanel">
+      <div class="settings-view" id="settingsView" hidden>
+        <div class="settings-topbar">
+          <button type="button" class="settings-back" id="settingsBackBtn">&larr; Back</button>
+          <div class="settings-heading">Settings</div>
+        </div>
+        <div class="settings-scroll">
+          <div class="settings-body" id="configPanel">
+            <div class="field-group">
+              <h3>Model</h3>
+              <div id="voiceEngineFields">
+                <div class="field">
+                  <label for="ttsEngine">Voice engine</label>
+                  <select id="ttsEngine"></select>
+                </div>
+                <div class="field">
+                  <label for="ttsVoice">Voice</label>
+                  <select id="ttsVoice"></select>
+                </div>
+              </div>
+              <div class="field">
+                <label for="llmModel">LLM model</label>
+                <select id="llmModel"></select>
+              </div>
+            </div>
+
+            <div class="field-group" id="inputGroup">
+              <h3>Input</h3>
+              <div class="field">
+                <label for="micSelect">Microphone</label>
+                <select id="micSelect"><option value="">System default</option></select>
+              </div>
+              <div class="field">
+                <label for="triggerWord">Wake word (optional)</label>
+                <input type="text" id="triggerWord" placeholder="e.g. computer">
+              </div>
+            </div>
+
+            <div class="field-group" id="vadGroup">
+              <h3>Voice detection</h3>
+              <div class="field">
+                <label for="vadThreshold">Sensitivity (0&ndash;1)</label>
+                <input type="number" id="vadThreshold" min="0" max="1" step="0.05" value="0.5">
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="vadMinSilenceMs">Pause length (ms)</label>
+                  <input type="number" id="vadMinSilenceMs" min="0" step="100" value="1200">
+                </div>
+                <div class="field">
+                  <label for="vadSpeechPadMs">Speech padding (ms)</label>
+                  <input type="number" id="vadSpeechPadMs" min="0" step="50" value="300">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section-title">Connections</div>
           <div class="field-group">
-            <h3>Model</h3>
-            <div id="voiceEngineFields">
-              <div class="field">
-                <label for="ttsEngine">Voice engine</label>
-                <select id="ttsEngine"></select>
-              </div>
-              <div class="field">
-                <label for="ttsVoice">Voice</label>
-                <select id="ttsVoice"></select>
-              </div>
-            </div>
-            <div class="field">
-              <label for="llmModel">LLM model</label>
-              <select id="llmModel"></select>
-            </div>
+            <div id="connectionsStatus" class="connections-status"></div>
+            <div id="connectionsGraph" class="connections-graph"></div>
           </div>
-
-          <div class="field-group" id="inputGroup">
-            <h3>Input</h3>
-            <div class="field">
-              <label for="micSelect">Microphone</label>
-              <select id="micSelect"><option value="">System default</option></select>
-            </div>
-            <div class="field">
-              <label for="triggerWord">Wake word (optional)</label>
-              <input type="text" id="triggerWord" placeholder="e.g. computer">
-            </div>
-          </div>
-
-          <div class="field-group" id="vadGroup">
-            <h3>Voice detection</h3>
-            <div class="field">
-              <label for="vadThreshold">Sensitivity (0&ndash;1)</label>
-              <input type="number" id="vadThreshold" min="0" max="1" step="0.05" value="0.5">
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label for="vadMinSilenceMs">Pause length (ms)</label>
-                <input type="number" id="vadMinSilenceMs" min="0" step="100" value="1200">
-              </div>
-              <div class="field">
-                <label for="vadSpeechPadMs">Speech padding (ms)</label>
-                <input type="number" id="vadSpeechPadMs" min="0" step="50" value="300">
-              </div>
-            </div>
-          </div>
-        </div>
-      </details>
-
-      <div class="chat-scroll">
-        <div class="chat-column">
-          <div class="transcript" id="transcript"></div>
-        </div>
-      </div>
-
-      <div class="composer-bar">
-        <div class="composer-status">
-          <div class="status-tile" id="ring"><span id="ringIcon"></span></div>
-          <div class="status-copy">
-            <div class="state-text" id="stateTextCard">Disconnected</div>
-            <div class="status-label" id="statusLabel">Not connected</div>
-          </div>
-          <div class="composer-actions">
-            <button class="primary" id="connectBtn">Connect</button>
-            <button class="secondary" id="muteBtn" disabled>Mute</button>
-          </div>
-        </div>
-        <div class="text-compose" id="textCompose" hidden>
-          <input type="text" id="textInput" placeholder="Message the assistant…" disabled>
-          <button class="primary" id="textSendBtn" disabled>Send</button>
         </div>
       </div>
     </div>
@@ -583,7 +696,9 @@
   const triggerInput = el("triggerWord"), micSelect = el("micSelect");
   const vadThresholdInput = el("vadThreshold"), vadMinSilenceInput = el("vadMinSilenceMs"), vadSpeechPadInput = el("vadSpeechPadMs");
   const transcript = el("transcript"), lineCount = el("lineCount");
-  const settingsPanel = el("settingsPanel");
+  const chatShell = el("chatShell"), settingsView = el("settingsView"), settingsBackBtn = el("settingsBackBtn");
+  const modelChip = el("modelChip");
+  const connectionsStatus = el("connectionsStatus"), connectionsGraph = el("connectionsGraph");
   const historyTitle = el("historyTitle"), historyBody = el("historyBody");
   const modeVoiceBtn = el("modeVoiceBtn"), modeTextBtn = el("modeTextBtn");
   const voiceEngineFields = el("voiceEngineFields"), inputGroup = el("inputGroup"), vadGroup = el("vadGroup");
@@ -616,6 +731,29 @@
   modeVoiceBtn.onclick = () => setMode("voice");
   modeTextBtn.onclick = () => setMode("text");
 
+  // --- settings page routing (hash-based, no server route --
+  // #/settings survives refresh/back-forward without a new endpoint) ---
+
+  function isSettingsRoute() {
+    return location.hash === "#/settings";
+  }
+
+  function applyRoute() {
+    const showSettings = isSettingsRoute();
+    chatShell.hidden = showSettings;
+    settingsView.hidden = !showSettings;
+    if (showSettings) ensureConnectionsGraphLoaded();
+  }
+
+  window.addEventListener("hashchange", applyRoute);
+  settingsBackBtn.onclick = () => { location.hash = ""; };
+  modelChip.onclick = () => { location.hash = "#/settings"; };
+
+  function updateModelChip() {
+    if (!options) return;
+    modelChip.textContent = `Model: ${options.provider.name} · ${llmModelSel.value}`;
+  }
+
   let options = null;
   let ws = null, connected = false, micMuted = false, currentState = "idle";
   let audioCtx, micStream, source, processor, playCtx;
@@ -636,11 +774,38 @@
         parts.push(`${usage.input_tokens} in / ${usage.output_tokens} out (${totalPart})`);
       }
       if (usage.cost_usd != null) parts.push(`$${usage.cost_usd.toFixed(4)}`);
-      if (usage.tool_calls && usage.tool_calls.length) {
-        parts.push(`tools: ${usage.tool_calls.map((c) => c.name).join(", ")}`);
-      }
     }
     return parts.join(" · ");
+  }
+
+  const TRACE_RESULT_MAX_CHARS = 200;
+
+  function buildToolTrace(usage) {
+    if (!usage || !usage.tool_calls || !usage.tool_calls.length) return null;
+    const details = document.createElement("details");
+    details.className = "tool-trace";
+    const summary = document.createElement("summary");
+    summary.textContent = `tools: ${usage.tool_calls.map((c) => c.name).join(", ")}`;
+    details.appendChild(summary);
+    for (const call of usage.tool_calls) {
+      const row = document.createElement("div");
+      row.className = "tool-trace-row";
+      const name = document.createElement("span");
+      name.className = "tool-trace-name";
+      name.textContent = call.name;
+      const args = document.createElement("span");
+      args.className = "tool-trace-args";
+      args.textContent = JSON.stringify(call.args ?? {});
+      const result = document.createElement("span");
+      result.className = "tool-trace-result";
+      const resultStr = call.result != null ? String(call.result) : "";
+      result.textContent = resultStr.length > TRACE_RESULT_MAX_CHARS
+        ? resultStr.slice(0, TRACE_RESULT_MAX_CHARS) + "…"
+        : resultStr;
+      row.append(name, args, result);
+      details.appendChild(row);
+    }
+    return details;
   }
 
   function updateSessionTotals(usage) {
@@ -692,6 +857,8 @@
         stats.textContent = statsLine;
         transcript.appendChild(stats);
       }
+      const trace = buildToolTrace(usage);
+      if (trace) transcript.appendChild(trace);
       if (usage) updateSessionTotals(usage);
     }
 
@@ -741,6 +908,7 @@
       llmModelSel.appendChild(o);
     }
     llmModelSel.value = options.defaults.llm_model;
+    updateModelChip();
   }
 
   function populateVoices() {
@@ -754,6 +922,7 @@
   }
 
   ttsEngineSel.addEventListener("change", populateVoices);
+  llmModelSel.addEventListener("change", updateModelChip);
 
   // --- speaking detection: real signal in incoming audio, not just "any frame arrived"
   // (the sink streams continuously, silence included, once connected) ---
@@ -938,7 +1107,7 @@
       configPanel.querySelectorAll("select, input").forEach((f) => (f.disabled = true));
       modeVoiceBtn.disabled = true;
       modeTextBtn.disabled = true;
-      settingsPanel.open = false;
+      if (isSettingsRoute()) location.hash = "";
       connectBtn.textContent = "Disconnect";
       connectBtn.classList.add("disconnect");
       connectBtn.disabled = false;
@@ -1068,10 +1237,101 @@
     connect();
   }
 
+  // --- connections graph (React Flow, lazy-loaded via CDN on first
+  // Settings visit -- this app otherwise runs fully offline (local
+  // STT/TTS/LLM), so this is the one feature that needs internet, and
+  // it's isolated so a failure here can't affect anything else) ---
+
+  const REACT_VERSION = "18.3.1";
+  const XYFLOW_VERSION = "12.11.6";
+  let connectionsGraphState = "idle"; // idle | loading | loaded | error
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.crossOrigin = "anonymous";
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error(`failed to load ${src}`));
+      document.head.appendChild(s);
+    });
+  }
+
+  function loadStylesheet(href) {
+    return new Promise((resolve, reject) => {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = href;
+      link.onload = () => resolve();
+      link.onerror = () => reject(new Error(`failed to load ${href}`));
+      document.head.appendChild(link);
+    });
+  }
+
+  function renderConnectionsGraph() {
+    const { ReactFlow, Background } = window.ReactFlow;
+    const providerLabel = `${options.provider.name} · ${options.provider.model}`;
+    const nodes = [
+      { id: "provider", position: { x: 260, y: 0 }, data: { label: providerLabel } },
+      ...options.tools.map((t, i) => ({
+        id: t.name,
+        position: { x: i * 240, y: 150 },
+        data: { label: t.enabled ? t.label : `${t.label} (disabled)` },
+        style: t.enabled ? {} : { opacity: 0.45 },
+      })),
+    ];
+    const edges = options.tools.map((t) => ({
+      id: `provider-${t.name}`, source: "provider", target: t.name, animated: t.enabled,
+    }));
+
+    const root = ReactDOM.createRoot(connectionsGraph);
+    root.render(
+      React.createElement(
+        ReactFlow,
+        { nodes, edges, fitView: true, nodesDraggable: false, nodesConnectable: false, elementsSelectable: false },
+        React.createElement(Background, null)
+      )
+    );
+  }
+
+  function ensureConnectionsGraphLoaded() {
+    if (connectionsGraphState !== "idle") return;
+    if (!options) {
+      // /options hasn't resolved yet (unlikely by the time a user
+      // navigates here, but possible on a direct #/settings load) --
+      // retry once it has, without spamming the CDN meanwhile.
+      loadOptionsPromise.then(ensureConnectionsGraphLoaded).catch(() => {});
+      return;
+    }
+    connectionsGraphState = "loading";
+    connectionsStatus.textContent = "Loading diagram…";
+
+    loadScript(`https://unpkg.com/react@${REACT_VERSION}/umd/react.development.js`)
+      .then(() => loadScript(`https://unpkg.com/react-dom@${REACT_VERSION}/umd/react-dom.development.js`))
+      .then(() => {
+        // @xyflow/react's UMD build is compiled against the automatic
+        // JSX runtime internally, even though we call React.createElement
+        // ourselves below -- it expects this global to exist.
+        window.jsxRuntime = { jsx: React.createElement, jsxs: React.createElement, Fragment: React.Fragment };
+        return loadScript(`https://unpkg.com/@xyflow/react@${XYFLOW_VERSION}/dist/umd/index.js`);
+      })
+      .then(() => loadStylesheet(`https://unpkg.com/@xyflow/react@${XYFLOW_VERSION}/dist/style.css`))
+      .then(() => {
+        connectionsGraphState = "loaded";
+        connectionsStatus.textContent = "";
+        renderConnectionsGraph();
+      })
+      .catch(() => {
+        connectionsGraphState = "error";
+        connectionsStatus.textContent = "Couldn't load the connections diagram (no internet?).";
+      });
+  }
+
   setMode("voice");
   connectBtn.onclick = connect;
   setState("idle", "Not connected");
-  loadOptions().catch(() => setState("error", "Couldn't reach the server for options"));
+  const loadOptionsPromise = loadOptions().catch(() => setState("error", "Couldn't reach the server for options"));
+  applyRoute();
   populateMics();
   refreshHistoryList().catch(() => {
     historyBody.innerHTML = "";
