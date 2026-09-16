@@ -1,7 +1,7 @@
 import threading
 from unittest.mock import MagicMock
 
-from asr_test.llm.openai_compatible import OpenAiCompatibleLlm
+from pos.llm.openai_compatible import OpenAiCompatibleLlm
 
 
 def _fake_chunk(content):
@@ -15,7 +15,7 @@ def test_stream_is_stateless_and_prepends_system_prompt(monkeypatch):
     mock_client.chat.completions.create.return_value = [
         _fake_chunk("hel"), _fake_chunk("lo"), _fake_chunk(None),
     ]
-    monkeypatch.setattr("asr_test.llm.openai_compatible.OpenAI", lambda **kw: mock_client)
+    monkeypatch.setattr("pos.llm.openai_compatible.OpenAI", lambda **kw: mock_client)
 
     llm = OpenAiCompatibleLlm(system_prompt="sys", warmup=False)
     cancel = threading.Event()
@@ -41,7 +41,7 @@ def test_stream_stops_on_cancel(monkeypatch):
     mock_client.chat.completions.create.return_value = [
         _fake_chunk("a"), _fake_chunk("b"), _fake_chunk("c"),
     ]
-    monkeypatch.setattr("asr_test.llm.openai_compatible.OpenAI", lambda **kw: mock_client)
+    monkeypatch.setattr("pos.llm.openai_compatible.OpenAI", lambda **kw: mock_client)
 
     llm = OpenAiCompatibleLlm(warmup=False)
     cancel = threading.Event()
@@ -57,7 +57,7 @@ def test_stream_stops_on_cancel(monkeypatch):
 def test_stream_accepts_and_ignores_usage_param(monkeypatch):
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = [_fake_chunk("hi"), _fake_chunk(None)]
-    monkeypatch.setattr("asr_test.llm.openai_compatible.OpenAI", lambda **kw: mock_client)
+    monkeypatch.setattr("pos.llm.openai_compatible.OpenAI", lambda **kw: mock_client)
 
     llm = OpenAiCompatibleLlm(warmup=False)
     cancel = threading.Event()

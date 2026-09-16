@@ -53,4 +53,4 @@ HISTORY_TURNS = 3   # how many prior user/assistant turn-pairs to include as LLM
                      # moved to Agent since the LLM engine is now stateless and
                      # (in server mode) shared across concurrent sessions.
 
-SESSIONS_DB_PATH = "sessions.db"   # SQLite file for session/turn history — see storage.py
+SESSIONS_DB_PATH = "data/sessions.db"   # SQLite file for session/turn history — see storage.py

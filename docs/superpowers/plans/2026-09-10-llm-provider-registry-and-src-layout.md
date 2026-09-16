@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the LLM provider if/elif branching (spread across `llm/provider.py`, `llm/pricing.py`, `llm/context_window.py`, `langchain_llm.py`) with a self-registering provider registry, then move every root-level Python entry point and `static/` into `src/asr_test/` with `[project.scripts]` console entries.
+**Goal:** Replace the LLM provider if/elif branching (spread across `llm/provider.py`, `llm/pricing.py`, `llm/context_window.py`, `langchain_llm.py`) with a self-registering provider registry, then move every root-level Python entry point and `static/` into `src/pos/` with `[project.scripts]` console entries.
 
-**Architecture:** Each backend (local/openai/azure) becomes one class implementing `LlmProviderBase` (`detect`, `resolve`, `build_model`, `price_for`, `context_window_for`), registered via a `@register` class decorator. `LangChainLlm` and everything else calls five small dispatch functions in `llm/providers/registry.py` and never branches on provider name again. Phase 2 is a pure location move — `main.py`/`server.py`/`ws_client.py` become `src/asr_test/cli/{local,server,relay_client}.py`, `static/` becomes `src/asr_test/static/`, invoked via `uv run asr-agent`/`asr-server`/`asr-client`.
+**Architecture:** Each backend (local/openai/azure) becomes one class implementing `LlmProviderBase` (`detect`, `resolve`, `build_model`, `price_for`, `context_window_for`), registered via a `@register` class decorator. `LangChainLlm` and everything else calls five small dispatch functions in `llm/providers/registry.py` and never branches on provider name again. Phase 2 is a pure location move — `main.py`/`server.py`/`ws_client.py` become `src/pos/cli/{local,server,relay_client}.py`, `static/` becomes `src/pos/static/`, invoked via `uv run pos-agent`/`pos-server`/`pos-client`.
 
 **Tech Stack:** Python 3.14, `langchain-openai` (`ChatOpenAI`, `AzureChatOpenAI`), pytest, `hatchling` build backend.
 
@@ -23,9 +23,9 @@
 ### Task 1: Provider registry mechanism (`base.py` + `registry.py`)
 
 **Files:**
-- Create: `src/asr_test/llm/providers/__init__.py` (empty for now — populated in Task 5)
-- Create: `src/asr_test/llm/providers/base.py`
-- Create: `src/asr_test/llm/providers/registry.py`
+- Create: `src/pos/llm/providers/__init__.py` (empty for now — populated in Task 5)
+- Create: `src/pos/llm/providers/base.py`
+- Create: `src/pos/llm/providers/registry.py`
 - Test: `tests/test_provider_registry_mechanism.py`
 
 **Interfaces:**
@@ -40,7 +40,7 @@ never touches those.
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `src/asr_test/llm/providers/__init__.py` (empty file, so the
+Create `src/pos/llm/providers/__init__.py` (empty file, so the
 package can be imported before Task 5 fills it in):
 
 ```python
@@ -51,8 +51,8 @@ Create `tests/test_provider_registry_mechanism.py`:
 ```python
 import pytest
 
-from asr_test.llm.providers.base import LlmProviderBase, ProviderConfig
-from asr_test.llm.providers.registry import (
+from pos.llm.providers.base import LlmProviderBase, ProviderConfig
+from pos.llm.providers.registry import (
     _REGISTRY,
     build_model,
     context_window_for,
@@ -68,7 +68,7 @@ def _isolated_registry(monkeypatch):
     # The real registry (Task 5 onward) is populated once at import time
     # and shared process-wide -- these tests register throwaway fakes
     # and must not leak them into (or see) that real registry.
-    monkeypatch.setattr("asr_test.llm.providers.registry._REGISTRY", {})
+    monkeypatch.setattr("pos.llm.providers.registry._REGISTRY", {})
 
 
 class _FakeProvider(LlmProviderBase):
@@ -190,11 +190,11 @@ def test_estimate_cost_returns_none_when_unpriced():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_provider_registry_mechanism.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'asr_test.llm.providers.base'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'pos.llm.providers.base'`
 
 - [ ] **Step 3: Write the implementation**
 
-Create `src/asr_test/llm/providers/base.py`:
+Create `src/pos/llm/providers/base.py`:
 
 ```python
 """The provider-registry contract. See registry.py for the dispatch
@@ -250,7 +250,7 @@ class LlmProviderBase(ABC):
         """Max context window in tokens, or None if unknown."""
 ```
 
-Create `src/asr_test/llm/providers/registry.py`:
+Create `src/pos/llm/providers/registry.py`:
 
 ```python
 """Dispatch layer over whatever providers are registered -- see base.py
@@ -311,7 +311,7 @@ Expected: PASS, all previously-passing tests still pass (this task adds a new, s
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/llm/providers/__init__.py src/asr_test/llm/providers/base.py src/asr_test/llm/providers/registry.py tests/test_provider_registry_mechanism.py
+git add src/pos/llm/providers/__init__.py src/pos/llm/providers/base.py src/pos/llm/providers/registry.py tests/test_provider_registry_mechanism.py
 git commit -m "feat: add LLM provider registry mechanism (base + dispatch)"
 ```
 
@@ -320,7 +320,7 @@ git commit -m "feat: add LLM provider registry mechanism (base + dispatch)"
 ### Task 2: `LocalProvider`
 
 **Files:**
-- Create: `src/asr_test/llm/providers/local.py`
+- Create: `src/pos/llm/providers/local.py`
 - Test: `tests/test_providers_local.py`
 
 **Interfaces:**
@@ -334,8 +334,8 @@ Create `tests/test_providers_local.py`:
 ```python
 from unittest.mock import MagicMock
 
-from asr_test.llm.providers.base import ProviderConfig
-from asr_test.llm.providers.local import LocalProvider
+from pos.llm.providers.base import ProviderConfig
+from pos.llm.providers.local import LocalProvider
 
 
 def _local_provider(model="meta-llama-3.1-8b-instruct"):
@@ -372,7 +372,7 @@ def test_build_model_passes_expected_kwargs(monkeypatch):
         captured_kwargs.update(kwargs)
         return "the-model"
 
-    monkeypatch.setattr("asr_test.llm.providers.local.ChatOpenAI", fake_chat_openai)
+    monkeypatch.setattr("pos.llm.providers.local.ChatOpenAI", fake_chat_openai)
 
     result = LocalProvider().build_model(
         _local_provider(model="lfm2.5-230m"), max_tokens=120, temperature=0.7, timeout=30, stream_usage=True
@@ -401,7 +401,7 @@ def test_context_window_queries_lm_studio_v0_models_endpoint(monkeypatch):
         captured_url["url"] = url
         return mock_response
 
-    monkeypatch.setattr("asr_test.llm.providers.local.requests.get", fake_get)
+    monkeypatch.setattr("pos.llm.providers.local.requests.get", fake_get)
 
     window = LocalProvider().context_window_for(_local_provider())
 
@@ -416,7 +416,7 @@ def test_context_window_prefers_loaded_context_length_over_max_context_length(mo
         "data": [{"id": "lfm2.5-230m", "max_context_length": 128000, "loaded_context_length": 8192}],
     }
     mock_response.raise_for_status.return_value = None
-    monkeypatch.setattr("asr_test.llm.providers.local.requests.get", lambda url, timeout: mock_response)
+    monkeypatch.setattr("pos.llm.providers.local.requests.get", lambda url, timeout: mock_response)
 
     assert LocalProvider().context_window_for(_local_provider(model="lfm2.5-230m")) == 8192
 
@@ -428,7 +428,7 @@ def test_context_window_falls_back_to_max_context_length_when_not_loaded(monkeyp
         "data": [{"id": "lfm2.5-230m", "state": "not-loaded", "max_context_length": 128000}],
     }
     mock_response.raise_for_status.return_value = None
-    monkeypatch.setattr("asr_test.llm.providers.local.requests.get", lambda url, timeout: mock_response)
+    monkeypatch.setattr("pos.llm.providers.local.requests.get", lambda url, timeout: mock_response)
 
     assert LocalProvider().context_window_for(_local_provider(model="lfm2.5-230m")) == 128000
 
@@ -437,7 +437,7 @@ def test_context_window_returns_none_when_model_not_found_in_response(monkeypatc
     mock_response = MagicMock()
     mock_response.json.return_value = {"object": "list", "data": [{"id": "other-model", "max_context_length": 4096}]}
     mock_response.raise_for_status.return_value = None
-    monkeypatch.setattr("asr_test.llm.providers.local.requests.get", lambda url, timeout: mock_response)
+    monkeypatch.setattr("pos.llm.providers.local.requests.get", lambda url, timeout: mock_response)
 
     assert LocalProvider().context_window_for(_local_provider(model="not-listed")) is None
 
@@ -446,7 +446,7 @@ def test_context_window_returns_none_on_request_failure(monkeypatch):
     def fake_get(url, timeout):
         raise ConnectionError("LM Studio not running")
 
-    monkeypatch.setattr("asr_test.llm.providers.local.requests.get", fake_get)
+    monkeypatch.setattr("pos.llm.providers.local.requests.get", fake_get)
 
     assert LocalProvider().context_window_for(_local_provider()) is None
 ```
@@ -454,11 +454,11 @@ def test_context_window_returns_none_on_request_failure(monkeypatch):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_providers_local.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'asr_test.llm.providers.local'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'pos.llm.providers.local'`
 
 - [ ] **Step 3: Write the implementation**
 
-Create `src/asr_test/llm/providers/local.py`:
+Create `src/pos/llm/providers/local.py`:
 
 ```python
 """LM Studio (or any OpenAI-compatible local server). Always detected
@@ -536,7 +536,7 @@ Expected: PASS, all tests green
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/llm/providers/local.py tests/test_providers_local.py
+git add src/pos/llm/providers/local.py tests/test_providers_local.py
 git commit -m "feat: add LocalProvider (LM Studio)"
 ```
 
@@ -545,7 +545,7 @@ git commit -m "feat: add LocalProvider (LM Studio)"
 ### Task 3: `OpenAIProvider`
 
 **Files:**
-- Create: `src/asr_test/llm/providers/openai.py`
+- Create: `src/pos/llm/providers/openai.py`
 - Test: `tests/test_providers_openai.py`
 
 **Interfaces:**
@@ -557,8 +557,8 @@ git commit -m "feat: add LocalProvider (LM Studio)"
 Create `tests/test_providers_openai.py`:
 
 ```python
-from asr_test.llm.providers.base import ProviderConfig
-from asr_test.llm.providers.openai import OpenAIProvider
+from pos.llm.providers.base import ProviderConfig
+from pos.llm.providers.openai import OpenAIProvider
 
 
 def _openai_provider(model="gpt-4o-mini"):
@@ -653,7 +653,7 @@ def test_build_model_passes_expected_kwargs(monkeypatch):
         captured_kwargs.update(kwargs)
         return "the-model"
 
-    monkeypatch.setattr("asr_test.llm.providers.openai.ChatOpenAI", fake_chat_openai)
+    monkeypatch.setattr("pos.llm.providers.openai.ChatOpenAI", fake_chat_openai)
 
     result = OpenAIProvider().build_model(
         _openai_provider(), max_tokens=120, temperature=0.7, timeout=30, stream_usage=True
@@ -668,11 +668,11 @@ def test_build_model_passes_expected_kwargs(monkeypatch):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_providers_openai.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'asr_test.llm.providers.openai'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'pos.llm.providers.openai'`
 
 - [ ] **Step 3: Write the implementation**
 
-Create `src/asr_test/llm/providers/openai.py`:
+Create `src/pos/llm/providers/openai.py`:
 
 ```python
 """OpenAI's own API. See
@@ -750,7 +750,7 @@ Expected: PASS, all tests green
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/llm/providers/openai.py tests/test_providers_openai.py
+git add src/pos/llm/providers/openai.py tests/test_providers_openai.py
 git commit -m "feat: add OpenAIProvider"
 ```
 
@@ -759,7 +759,7 @@ git commit -m "feat: add OpenAIProvider"
 ### Task 4: `AzureProvider`
 
 **Files:**
-- Create: `src/asr_test/llm/providers/azure.py`
+- Create: `src/pos/llm/providers/azure.py`
 - Test: `tests/test_providers_azure.py`
 
 **Interfaces:**
@@ -773,8 +773,8 @@ Create `tests/test_providers_azure.py`:
 ```python
 import pytest
 
-from asr_test.llm.providers.azure import AzureProvider
-from asr_test.llm.providers.base import ProviderConfig
+from pos.llm.providers.azure import AzureProvider
+from pos.llm.providers.base import ProviderConfig
 
 
 def _azure_provider(model="my-deployment"):
@@ -877,7 +877,7 @@ def test_build_model_passes_expected_kwargs(monkeypatch):
         captured_kwargs.update(kwargs)
         return "the-model"
 
-    monkeypatch.setattr("asr_test.llm.providers.azure.AzureChatOpenAI", fake_azure_chat_openai)
+    monkeypatch.setattr("pos.llm.providers.azure.AzureChatOpenAI", fake_azure_chat_openai)
     provider = ProviderConfig(
         name="azure", model="my-deployment", api_key="azure-key",
         azure_endpoint="https://example.openai.azure.com/", azure_deployment="my-deployment",
@@ -896,11 +896,11 @@ def test_build_model_passes_expected_kwargs(monkeypatch):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_providers_azure.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'asr_test.llm.providers.azure'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'pos.llm.providers.azure'`
 
 - [ ] **Step 3: Write the implementation**
 
-Create `src/asr_test/llm/providers/azure.py`:
+Create `src/pos/llm/providers/azure.py`:
 
 ```python
 """Azure OpenAI. See
@@ -983,7 +983,7 @@ Expected: PASS, all tests green
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/llm/providers/azure.py tests/test_providers_azure.py
+git add src/pos/llm/providers/azure.py tests/test_providers_azure.py
 git commit -m "feat: add AzureProvider"
 ```
 
@@ -992,12 +992,12 @@ git commit -m "feat: add AzureProvider"
 ### Task 5: Wire up `providers/__init__.py` + real end-to-end precedence tests
 
 **Files:**
-- Modify: `src/asr_test/llm/providers/__init__.py`
+- Modify: `src/pos/llm/providers/__init__.py`
 - Test: `tests/test_providers_registry.py`
 
 **Interfaces:**
 - Consumes: `AzureProvider`, `LocalProvider`, `OpenAIProvider` (Tasks 2-4); `ProviderConfig`, `resolve_provider`, `build_model`, `price_for`, `context_window_for`, `estimate_cost` (Task 1).
-- Produces: `from asr_test.llm.providers import ...` as the one public import surface for everything above. Task 6 (`langchain_llm.py`) imports from here.
+- Produces: `from pos.llm.providers import ...` as the one public import surface for everything above. Task 6 (`langchain_llm.py`) imports from here.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1010,7 +1010,7 @@ between tests):
 ```python
 import pytest
 
-from asr_test.llm.providers import ProviderConfig, estimate_cost, resolve_provider
+from pos.llm.providers import ProviderConfig, estimate_cost, resolve_provider
 
 
 def test_defaults_to_local_when_no_env_vars_set(monkeypatch):
@@ -1099,7 +1099,7 @@ Expected: FAIL — `resolve_provider()` raises `RuntimeError: no LLM provider av
 
 - [ ] **Step 3: Write the implementation**
 
-Replace `src/asr_test/llm/providers/__init__.py`:
+Replace `src/pos/llm/providers/__init__.py`:
 
 ```python
 """Public surface for the LLM provider registry. Importing this module
@@ -1138,7 +1138,7 @@ Expected: PASS, all tests green
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/llm/providers/__init__.py tests/test_providers_registry.py
+git add src/pos/llm/providers/__init__.py tests/test_providers_registry.py
 git commit -m "feat: wire up the LLM provider registry (local+openai+azure registered)"
 ```
 
@@ -1147,13 +1147,13 @@ git commit -m "feat: wire up the LLM provider registry (local+openai+azure regis
 ### Task 6: Switch `LangChainLlm` to the registry, delete the old provider files
 
 **Files:**
-- Modify: `src/asr_test/llm/langchain_llm.py`
-- Delete: `src/asr_test/llm/provider.py`, `src/asr_test/llm/pricing.py`, `src/asr_test/llm/context_window.py`
+- Modify: `src/pos/llm/langchain_llm.py`
+- Delete: `src/pos/llm/provider.py`, `src/pos/llm/pricing.py`, `src/pos/llm/context_window.py`
 - Delete: `tests/test_provider.py`, `tests/test_pricing.py`, `tests/test_context_window.py`
 - Modify: `tests/test_langchain_llm.py`
 
 **Interfaces:**
-- Consumes: `build_model`, `context_window_for`, `estimate_cost`, `resolve_provider` from `asr_test.llm.providers` (Task 5).
+- Consumes: `build_model`, `context_window_for`, `estimate_cost`, `resolve_provider` from `pos.llm.providers` (Task 5).
 - Produces: nothing further downstream in this plan — this is the last Phase 1 task.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1178,7 +1178,7 @@ from unittest.mock import MagicMock
 import pytest
 from langchain_core.messages import AIMessageChunk
 
-from asr_test.llm.langchain_llm import LangChainLlm
+from pos.llm.langchain_llm import LangChainLlm
 
 
 @pytest.fixture(autouse=True)
@@ -1189,7 +1189,7 @@ def _clear_provider_env(monkeypatch):
     # context-window lookup (local's provider hits LM Studio's REST
     # API) — test_context_window_resolved_once_at_construction below
     # overrides this per-test with its own monkeypatch.setattr.
-    monkeypatch.setattr("asr_test.llm.langchain_llm.context_window_for", lambda provider: None)
+    monkeypatch.setattr("pos.llm.langchain_llm.context_window_for", lambda provider: None)
 
 
 def _text_chunk(content):
@@ -1231,7 +1231,7 @@ def _make_llm(monkeypatch, runnable, tools=()):
     mock_model = MagicMock()
     mock_model.bind_tools.return_value = runnable
     mock_model.stream = runnable.stream  # used verbatim when tools=[] (no bind_tools wrapping)
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
     return LangChainLlm(tools=list(tools), warmup=False)
 
 
@@ -1312,7 +1312,7 @@ def test_init_passes_expected_kwargs_to_build_model(monkeypatch):
         mock_model.bind_tools.return_value = _FakeRunnable([])
         return mock_model
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", fake_build_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", fake_build_model)
 
     LangChainLlm(max_tokens=99, timeout=12, tools=[], warmup=False)
 
@@ -1328,7 +1328,7 @@ def test_warmup_failure_message_omits_lm_studio_hint_for_non_local(monkeypatch, 
     mock_model = MagicMock()
     mock_model.invoke.side_effect = RuntimeError("boom")
     mock_model.bind_tools.return_value = _FakeRunnable([])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
 
     LangChainLlm(tools=[], warmup=True, warmup_attempts=1)
 
@@ -1338,11 +1338,11 @@ def test_warmup_failure_message_omits_lm_studio_hint_for_non_local(monkeypatch, 
 
 
 def test_warmup_retries_on_failure_and_succeeds_before_attempts_exhausted(monkeypatch, capsys):
-    monkeypatch.setattr("asr_test.llm.langchain_llm.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("pos.llm.langchain_llm.time.sleep", lambda seconds: None)
     mock_model = MagicMock()
     mock_model.invoke.side_effect = [ConnectionError("not up yet"), MagicMock()]
     mock_model.bind_tools.return_value = _FakeRunnable([])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
 
     LangChainLlm(tools=[], warmup=True, warmup_attempts=3, warmup_backoff_base=1.0)
 
@@ -1353,11 +1353,11 @@ def test_warmup_retries_on_failure_and_succeeds_before_attempts_exhausted(monkey
 
 
 def test_warmup_gives_up_and_logs_after_exhausting_attempts(monkeypatch, capsys):
-    monkeypatch.setattr("asr_test.llm.langchain_llm.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("pos.llm.langchain_llm.time.sleep", lambda seconds: None)
     mock_model = MagicMock()
     mock_model.invoke.side_effect = ConnectionError("still not up")
     mock_model.bind_tools.return_value = _FakeRunnable([])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
 
     LangChainLlm(tools=[], warmup=True, warmup_attempts=3, warmup_backoff_base=1.0)
 
@@ -1371,14 +1371,14 @@ def test_context_window_resolved_once_at_construction(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     mock_model = MagicMock()
     mock_model.bind_tools.return_value = _FakeRunnable([[_text_chunk("hi")]])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
     calls = []
 
     def fake_context_window_for(provider):
         calls.append(provider)
         return 131072
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.context_window_for", fake_context_window_for)
+    monkeypatch.setattr("pos.llm.langchain_llm.context_window_for", fake_context_window_for)
 
     llm = LangChainLlm(tools=[], warmup=False)
 
@@ -1475,7 +1475,7 @@ def test_stream_retries_context_window_lookup_on_next_turn_when_still_none(monke
         calls.append(provider)
         return 131072
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.context_window_for", fake_context_window_for)
+    monkeypatch.setattr("pos.llm.langchain_llm.context_window_for", fake_context_window_for)
 
     usage1 = {}
     list(llm.stream([{"role": "user", "content": "hi"}], threading.Event(), usage1))
@@ -1527,11 +1527,11 @@ def test_generate_title_returns_none_for_empty_response(monkeypatch):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_langchain_llm.py -v`
-Expected: FAIL — `AttributeError: <module 'asr_test.llm.langchain_llm'> does not have the attribute 'build_model'` (langchain_llm.py hasn't been updated yet)
+Expected: FAIL — `AttributeError: <module 'pos.llm.langchain_llm'> does not have the attribute 'build_model'` (langchain_llm.py hasn't been updated yet)
 
 - [ ] **Step 3: Write the implementation**
 
-In `src/asr_test/llm/langchain_llm.py`, replace the imports:
+In `src/pos/llm/langchain_llm.py`, replace the imports:
 
 ```python
 from __future__ import annotations
@@ -1600,7 +1600,7 @@ Everything else in the file (`generate_title`, `stream`, the rest of
 Delete the three old files:
 
 ```bash
-git rm src/asr_test/llm/provider.py src/asr_test/llm/pricing.py src/asr_test/llm/context_window.py
+git rm src/pos/llm/provider.py src/pos/llm/pricing.py src/pos/llm/context_window.py
 git rm tests/test_provider.py tests/test_pricing.py tests/test_context_window.py
 ```
 
@@ -1616,30 +1616,30 @@ no complaints (no leftover unused imports from the deleted files).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/llm/langchain_llm.py tests/test_langchain_llm.py
+git add src/pos/llm/langchain_llm.py tests/test_langchain_llm.py
 git commit -m "refactor: switch LangChainLlm to the provider registry, delete old provider files"
 ```
 
 ---
 
-### Task 7: `src/asr_test/cli/` — move `main.py`
+### Task 7: `src/pos/cli/` — move `main.py`
 
 **Files:**
-- Create: `src/asr_test/cli/__init__.py` (empty)
-- Create: `src/asr_test/cli/local.py` (moved from root `main.py`, unchanged content)
+- Create: `src/pos/cli/__init__.py` (empty)
+- Create: `src/pos/cli/local.py` (moved from root `main.py`, unchanged content)
 - Delete: `main.py`
 - Modify: `pyproject.toml`
 
 **Interfaces:**
-- Consumes: nothing new — this file's own existing imports (`Agent`, `SileroVad`, `SessionStore`, etc.) are unaffected, since it already imports everything via `from asr_test... import ...` (absolute imports, not relative to its own location).
-- Produces: `asr_test.cli.local.main()`, wired to the `asr-agent` console script.
+- Consumes: nothing new — this file's own existing imports (`Agent`, `SileroVad`, `SessionStore`, etc.) are unaffected, since it already imports everything via `from pos... import ...` (absolute imports, not relative to its own location).
+- Produces: `pos.cli.local.main()`, wired to the `pos-agent` console script.
 
 - [ ] **Step 1: Move the file**
 
 ```bash
-mkdir -p src/asr_test/cli
-touch src/asr_test/cli/__init__.py
-git mv main.py src/asr_test/cli/local.py
+mkdir -p src/pos/cli
+touch src/pos/cli/__init__.py
+git mv main.py src/pos/cli/local.py
 ```
 
 - [ ] **Step 2: Add the console-script entry**
@@ -1650,7 +1650,7 @@ doesn't matter):
 
 ```toml
 [project.scripts]
-asr-agent = "asr_test.cli.local:main"
+pos-agent = "pos.cli.local:main"
 ```
 
 - [ ] **Step 3: Verify**
@@ -1659,50 +1659,50 @@ Run: `uv sync` (re-installs the package so the new console script is
 registered)
 Expected: completes without error
 
-Run: `uv run asr-agent --help`
+Run: `uv run pos-agent --help`
 Expected: prints the same `--tts`/`--voice`/`--trigger-word`/`--vad-*`/`--mic`/`--list-mics`
 help text this used to print as `uv run main.py --help`
 
 Run: `uv run pytest tests/ -q`
-Expected: PASS, all tests green (nothing imports `main.py`/`asr_test.cli.local` today, so this is a pure sanity check)
+Expected: PASS, all tests green (nothing imports `main.py`/`pos.cli.local` today, so this is a pure sanity check)
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/asr_test/cli/__init__.py src/asr_test/cli/local.py pyproject.toml
-git commit -m "refactor: move main.py into src/asr_test/cli/local.py, add asr-agent script"
+git add src/pos/cli/__init__.py src/pos/cli/local.py pyproject.toml
+git commit -m "refactor: move main.py into src/pos/cli/local.py, add pos-agent script"
 ```
 
 ---
 
-### Task 8: `src/asr_test/cli/server.py` + `static/` move
+### Task 8: `src/pos/cli/server.py` + `static/` move
 
 **Files:**
-- Create: `src/asr_test/cli/server.py` (moved from root `server.py`, one path fix + `__main__` wrapped in `run()`)
-- Create: `src/asr_test/static/index.html` (moved from root `static/index.html`)
+- Create: `src/pos/cli/server.py` (moved from root `server.py`, one path fix + `__main__` wrapped in `run()`)
+- Create: `src/pos/static/index.html` (moved from root `static/index.html`)
 - Delete: `server.py`, `static/` (the now-empty root directory)
 - Modify: `tests/test_server.py` (import path)
 - Modify: `pyproject.toml`
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: `asr_test.cli.server.create_app(...)` (same signature as
-  today's `server.create_app`), `asr_test.cli.server.run()` (new — the
-  former `if __name__ == "__main__":` body), wired to the `asr-server`
+- Produces: `pos.cli.server.create_app(...)` (same signature as
+  today's `server.create_app`), `pos.cli.server.run()` (new — the
+  former `if __name__ == "__main__":` body), wired to the `pos-server`
   console script.
 
 - [ ] **Step 1: Move the files**
 
 ```bash
-git mv server.py src/asr_test/cli/server.py
-mkdir -p src/asr_test/static
-git mv static/index.html src/asr_test/static/index.html
+git mv server.py src/pos/cli/server.py
+mkdir -p src/pos/static
+git mv static/index.html src/pos/static/index.html
 rmdir static 2>/dev/null || true
 ```
 
 - [ ] **Step 2: Fix the static-file path and wrap `__main__` in `run()`**
 
-In `src/asr_test/cli/server.py`, change:
+In `src/pos/cli/server.py`, change:
 
 ```python
         return FileResponse(Path(__file__).parent / "static" / "index.html")
@@ -1711,7 +1711,7 @@ In `src/asr_test/cli/server.py`, change:
 to (one more `.parent` — `cli/server.py` is now one directory deeper
 than the repo root `server.py` was, and `static/` moved from being a
 sibling of the old `server.py` to being a sibling of `cli/`, i.e.
-`asr_test/static/`):
+`pos/static/`):
 
 ```python
         return FileResponse(Path(__file__).parent.parent / "static" / "index.html")
@@ -1723,7 +1723,7 @@ Replace the file's existing tail:
 if __name__ == "__main__":
     import uvicorn
 
-    from asr_test.stt import OnnxAsrEngine
+    from pos.stt import OnnxAsrEngine
 
     app = create_app(stt=OnnxAsrEngine())
     uvicorn.run(app, host="0.0.0.0", port=8000)
@@ -1735,7 +1735,7 @@ with:
 def run() -> None:
     import uvicorn
 
-    from asr_test.stt import OnnxAsrEngine
+    from pos.stt import OnnxAsrEngine
 
     app = create_app(stt=OnnxAsrEngine())
     uvicorn.run(app, host="0.0.0.0", port=8000)
@@ -1756,7 +1756,7 @@ from server import _default_llm_models, create_app
 to:
 
 ```python
-from asr_test.cli.server import _default_llm_models, create_app
+from pos.cli.server import _default_llm_models, create_app
 ```
 
 - [ ] **Step 4: Add a `GET /` smoke test**
@@ -1787,8 +1787,8 @@ In `pyproject.toml`'s `[project.scripts]` table (created in Task 7):
 
 ```toml
 [project.scripts]
-asr-agent = "asr_test.cli.local:main"
-asr-server = "asr_test.cli.server:run"
+pos-agent = "pos.cli.local:main"
+pos-server = "pos.cli.server:run"
 ```
 
 - [ ] **Step 6: Verify**
@@ -1802,34 +1802,34 @@ Expected: PASS, including the new `test_index_page_is_served`
 Run: `uv run pytest tests/ -q`
 Expected: PASS, all tests green
 
-Run: `uv run asr-server` in one terminal, then in another: `curl http://localhost:8000/` (or open it in a browser)
+Run: `uv run pos-server` in one terminal, then in another: `curl http://localhost:8000/` (or open it in a browser)
 Expected: the same page that `uv run server.py` used to serve. Stop the
 server (Ctrl+C) once confirmed.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/asr_test/cli/server.py src/asr_test/static/index.html tests/test_server.py pyproject.toml
-git commit -m "refactor: move server.py into src/asr_test/cli/, static/ into src/asr_test/static/, add asr-server script"
+git add src/pos/cli/server.py src/pos/static/index.html tests/test_server.py pyproject.toml
+git commit -m "refactor: move server.py into src/pos/cli/, static/ into src/pos/static/, add pos-server script"
 ```
 
 ---
 
-### Task 9: `src/asr_test/cli/relay_client.py`
+### Task 9: `src/pos/cli/relay_client.py`
 
 **Files:**
-- Create: `src/asr_test/cli/relay_client.py` (moved from root `ws_client.py`, unchanged content)
+- Create: `src/pos/cli/relay_client.py` (moved from root `ws_client.py`, unchanged content)
 - Delete: `ws_client.py`
 - Modify: `pyproject.toml`
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: `asr_test.cli.relay_client.main()`, wired to the `asr-client` console script.
+- Produces: `pos.cli.relay_client.main()`, wired to the `pos-client` console script.
 
 - [ ] **Step 1: Move the file**
 
 ```bash
-git mv ws_client.py src/asr_test/cli/relay_client.py
+git mv ws_client.py src/pos/cli/relay_client.py
 ```
 
 - [ ] **Step 2: Add the console-script entry**
@@ -1838,9 +1838,9 @@ In `pyproject.toml`'s `[project.scripts]` table:
 
 ```toml
 [project.scripts]
-asr-agent = "asr_test.cli.local:main"
-asr-server = "asr_test.cli.server:run"
-asr-client = "asr_test.cli.relay_client:main"
+pos-agent = "pos.cli.local:main"
+pos-server = "pos.cli.server:run"
+pos-client = "pos.cli.relay_client:main"
 ```
 
 - [ ] **Step 3: Verify**
@@ -1848,7 +1848,7 @@ asr-client = "asr_test.cli.relay_client:main"
 Run: `uv sync`
 Expected: completes without error
 
-Run: `uv run asr-client --help`
+Run: `uv run pos-client --help`
 Expected: prints the same help text this used to print as `uv run ws_client.py --help`
 
 Run: `uv run pytest tests/ -q`
@@ -1857,8 +1857,8 @@ Expected: PASS, all tests green
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/asr_test/cli/relay_client.py pyproject.toml
-git commit -m "refactor: move ws_client.py into src/asr_test/cli/relay_client.py, add asr-client script"
+git add src/pos/cli/relay_client.py pyproject.toml
+git commit -m "refactor: move ws_client.py into src/pos/cli/relay_client.py, add pos-client script"
 ```
 
 ---
@@ -1881,7 +1881,7 @@ git rm conftest.py
 
 `conftest.py`'s only purpose (per its own docstring) was letting tests
 `from server import ...` without packaging the root scripts. Every test
-now imports `asr_test.cli.server`/etc. as a normal installed package
+now imports `pos.cli.server`/etc. as a normal installed package
 module — no `sys.path` trick needed.
 
 - [ ] **Step 2: Verify the suite still passes without it**
@@ -1894,9 +1894,9 @@ now-gone `from server import ...` pattern)
 - [ ] **Step 3: Update the README**
 
 In `README.md`, replace every occurrence of:
-- `uv run main.py` → `uv run asr-agent`
-- `uv run server.py` → `uv run asr-server`
-- `uv run ws_client.py` → `uv run asr-client`
+- `uv run main.py` → `uv run pos-agent`
+- `uv run server.py` → `uv run pos-server`
+- `uv run ws_client.py` → `uv run pos-client`
 
 (these appear in the "Usage", "Running: local vs. server", "Mic
 selection and mute", "VAD tuning", "LLM: LangChain + tool calling", and
@@ -1912,25 +1912,25 @@ static/index.html                browser relay client for server.py — voice/te
                                   transcript, settings, session History sidebar
 conftest.py                      empty — puts the repo root on sys.path so tests can
                                   `from server import ...` without packaging the root scripts
-src/asr_test/
+src/pos/
 ```
 
 to:
 
 ```
-src/asr_test/
+src/pos/
   cli/
     local.py                     local-mode CLI entrypoint (--tts, --voice, --trigger-word, --vad-*)
-                                  — console script: `uv run asr-agent`
+                                  — console script: `uv run pos-agent`
     server.py                    FastAPI multi-session websocket server (see "Running" above)
-                                  — console script: `uv run asr-server`
+                                  — console script: `uv run pos-server`
     relay_client.py               Python CLI relay client for server.py
-                                  — console script: `uv run asr-client`
+                                  — console script: `uv run pos-client`
   static/index.html               browser relay client for server.py — voice/text toggle, live
                                   transcript, settings, session History sidebar
 ```
 
-(the rest of the `src/asr_test/` tree entries — `config.py`, `agent.py`,
+(the rest of the `src/pos/` tree entries — `config.py`, `agent.py`,
 `storage.py`, `interfaces/`, `audio/`, `vad/`, `stt/`, `tts/`, `llm/` —
 are unchanged by this plan's moves, except `llm/` gains the new
 `providers/` subpackage from Phase 1; add one line for it:)
@@ -1965,5 +1965,5 @@ Expected: clean (everything committed) once Step 5 below runs
 
 ```bash
 git add conftest.py README.md
-git commit -m "docs: update README for asr-agent/asr-server/asr-client, remove conftest.py"
+git commit -m "docs: update README for pos-agent/pos-server/pos-client, remove conftest.py"
 ```

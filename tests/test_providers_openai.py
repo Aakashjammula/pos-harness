@@ -1,7 +1,7 @@
 import os
 
-from asr_test.llm.providers.base import ProviderConfig
-from asr_test.llm.providers.openai import OpenAIProvider
+from pos.llm.providers.base import ProviderConfig
+from pos.llm.providers.openai import OpenAIProvider
 
 
 def _openai_provider(model="gpt-4o-mini"):
@@ -96,7 +96,7 @@ def test_build_model_passes_expected_kwargs(monkeypatch):
         captured_kwargs.update(kwargs)
         return "the-model"
 
-    monkeypatch.setattr("asr_test.llm.providers.openai.ChatOpenAI", fake_chat_openai)
+    monkeypatch.setattr("pos.llm.providers.openai.ChatOpenAI", fake_chat_openai)
 
     result = OpenAIProvider().build_model(
         _openai_provider(), max_tokens=120, temperature=0.7, timeout=30, stream_usage=True

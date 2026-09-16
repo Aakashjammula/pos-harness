@@ -4,7 +4,7 @@ import time
 import numpy as np
 import pytest
 
-from asr_test.utils import (
+from pos.utils import (
     float32_to_pcm16,
     list_input_devices,
     pcm16_to_float32,

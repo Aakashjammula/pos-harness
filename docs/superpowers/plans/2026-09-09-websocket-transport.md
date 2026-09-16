@@ -47,14 +47,14 @@ internally).
 - Modify: `pyproject.toml` (add pytest dev dependency)
 - Create: `conftest.py` (repo root, empty — see note below)
 - Create: `tests/test_utils.py`
-- Modify: `src/asr_test/utils.py`
+- Modify: `src/pos/utils.py`
 
 **Interfaces:**
 - Produces: `pcm16_to_float32(data: bytes) -> np.ndarray` (mono, dtype
   `float32`, range roughly [-1.0, 1.0]); `float32_to_pcm16(audio:
   np.ndarray) -> bytes` (dtype `int16` little-endian bytes). Every later
   task that crosses the websocket boundary (Tasks 4, 6, 7) imports these
-  two functions from `asr_test.utils`.
+  two functions from `pos.utils`.
 
 - [x] **Step 1: Add pytest as a dev dependency**
 
@@ -80,7 +80,7 @@ shape) and `uv.lock` updates.
 # tests/test_utils.py
 import numpy as np
 
-from asr_test.utils import float32_to_pcm16, pcm16_to_float32
+from pos.utils import float32_to_pcm16, pcm16_to_float32
 
 
 def test_pcm16_to_float32_roundtrip_silence():
@@ -123,7 +123,7 @@ Expected: FAIL with `ImportError: cannot import name 'pcm16_to_float32'`
 - [x] **Step 5: Implement the functions**
 
 ```python
-# src/asr_test/utils.py — add alongside the existing resample_linear
+# src/pos/utils.py — add alongside the existing resample_linear
 def pcm16_to_float32(data: bytes) -> np.ndarray:
     return (np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0)
 
@@ -141,7 +141,7 @@ Expected: 4 passed.
 - [x] **Step 7: Commit**
 
 ```bash
-git add pyproject.toml uv.lock conftest.py tests/test_utils.py src/asr_test/utils.py
+git add pyproject.toml uv.lock conftest.py tests/test_utils.py src/pos/utils.py
 git commit -m "test: add pytest and PCM16/float32 conversion helpers"
 ```
 
@@ -156,10 +156,10 @@ that stub out `sounddevice.OutputStream` so no real audio device is
 touched.
 
 **Files:**
-- Create: `src/asr_test/interfaces/audio_sink.py`
-- Modify: `src/asr_test/interfaces/__init__.py`
-- Modify: `src/asr_test/audio/output.py` (rename class)
-- Modify: `src/asr_test/agent.py` (update the one import/usage site)
+- Create: `src/pos/interfaces/audio_sink.py`
+- Modify: `src/pos/interfaces/__init__.py`
+- Modify: `src/pos/audio/output.py` (rename class)
+- Modify: `src/pos/agent.py` (update the one import/usage site)
 - Test: `tests/test_local_audio_sink.py`
 
 **Interfaces:**
@@ -175,7 +175,7 @@ touched.
 - [x] **Step 1: Write the interface**
 
 ```python
-# src/asr_test/interfaces/audio_sink.py
+# src/pos/interfaces/audio_sink.py
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -216,7 +216,7 @@ class AudioSinkBase(ABC):
 - [x] **Step 2: Export it from the interfaces package**
 
 ```python
-# src/asr_test/interfaces/__init__.py
+# src/pos/interfaces/__init__.py
 from .audio_sink import AudioSinkBase
 from .llm import LlmBase
 from .stt import SttBase
@@ -233,8 +233,8 @@ __all__ = ["AudioSinkBase", "LlmBase", "SttBase", "TtsBase", "VadBase"]
 import numpy as np
 import pytest
 
-from asr_test.audio.output import LocalAudioSink
-from asr_test.interfaces.audio_sink import AudioSinkBase
+from pos.audio.output import LocalAudioSink
+from pos.interfaces.audio_sink import AudioSinkBase
 
 
 class _FakeStream:
@@ -256,7 +256,7 @@ class _FakeStream:
 
 @pytest.fixture
 def sink(monkeypatch):
-    monkeypatch.setattr("asr_test.audio.output.sd.OutputStream", _FakeStream)
+    monkeypatch.setattr("pos.audio.output.sd.OutputStream", _FakeStream)
     s = LocalAudioSink(rate=16000, blocksize=256)
     yield s
     s.close()
@@ -301,7 +301,7 @@ Expected: FAIL — `ImportError: cannot import name 'LocalAudioSink'`
 - [x] **Step 5: Rename the class and make it implement the ABC**
 
 ```python
-# src/asr_test/audio/output.py — change only the class line and imports,
+# src/pos/audio/output.py — change only the class line and imports,
 # body is unchanged from today's AudioOutput
 from __future__ import annotations
 
@@ -329,7 +329,7 @@ only the class name and base class change.)
 - [x] **Step 6: Update the one call site in `agent.py`**
 
 ```python
-# src/asr_test/agent.py
+# src/pos/agent.py
 from .audio.output import LocalAudioSink   # was: from .audio.output import AudioOutput
 ```
 
@@ -352,13 +352,13 @@ Expected: no output (rename is complete everywhere).
 Run: `uv run pytest tests/ -v`
 Expected: all tests pass (Task 1's + this task's).
 
-Run: `uv run python -m py_compile main.py src/asr_test/agent.py src/asr_test/audio/output.py`
+Run: `uv run python -m py_compile main.py src/pos/agent.py src/pos/audio/output.py`
 Expected: no errors.
 
 - [x] **Step 9: Commit**
 
 ```bash
-git add src/asr_test/interfaces/audio_sink.py src/asr_test/interfaces/__init__.py src/asr_test/audio/output.py src/asr_test/agent.py tests/test_local_audio_sink.py
+git add src/pos/interfaces/audio_sink.py src/pos/interfaces/__init__.py src/pos/audio/output.py src/pos/agent.py tests/test_local_audio_sink.py
 git commit -m "refactor: extract AudioSinkBase, rename AudioOutput to LocalAudioSink"
 ```
 
@@ -381,7 +381,7 @@ hardware, or real network calls.
 **Files:**
 - Create: `tests/fakes.py`
 - Test: `tests/test_agent.py`
-- Modify: `src/asr_test/agent.py`
+- Modify: `src/pos/agent.py`
 
 **Interfaces:**
 - Consumes: `LocalAudioSink` (Task 2), `AudioSinkBase` (Task 2).
@@ -405,7 +405,7 @@ from collections.abc import Iterator
 
 import numpy as np
 
-from asr_test.interfaces import AudioSinkBase, LlmBase, SttBase, TtsBase, VadBase
+from pos.interfaces import AudioSinkBase, LlmBase, SttBase, TtsBase, VadBase
 
 
 class FakeVad(VadBase):
@@ -500,8 +500,8 @@ import time
 import numpy as np
 import pytest
 
-from asr_test import config
-from asr_test.agent import Agent
+from pos import config
+from pos.agent import Agent
 from fakes import FakeAudioSink, FakeLlm, FakeStt, FakeTts, FakeVad
 
 
@@ -569,7 +569,7 @@ argument 'audio_sink'` (doesn't exist yet), and `feed_audio`/`start`/
 - [x] **Step 4: Implement `audio_sink` param, `feed_audio`, `start`, `shutdown`**
 
 ```python
-# src/asr_test/agent.py — changes to Agent.__init__ signature and body
+# src/pos/agent.py — changes to Agent.__init__ signature and body
 from .interfaces import AudioSinkBase, LlmBase, SttBase, TtsBase, VadBase
 # (add AudioSinkBase to the existing interfaces import)
 
@@ -671,7 +671,7 @@ Global Constraints.
 - [x] **Step 8: Commit**
 
 ```bash
-git add tests/fakes.py tests/test_agent.py src/asr_test/agent.py
+git add tests/fakes.py tests/test_agent.py src/pos/agent.py
 git commit -m "refactor: make Agent transport-agnostic via feed_audio/start/shutdown"
 ```
 
@@ -686,7 +686,7 @@ push/flush/playing/elapsed_ms/underrun semantics so `agent.py`'s
 barge-in logic needs no changes to work under this transport.
 
 **Files:**
-- Create: `src/asr_test/audio/ws_sink.py`
+- Create: `src/pos/audio/ws_sink.py`
 - Test: `tests/test_ws_sink.py`
 
 **Interfaces:**
@@ -710,9 +710,9 @@ import time
 import numpy as np
 import pytest
 
-from asr_test.audio.ws_sink import WebSocketAudioSink
-from asr_test.interfaces.audio_sink import AudioSinkBase
-from asr_test.utils import pcm16_to_float32
+from pos.audio.ws_sink import WebSocketAudioSink
+from pos.interfaces.audio_sink import AudioSinkBase
+from pos.utils import pcm16_to_float32
 
 
 class _FakeWebSocket:
@@ -777,12 +777,12 @@ def test_background_thread_sends_audio_over_websocket(loop):
 - [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_ws_sink.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'asr_test.audio.ws_sink'`.
+Expected: FAIL — `ModuleNotFoundError: No module named 'pos.audio.ws_sink'`.
 
 - [x] **Step 3: Implement `WebSocketAudioSink`**
 
 ```python
-# src/asr_test/audio/ws_sink.py
+# src/pos/audio/ws_sink.py
 from __future__ import annotations
 
 import asyncio
@@ -914,7 +914,7 @@ Expected: 5 passed.
 - [x] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/audio/ws_sink.py tests/test_ws_sink.py
+git add src/pos/audio/ws_sink.py tests/test_ws_sink.py
 git commit -m "feat: add WebSocketAudioSink"
 ```
 
@@ -931,10 +931,10 @@ history instead (via `self.conversation`), which is also the shape
 Phase 3's LangChain harness will expect.
 
 **Files:**
-- Modify: `src/asr_test/interfaces/llm.py`
-- Modify: `src/asr_test/llm/openai_compatible.py`
-- Modify: `src/asr_test/agent.py` (`respond()` and `__init__`)
-- Modify: `src/asr_test/config.py` (add `HISTORY_TURNS`)
+- Modify: `src/pos/interfaces/llm.py`
+- Modify: `src/pos/llm/openai_compatible.py`
+- Modify: `src/pos/agent.py` (`respond()` and `__init__`)
+- Modify: `src/pos/config.py` (add `HISTORY_TURNS`)
 - Modify: `tests/fakes.py` (`FakeLlm.stream()` signature)
 - Test: `tests/test_openai_compatible_llm.py`
 - Test: extend `tests/test_agent.py`
@@ -971,7 +971,7 @@ class FakeLlm(LlmBase):
 import threading
 from unittest.mock import MagicMock
 
-from asr_test.llm.openai_compatible import OpenAiCompatibleLlm
+from pos.llm.openai_compatible import OpenAiCompatibleLlm
 
 
 def _fake_chunk(content):
@@ -985,7 +985,7 @@ def test_stream_is_stateless_and_prepends_system_prompt(monkeypatch):
     mock_client.chat.completions.create.return_value = [
         _fake_chunk("hel"), _fake_chunk("lo"), _fake_chunk(None),
     ]
-    monkeypatch.setattr("asr_test.llm.openai_compatible.OpenAI", lambda **kw: mock_client)
+    monkeypatch.setattr("pos.llm.openai_compatible.OpenAI", lambda **kw: mock_client)
 
     llm = OpenAiCompatibleLlm(system_prompt="sys", warmup=False)
     cancel = threading.Event()
@@ -1003,7 +1003,7 @@ def test_stream_stops_on_cancel(monkeypatch):
     mock_client.chat.completions.create.return_value = [
         _fake_chunk("a"), _fake_chunk("b"), _fake_chunk("c"),
     ]
-    monkeypatch.setattr("asr_test.llm.openai_compatible.OpenAI", lambda **kw: mock_client)
+    monkeypatch.setattr("pos.llm.openai_compatible.OpenAI", lambda **kw: mock_client)
 
     llm = OpenAiCompatibleLlm(warmup=False)
     cancel = threading.Event()
@@ -1058,7 +1058,7 @@ mismatch, and `Agent` has no `conversation` attribute yet.
 - [x] **Step 4: Update the interface**
 
 ```python
-# src/asr_test/interfaces/llm.py
+# src/pos/interfaces/llm.py
 from __future__ import annotations
 
 import threading
@@ -1083,7 +1083,7 @@ class LlmBase(ABC):
 - [x] **Step 5: Update `OpenAiCompatibleLlm`**
 
 ```python
-# src/asr_test/llm/openai_compatible.py
+# src/pos/llm/openai_compatible.py
 from __future__ import annotations
 
 import threading
@@ -1168,7 +1168,7 @@ next.
 - [x] **Step 6: Add `HISTORY_TURNS` to config**
 
 ```python
-# src/asr_test/config.py — add near the other tunables
+# src/pos/config.py — add near the other tunables
 HISTORY_TURNS = 3   # how many prior user/assistant turn-pairs to include
                      # as LLM context; was previously owned by
                      # OpenAiCompatibleLlm itself, now Agent's job since
@@ -1179,7 +1179,7 @@ HISTORY_TURNS = 3   # how many prior user/assistant turn-pairs to include
 - [x] **Step 7: Update `Agent.__init__` and `respond()`**
 
 ```python
-# src/asr_test/agent.py — in __init__, after existing state init:
+# src/pos/agent.py — in __init__, after existing state init:
         self.conversation: list[dict] = []
 ```
 
@@ -1283,7 +1283,7 @@ cleanly.
 - [x] **Step 10: Commit**
 
 ```bash
-git add src/asr_test/interfaces/llm.py src/asr_test/llm/openai_compatible.py src/asr_test/agent.py src/asr_test/config.py tests/fakes.py tests/test_openai_compatible_llm.py tests/test_agent.py
+git add src/pos/interfaces/llm.py src/pos/llm/openai_compatible.py src/pos/agent.py src/pos/config.py tests/fakes.py tests/test_openai_compatible_llm.py tests/test_agent.py
 git commit -m "refactor: make LlmBase stateless, move conversation history to Agent"
 ```
 
@@ -1323,8 +1323,8 @@ Run: `uv add fastapi "uvicorn[standard]"`
 import numpy as np
 from starlette.testclient import TestClient
 
-from asr_test import config
-from asr_test.utils import float32_to_pcm16
+from pos import config
+from pos.utils import float32_to_pcm16
 from fakes import FakeLlm, FakeStt, FakeTts, FakeVad
 from server import create_app
 
@@ -1404,12 +1404,12 @@ from collections.abc import Callable
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from asr_test import config
-from asr_test.agent import Agent
-from asr_test.audio.ws_sink import WebSocketAudioSink
-from asr_test.interfaces import LlmBase, SttBase, TtsBase, VadBase
-from asr_test.utils import pcm16_to_float32
-from asr_test.vad import SileroVad
+from pos import config
+from pos.agent import Agent
+from pos.audio.ws_sink import WebSocketAudioSink
+from pos.interfaces import LlmBase, SttBase, TtsBase, VadBase
+from pos.utils import pcm16_to_float32
+from pos.vad import SileroVad
 
 
 def _default_vad_factory() -> VadBase:
@@ -1457,9 +1457,9 @@ def create_app(
 if __name__ == "__main__":
     import uvicorn
 
-    from asr_test.llm import OpenAiCompatibleLlm
-    from asr_test.stt import OnnxAsrEngine
-    from asr_test.tts import KokoroTts
+    from pos.llm import OpenAiCompatibleLlm
+    from pos.stt import OnnxAsrEngine
+    from pos.tts import KokoroTts
 
     config.ECHO_MODE = "duck"  # server can't verify a remote client has real headphone isolation
 
@@ -1532,7 +1532,7 @@ from fastapi.responses import FileResponse
 <!-- static/index.html -->
 <!doctype html>
 <html>
-<head><title>asr-test</title></head>
+<head><title>pos-harness</title></head>
 <body>
   <button id="start">Start</button>
   <button id="stop" disabled>Stop</button>
@@ -1637,8 +1637,8 @@ import numpy as np
 import sounddevice as sd
 import websockets
 
-from asr_test import config
-from asr_test.utils import float32_to_pcm16, pcm16_to_float32
+from pos import config
+from pos.utils import float32_to_pcm16, pcm16_to_float32
 
 
 async def run(url: str):

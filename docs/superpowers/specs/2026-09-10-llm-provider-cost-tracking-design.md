@@ -14,7 +14,7 @@ cost."
 This is sub-project A of a four-part plan (the other three: session
 persistence, a text-only chat mode, and a token/trace UI panel — each
 gets its own spec once this one lands). `LangChainLlm`
-(`src/asr_test/llm/langchain_llm.py`) currently talks to exactly one
+(`src/pos/llm/langchain_llm.py`) currently talks to exactly one
 backend: a local LM Studio server via `ChatOpenAI(base_url="http://localhost:1234/v1", ...)`,
 with `warmup=True` assuming that's always reachable. It exposes no
 information about how many tokens a turn used or what it cost — the
@@ -58,7 +58,7 @@ will *display* this data; this spec only makes it exist and reach
   and reaches `Agent`'s console output and the `bot_text` websocket
   event." The dedicated trace-UI sub-project (D) consumes it.
 
-## Backend selection (`src/asr_test/llm/provider.py`)
+## Backend selection (`src/pos/llm/provider.py`)
 
 New module, one function:
 
@@ -104,7 +104,7 @@ and skips the constructor's `warmup` probe's specific error message
 tuning for "is LM Studio running?" when the backend isn't local (still
 warms up, just doesn't imply the wrong troubleshooting step).
 
-## Usage + cost (`src/asr_test/llm/pricing.py` + `langchain_llm.py`)
+## Usage + cost (`src/pos/llm/pricing.py` + `langchain_llm.py`)
 
 ```python
 PRICING: dict[tuple[str, str], tuple[float, float]] = {
@@ -126,7 +126,7 @@ provider name) before falling back to `PRICING`. Returns `None` (→ cost
 `null` downstream) if neither an override nor a table entry exists.
 Local always short-circuits to `(0.0, 0.0)` without consulting either.
 
-`LlmBase.stream()`'s signature (`src/asr_test/interfaces/llm.py`) gains
+`LlmBase.stream()`'s signature (`src/pos/interfaces/llm.py`) gains
 one optional parameter:
 
 ```python
@@ -162,7 +162,7 @@ If the model never returns `usage_metadata` (some backends omit it),
 `usage` is left as `{}` — callers must treat a missing key as "unknown,"
 not assume zero.
 
-## Context window (`src/asr_test/llm/context_window.py`)
+## Context window (`src/pos/llm/context_window.py`)
 
 Researched rather than assumed (see this spec's amendment note): the
 three backends differ in whether a context-window size is available
@@ -213,7 +213,7 @@ one run.
 
 ## Wiring into `Agent`
 
-`Agent.respond()` (`src/asr_test/agent.py`, around the existing
+`Agent.respond()` (`src/pos/agent.py`, around the existing
 `self.llm.stream(messages, self.cancel)` call) changes to:
 
 ```python

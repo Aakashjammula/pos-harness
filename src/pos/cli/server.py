@@ -93,17 +93,17 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from asr_test import config
-from asr_test.agent import Agent
-from asr_test.audio.null_sink import NullAudioSink
-from asr_test.audio.ws_sink import WebSocketAudioSink
-from asr_test.interfaces import LlmBase, SttBase, TtsBase, VadBase
-from asr_test.llm.providers import resolve_provider
-from asr_test.llm.tools import tool_status
-from asr_test.null_engines import NullTts, NullVad
-from asr_test.storage import SessionStore
-from asr_test.utils import pcm16_to_float32
-from asr_test.vad import SileroVad
+from pos import config
+from pos.agent import Agent
+from pos.audio.null_sink import NullAudioSink
+from pos.audio.ws_sink import WebSocketAudioSink
+from pos.interfaces import LlmBase, SttBase, TtsBase, VadBase
+from pos.llm.providers import resolve_provider
+from pos.llm.tools import tool_status
+from pos.null_engines import NullTts, NullVad
+from pos.storage import SessionStore
+from pos.utils import pcm16_to_float32
+from pos.vad import SileroVad
 
 
 def _default_vad_factory(
@@ -168,12 +168,12 @@ def create_app(
     session_store: SessionStore | None = None,
 ) -> FastAPI:
     if tts_engines is None:
-        from asr_test.tts import KokoroTts, SupertonicTts
+        from pos.tts import KokoroTts, SupertonicTts
 
         tts_engines = {"kokoro": KokoroTts, "supertonic": SupertonicTts}
 
     if llm_factory is None or llm_env_factory is None:
-        from asr_test.llm import LangChainLlm
+        from pos.llm import LangChainLlm
 
         if llm_factory is None:
             llm_factory = lambda model: LangChainLlm(model=model)  # noqa: E731
@@ -555,7 +555,7 @@ def create_app(
 def run() -> None:
     import uvicorn
 
-    from asr_test.stt import OnnxAsrEngine
+    from pos.stt import OnnxAsrEngine
 
     app = create_app(stt=OnnxAsrEngine())
     uvicorn.run(app, host="0.0.0.0", port=8000)

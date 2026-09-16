@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from asr_test.audio.output import LocalAudioSink
-from asr_test.interfaces.audio_sink import AudioSinkBase
+from pos.audio.output import LocalAudioSink
+from pos.interfaces.audio_sink import AudioSinkBase
 
 
 class _FakeStream:
@@ -24,7 +24,7 @@ class _FakeStream:
 
 @pytest.fixture
 def sink(monkeypatch):
-    monkeypatch.setattr("asr_test.audio.output.sd.OutputStream", _FakeStream)
+    monkeypatch.setattr("pos.audio.output.sd.OutputStream", _FakeStream)
     s = LocalAudioSink(rate=16000, blocksize=256)
     yield s
     s.close()

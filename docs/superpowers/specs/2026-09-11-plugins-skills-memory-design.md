@@ -50,11 +50,11 @@ already has:
 
 - **Plugins** are *code* — installable bundles that add new tools the LLM
   can call. They plug into the exact spot `get_current_time`/`web_search`
-  already occupy: `default_tools()` in `src/asr_test/llm/tools.py`.
+  already occupy: `default_tools()` in `src/pos/llm/tools.py`.
 - **Skills** are *data* — Markdown files, not code. Implemented as one new
   built-in tool, `load_skill(name)`, added to the *same* tools list
   plugins populate — reusing the existing hand-rolled tool-execution loop
-  in `LangChainLlm.stream()` (see `src/asr_test/agent.py`'s `worker_thread`
+  in `LangChainLlm.stream()` (see `src/pos/agent.py`'s `worker_thread`
   → `respond()` → `self.llm.stream(...)`). No new execution mechanism.
 - **Memory** is *always-on* — concatenated into the system prompt every
   turn, unconditionally, unlike skills which the model decides whether to
@@ -62,7 +62,7 @@ already has:
   `Agent.respond()`.
 
 All three get a Settings UI section using the same row-list pattern
-already built for Providers (`src/asr_test/static/index.html`'s
+already built for Providers (`src/pos/static/index.html`'s
 `.provider-list`/`.provider-row` — see the 2026-09-11 API keys UI work):
 one row per item, a status dot, an enable/disable toggle where relevant.
 
@@ -108,7 +108,7 @@ def get_tools():
 
 ### Discovery and loading
 
-New module `src/asr_test/llm/plugins.py`:
+New module `src/pos/llm/plugins.py`:
 
 ```python
 from __future__ import annotations
@@ -160,7 +160,7 @@ def load_enabled_plugin_tools() -> list[BaseTool]:
         module_stem, func_name = manifest["entry_point"].split(":")
         module_path = Path(manifest["_dir"]) / f"{module_stem}.py"
         spec = importlib.util.spec_from_file_location(
-            f"asr_test_plugin_{manifest['name']}", module_path
+            f"pos_plugin_{manifest['name']}", module_path
         )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -170,7 +170,7 @@ def load_enabled_plugin_tools() -> list[BaseTool]:
 
 `default_tools(env=None)` in `llm/tools.py` gains one line appending
 `plugins.load_enabled_plugin_tools()`'s result (importing the new
-`asr_test.llm.plugins` module), after the existing
+`pos.llm.plugins` module), after the existing
 `get_current_time`/`web_search` logic.
 
 ### Settings UI
@@ -219,7 +219,7 @@ that implicitly is fragile, so the implementation plan adds it as an
 explicit direct dependency (`uv add pyyaml`) rather than assuming it
 stays available.
 
-New module `src/asr_test/llm/skills.py`:
+New module `src/pos/llm/skills.py`:
 
 ```python
 from __future__ import annotations
@@ -291,7 +291,7 @@ directly on disk or through Settings. No database.
 
 ### Injection
 
-`LlmBase.stream()` (`src/asr_test/interfaces/llm.py`) gains one new
+`LlmBase.stream()` (`src/pos/interfaces/llm.py`) gains one new
 optional parameter:
 
 ```python
@@ -311,7 +311,7 @@ if extra_system_context:
     full.append(SystemMessage(extra_system_context))
 ```
 
-`Agent.__init__` (`src/asr_test/agent.py`) gains one new constructor
+`Agent.__init__` (`src/pos/agent.py`) gains one new constructor
 parameter, `memory_facts: Callable[[], str | None] | None = None` — same
 callback pattern as the existing `on_event` parameter. `Agent.respond()`
 calls it right before `self.llm.stream(...)`:

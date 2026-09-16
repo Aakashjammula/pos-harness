@@ -2,8 +2,8 @@ import os
 
 import pytest
 
-from asr_test.llm.providers.azure import AzureProvider
-from asr_test.llm.providers.base import ProviderConfig
+from pos.llm.providers.azure import AzureProvider
+from pos.llm.providers.base import ProviderConfig
 
 
 def _azure_provider(model="my-deployment"):
@@ -106,7 +106,7 @@ def test_build_model_passes_expected_kwargs(monkeypatch):
         captured_kwargs.update(kwargs)
         return "the-model"
 
-    monkeypatch.setattr("asr_test.llm.providers.azure.AzureChatOpenAI", fake_azure_chat_openai)
+    monkeypatch.setattr("pos.llm.providers.azure.AzureChatOpenAI", fake_azure_chat_openai)
     provider = ProviderConfig(
         name="azure", model="my-deployment", api_key="azure-key",
         azure_endpoint="https://example.openai.azure.com/", azure_deployment="my-deployment",

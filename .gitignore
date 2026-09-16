@@ -22,6 +22,6 @@ wheels/
 /.playwright-mcp/
 /*.png
 
-# Local session/turn history (SQLite, see src/asr_test/storage.py) — personal conversation data
-/sessions.db
-/sessions.db-*
+# Local session/turn history (SQLite, see src/asr_test/storage.py) — personal
+# conversation data, generated at runtime, one folder so it's easy to ignore/back up
+/data/

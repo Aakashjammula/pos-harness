@@ -26,7 +26,7 @@ providers are planned.
 
 **2. src-layout reorganization.** `main.py`, `server.py`, `ws_client.py`
 and `static/` currently sit at the repo root as loose files/scripts,
-while all real package code already lives under `src/asr_test/`.
+while all real package code already lives under `src/pos/`.
 Researched current best practice (pyOpenSci's packaging guide, Real
 Python's project-layout reference, and confirming this is what `uv
 init` itself now produces by default): entry-point scripts belong
@@ -54,17 +54,17 @@ function keeps its exact signature and logic.
   refactor, not a behavior or public-contract change. Every existing
   env var (`OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`,
   `{PROVIDER}_PRICE_INPUT_PER_1K`, etc.) keeps working identically.
-- File moves: `main.py` → `src/asr_test/cli/local.py`, `server.py` →
-  `src/asr_test/cli/server.py`, `ws_client.py` →
-  `src/asr_test/cli/relay_client.py`, `static/` →
-  `src/asr_test/static/`. No root-level Python files remain except
+- File moves: `main.py` → `src/pos/cli/local.py`, `server.py` →
+  `src/pos/cli/server.py`, `ws_client.py` →
+  `src/pos/cli/relay_client.py`, `static/` →
+  `src/pos/static/`. No root-level Python files remain except
   `conftest.py`, which becomes unnecessary and is deleted (its whole
   purpose was letting tests `from server import ...` without a proper
-  package import; once `server.py` is `asr_test.cli.server`, tests
+  package import; once `server.py` is `pos.cli.server`, tests
   import it the normal way).
-- New `[project.scripts]`: `asr-agent`, `asr-server`, `asr-client` —
+- New `[project.scripts]`: `pos-agent`, `pos-server`, `pos-client` —
   confirmed with the user. `uv run server.py` becomes `uv run
-  asr-server` (and similarly for the other two); this is a deliberate,
+  pos-server` (and similarly for the other two); this is a deliberate,
   documented change to the README, not an oversight.
 - Each moved file's actual code (functions, classes, logic) is
   unchanged — this phase is a location/import-path change only. The
@@ -206,13 +206,13 @@ redistributed:
 - `tests/test_providers_azure.py`: missing-var errors, no built-in
   default, env-override-only pricing/context-window.
 - `tests/test_langchain_llm.py`: mocks move from
-  `asr_test.llm.langchain_llm.ChatOpenAI`/`AzureChatOpenAI` to
-  `asr_test.llm.providers.local.ChatOpenAI` /
-  `asr_test.llm.providers.openai.ChatOpenAI` /
-  `asr_test.llm.providers.azure.AzureChatOpenAI` (each provider module
+  `pos.llm.langchain_llm.ChatOpenAI`/`AzureChatOpenAI` to
+  `pos.llm.providers.local.ChatOpenAI` /
+  `pos.llm.providers.openai.ChatOpenAI` /
+  `pos.llm.providers.azure.AzureChatOpenAI` (each provider module
   imports its own langchain class now); `get_context_window` mock
-  becomes `asr_test.llm.providers.local.LocalProvider.context_window_for`
-  or simpler, monkeypatch `asr_test.llm.langchain_llm.context_window_for`
+  becomes `pos.llm.providers.local.LocalProvider.context_window_for`
+  or simpler, monkeypatch `pos.llm.langchain_llm.context_window_for`
   (the name `langchain_llm.py` imports) — same pattern as today, just
   the dotted path changes since the function moved modules.
 
@@ -222,13 +222,13 @@ Pure file moves + import-path updates, no logic changes:
 
 | From | To |
 |---|---|
-| `main.py` | `src/asr_test/cli/local.py` |
-| `server.py` | `src/asr_test/cli/server.py` |
-| `ws_client.py` | `src/asr_test/cli/relay_client.py` |
-| `static/index.html` | `src/asr_test/static/index.html` |
+| `main.py` | `src/pos/cli/local.py` |
+| `server.py` | `src/pos/cli/server.py` |
+| `ws_client.py` | `src/pos/cli/relay_client.py` |
+| `static/index.html` | `src/pos/static/index.html` |
 | `conftest.py` | deleted (no longer needed) |
 
-`src/asr_test/cli/__init__.py` — empty (marker file only).
+`src/pos/cli/__init__.py` — empty (marker file only).
 
 `server.py`'s `FileResponse(Path(__file__).parent / "static" / "index.html")`
 becomes `Path(__file__).parent.parent / "static" / "index.html"` (one
@@ -239,27 +239,27 @@ root was).
 
 ```toml
 [project.scripts]
-asr-agent = "asr_test.cli.local:main"
-asr-server = "asr_test.cli.server:run"
-asr-client = "asr_test.cli.relay_client:main"
+pos-agent = "pos.cli.local:main"
+pos-server = "pos.cli.server:run"
+pos-client = "pos.cli.relay_client:main"
 ```
 
 `server.py`'s existing `if __name__ == "__main__":` block (constructs
 `OnnxAsrEngine`, calls `create_app()`, calls `uvicorn.run()`) becomes a
 `def run() -> None:` function, called from both `if __name__ ==
-"__main__":` (so `uv run python -m asr_test.cli.server` still works
+"__main__":` (so `uv run python -m pos.cli.server` still works
 during development) and the console-script entry point.
 
 Every test's import changes: `from server import create_app,
-_default_llm_models` → `from asr_test.cli.server import create_app,
+_default_llm_models` → `from pos.cli.server import create_app,
 _default_llm_models` (and similarly anywhere `main`/`ws_client` internals
 are tested — currently neither has direct test coverage beyond
 `py_compile`, so this only affects `tests/test_server.py`).
 
 `README.md`'s every `uv run server.py`/`uv run main.py`/`uv run
-ws_client.py` becomes `uv run asr-server`/`uv run asr-agent`/`uv run
-asr-client`; the Architecture file tree is updated to show the new
-`cli/` and `static/` locations under `src/asr_test/`.
+ws_client.py` becomes `uv run pos-server`/`uv run pos-agent`/`uv run
+pos-client`; the Architecture file tree is updated to show the new
+`cli/` and `static/` locations under `src/pos/`.
 
 ## Error handling
 
@@ -279,6 +279,6 @@ asr-client`; the Architecture file tree is updated to show the new
   `GET /` returns 200 (catches a wrong static path immediately rather
   than only on manual browser testing).
 - Manual verification (no automated coverage for CLI scripts today,
-  consistent with the existing pattern): `uv run asr-agent --help`,
-  `uv run asr-server` then `GET /`, `uv run asr-client --help` all work
+  consistent with the existing pattern): `uv run pos-agent --help`,
+  `uv run pos-server` then `GET /`, `uv run pos-client --help` all work
   after the move.

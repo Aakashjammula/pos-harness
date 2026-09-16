@@ -10,7 +10,7 @@ import onnxruntime as ort
 
 from ..interfaces.tts import TtsBase
 
-# src/asr_test/tts/supertonic.py -> project root -> ./assets
+# src/pos/tts/supertonic.py -> project root -> ./assets
 # Populated by `git clone https://huggingface.co/Supertone/supertonic-3 assets`
 # (same onnx/ + voice_styles/ layout as the Hub repo). Gitignored — see .gitignore.
 _LOCAL_ASSETS_DIR = Path(__file__).resolve().parents[3] / "assets"

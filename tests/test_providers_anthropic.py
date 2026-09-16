@@ -1,7 +1,7 @@
 import os
 
-from asr_test.llm.providers.anthropic import AnthropicProvider
-from asr_test.llm.providers.base import ProviderConfig
+from pos.llm.providers.anthropic import AnthropicProvider
+from pos.llm.providers.base import ProviderConfig
 
 
 def _anthropic_provider(model="claude-sonnet-4-6"):
@@ -82,7 +82,7 @@ def test_build_model_passes_expected_kwargs(monkeypatch):
         captured_kwargs.update(kwargs)
         return "the-model"
 
-    monkeypatch.setattr("asr_test.llm.providers.anthropic.ChatAnthropic", fake_chat_anthropic)
+    monkeypatch.setattr("pos.llm.providers.anthropic.ChatAnthropic", fake_chat_anthropic)
 
     result = AnthropicProvider().build_model(
         _anthropic_provider(), max_tokens=120, temperature=0.7, timeout=30, stream_usage=True

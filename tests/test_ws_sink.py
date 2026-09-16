@@ -5,9 +5,9 @@ import time
 import numpy as np
 import pytest
 
-from asr_test.audio.ws_sink import WebSocketAudioSink
-from asr_test.interfaces.audio_sink import AudioSinkBase
-from asr_test.utils import pcm16_to_float32
+from pos.audio.ws_sink import WebSocketAudioSink
+from pos.interfaces.audio_sink import AudioSinkBase
+from pos.utils import pcm16_to_float32
 
 
 class _FakeWebSocket:

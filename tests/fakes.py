@@ -5,7 +5,7 @@ from collections.abc import Iterator
 
 import numpy as np
 
-from asr_test.interfaces import AudioSinkBase, LlmBase, SttBase, TtsBase, VadBase
+from pos.interfaces import AudioSinkBase, LlmBase, SttBase, TtsBase, VadBase
 
 
 class FakeVad(VadBase):

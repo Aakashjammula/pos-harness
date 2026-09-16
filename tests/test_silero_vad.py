@@ -1,9 +1,9 @@
 
-from asr_test.vad.silero import SileroVad
+from pos.vad.silero import SileroVad
 
 
 def test_threshold_and_tuning_params_pass_through_to_vad_iterator(monkeypatch):
-    monkeypatch.setattr("asr_test.vad.silero.load_silero_vad", lambda onnx: "fake-model")
+    monkeypatch.setattr("pos.vad.silero.load_silero_vad", lambda onnx: "fake-model")
     captured = {}
 
     class _SpyVADIterator:
@@ -14,7 +14,7 @@ def test_threshold_and_tuning_params_pass_through_to_vad_iterator(monkeypatch):
         def __call__(self, frame, return_seconds=False):
             return None
 
-    monkeypatch.setattr("asr_test.vad.silero.VADIterator", _SpyVADIterator)
+    monkeypatch.setattr("pos.vad.silero.VADIterator", _SpyVADIterator)
 
     vad = SileroVad(sample_rate=16000, min_silence_ms=700, speech_pad_ms=200, threshold=0.35)
 
@@ -31,7 +31,7 @@ def test_threshold_and_tuning_params_pass_through_to_vad_iterator(monkeypatch):
 
 
 def test_default_threshold_matches_silero_vad_iterators_own_default(monkeypatch):
-    monkeypatch.setattr("asr_test.vad.silero.load_silero_vad", lambda onnx: "fake-model")
+    monkeypatch.setattr("pos.vad.silero.load_silero_vad", lambda onnx: "fake-model")
     captured = {}
 
     class _SpyVADIterator:
@@ -41,7 +41,7 @@ def test_default_threshold_matches_silero_vad_iterators_own_default(monkeypatch)
         def __call__(self, frame, return_seconds=False):
             return None
 
-    monkeypatch.setattr("asr_test.vad.silero.VADIterator", _SpyVADIterator)
+    monkeypatch.setattr("pos.vad.silero.VADIterator", _SpyVADIterator)
 
     SileroVad()
 

@@ -1,7 +1,7 @@
 import os
 
-from asr_test.llm.providers.base import ProviderConfig
-from asr_test.llm.providers.bedrock import BedrockProvider
+from pos.llm.providers.base import ProviderConfig
+from pos.llm.providers.bedrock import BedrockProvider
 
 
 def _bedrock_provider(model="us.anthropic.claude-sonnet-4-6"):
@@ -100,7 +100,7 @@ def test_build_model_passes_expected_kwargs(monkeypatch):
         captured_kwargs.update(kwargs)
         return "the-model"
 
-    monkeypatch.setattr("asr_test.llm.providers.bedrock.ChatBedrock", fake_chat_bedrock)
+    monkeypatch.setattr("pos.llm.providers.bedrock.ChatBedrock", fake_chat_bedrock)
 
     result = BedrockProvider().build_model(
         _bedrock_provider(), max_tokens=120, temperature=0.7, timeout=30, stream_usage=True
@@ -120,7 +120,7 @@ def test_build_model_strips_unsupported_stream_usage_kwarg(monkeypatch):
         captured_kwargs.update(kwargs)
         return "the-model"
 
-    monkeypatch.setattr("asr_test.llm.providers.bedrock.ChatBedrock", fake_chat_bedrock)
+    monkeypatch.setattr("pos.llm.providers.bedrock.ChatBedrock", fake_chat_bedrock)
 
     BedrockProvider().build_model(_bedrock_provider(), max_tokens=120, temperature=0.7, timeout=30, stream_usage=True)
 

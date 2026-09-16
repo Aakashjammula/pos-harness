@@ -26,7 +26,7 @@
 ### Task 1: `ProviderConfig` + `resolve_provider()`
 
 **Files:**
-- Create: `src/asr_test/llm/provider.py`
+- Create: `src/pos/llm/provider.py`
 - Test: `tests/test_provider.py`
 
 **Interfaces:**
@@ -41,7 +41,7 @@ Create `tests/test_provider.py`:
 ```python
 import pytest
 
-from asr_test.llm.provider import resolve_provider
+from pos.llm.provider import resolve_provider
 
 
 def test_defaults_to_local_when_no_env_vars_set(monkeypatch):
@@ -158,11 +158,11 @@ def test_azure_missing_deployment_raises_when_no_override(monkeypatch):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_provider.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'asr_test.llm.provider'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'pos.llm.provider'`
 
 - [ ] **Step 3: Write the implementation**
 
-Create `src/asr_test/llm/provider.py`:
+Create `src/pos/llm/provider.py`:
 
 ```python
 """Resolves which LLM backend to talk to from environment variables —
@@ -240,7 +240,7 @@ Expected: PASS (11 tests)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/llm/provider.py tests/test_provider.py
+git add src/pos/llm/provider.py tests/test_provider.py
 git commit -m "feat: add resolve_provider() for env-var LLM backend selection"
 ```
 
@@ -249,7 +249,7 @@ git commit -m "feat: add resolve_provider() for env-var LLM backend selection"
 ### Task 2: Pricing table + cost estimation
 
 **Files:**
-- Create: `src/asr_test/llm/pricing.py`
+- Create: `src/pos/llm/pricing.py`
 - Test: `tests/test_pricing.py`
 
 **Interfaces:**
@@ -261,7 +261,7 @@ git commit -m "feat: add resolve_provider() for env-var LLM backend selection"
 Create `tests/test_pricing.py`:
 
 ```python
-from asr_test.llm.pricing import estimate_cost, price_for
+from pos.llm.pricing import estimate_cost, price_for
 
 
 def test_local_is_always_free(monkeypatch):
@@ -323,11 +323,11 @@ def test_estimate_cost_computes_weighted_sum(monkeypatch):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_pricing.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'asr_test.llm.pricing'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'pos.llm.pricing'`
 
 - [ ] **Step 3: Write the implementation**
 
-Create `src/asr_test/llm/pricing.py`:
+Create `src/pos/llm/pricing.py`:
 
 ```python
 """Best-effort LLM pricing lookup. LLM prices change over time and this
@@ -377,7 +377,7 @@ Expected: PASS (7 tests)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/llm/pricing.py tests/test_pricing.py
+git add src/pos/llm/pricing.py tests/test_pricing.py
 git commit -m "feat: add LLM pricing table and cost estimation"
 ```
 
@@ -386,11 +386,11 @@ git commit -m "feat: add LLM pricing table and cost estimation"
 ### Task 2b: Context-window size lookup
 
 **Files:**
-- Create: `src/asr_test/llm/context_window.py`
+- Create: `src/pos/llm/context_window.py`
 - Test: `tests/test_context_window.py`
 
 **Interfaces:**
-- Consumes: `ProviderConfig` from Task 1 (`src/asr_test/llm/provider.py`) — only its `.name`, `.model`, `.base_url` fields.
+- Consumes: `ProviderConfig` from Task 1 (`src/pos/llm/provider.py`) — only its `.name`, `.model`, `.base_url` fields.
 - Produces: `CONTEXT_WINDOWS: dict[tuple[str, str], int]`, `get_context_window(provider: ProviderConfig) -> int | None`. Task 4 calls this once at `LangChainLlm.__init__` time (never per-turn — a live HTTP call to LM Studio on every turn would add latency to the voice loop) and stores the result as `self._context_window`; Task 5 reads that stored value into `usage["context_window"]`.
 
 Local (LM Studio) exposes context length live via its REST API v0 —
@@ -410,8 +410,8 @@ Create `tests/test_context_window.py`:
 ```python
 from unittest.mock import MagicMock
 
-from asr_test.llm.context_window import get_context_window
-from asr_test.llm.provider import ProviderConfig
+from pos.llm.context_window import get_context_window
+from pos.llm.provider import ProviderConfig
 
 
 def _local_provider(model="meta-llama-3.1-8b-instruct"):
@@ -437,7 +437,7 @@ def test_local_queries_lm_studio_v0_models_endpoint(monkeypatch):
         captured_url["url"] = url
         return mock_response
 
-    monkeypatch.setattr("asr_test.llm.context_window.requests.get", fake_get)
+    monkeypatch.setattr("pos.llm.context_window.requests.get", fake_get)
 
     window = get_context_window(_local_provider())
 
@@ -449,7 +449,7 @@ def test_local_returns_none_when_model_not_found_in_response(monkeypatch):
     mock_response = MagicMock()
     mock_response.json.return_value = {"object": "list", "data": [{"id": "other-model", "max_context_length": 4096}]}
     mock_response.raise_for_status.return_value = None
-    monkeypatch.setattr("asr_test.llm.context_window.requests.get", lambda url, timeout: mock_response)
+    monkeypatch.setattr("pos.llm.context_window.requests.get", lambda url, timeout: mock_response)
 
     assert get_context_window(_local_provider(model="not-listed")) is None
 
@@ -458,7 +458,7 @@ def test_local_returns_none_on_request_failure(monkeypatch):
     def fake_get(url, timeout):
         raise ConnectionError("LM Studio not running")
 
-    monkeypatch.setattr("asr_test.llm.context_window.requests.get", fake_get)
+    monkeypatch.setattr("pos.llm.context_window.requests.get", fake_get)
 
     assert get_context_window(_local_provider()) is None
 
@@ -501,11 +501,11 @@ def test_env_override_enables_azure(monkeypatch):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_context_window.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'asr_test.llm.context_window'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'pos.llm.context_window'`
 
 - [ ] **Step 3: Write the implementation**
 
-Create `src/asr_test/llm/context_window.py`:
+Create `src/pos/llm/context_window.py`:
 
 ```python
 """Context-window size lookup, paired with pricing.py's tables. Local
@@ -571,7 +571,7 @@ Expected: PASS, all tests green
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/llm/context_window.py tests/test_context_window.py
+git add src/pos/llm/context_window.py tests/test_context_window.py
 git commit -m "feat: add context-window size lookup (live for local, table for cloud)"
 ```
 
@@ -580,8 +580,8 @@ git commit -m "feat: add context-window size lookup (live for local, table for c
 ### Task 3: `LlmBase.stream()` gains an optional `usage` parameter (interface conformance)
 
 **Files:**
-- Modify: `src/asr_test/interfaces/llm.py` (whole file, currently 21 lines)
-- Modify: `src/asr_test/llm/openai_compatible.py:45` (the `stream` method signature)
+- Modify: `src/pos/interfaces/llm.py` (whole file, currently 21 lines)
+- Modify: `src/pos/llm/openai_compatible.py:45` (the `stream` method signature)
 - Modify: `tests/fakes.py` (the `FakeLlm` class, currently lines 42-49)
 - Test: `tests/test_openai_compatible_llm.py` (extend), `tests/fakes.py` doubles as the "test" for `FakeLlm` itself via the new test below
 
@@ -597,7 +597,7 @@ Add to `tests/test_openai_compatible_llm.py`:
 def test_stream_accepts_and_ignores_usage_param(monkeypatch):
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = [_fake_chunk("hi"), _fake_chunk(None)]
-    monkeypatch.setattr("asr_test.llm.openai_compatible.OpenAI", lambda **kw: mock_client)
+    monkeypatch.setattr("pos.llm.openai_compatible.OpenAI", lambda **kw: mock_client)
 
     llm = OpenAiCompatibleLlm(warmup=False)
     cancel = threading.Event()
@@ -650,7 +650,7 @@ Expected: FAIL — `TypeError: stream() takes 3 positional arguments but 4 were 
 
 - [ ] **Step 3: Write the implementation**
 
-Replace the full contents of `src/asr_test/interfaces/llm.py`:
+Replace the full contents of `src/pos/interfaces/llm.py`:
 
 ```python
 from __future__ import annotations
@@ -686,7 +686,7 @@ class LlmBase(ABC):
     ) -> Iterator[str]: ...
 ```
 
-In `src/asr_test/llm/openai_compatible.py`, change the `stream` method signature (line 45) from:
+In `src/pos/llm/openai_compatible.py`, change the `stream` method signature (line 45) from:
 
 ```python
     def stream(self, messages: list[dict], cancel: threading.Event) -> Iterator[str]:
@@ -732,7 +732,7 @@ Expected: PASS, 79 tests (48 existing + 11 from Task 1 + 7 from Task 2 + 9 from 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/interfaces/llm.py src/asr_test/llm/openai_compatible.py tests/fakes.py tests/test_openai_compatible_llm.py tests/test_fakes.py
+git add src/pos/interfaces/llm.py src/pos/llm/openai_compatible.py tests/fakes.py tests/test_openai_compatible_llm.py tests/test_fakes.py
 git commit -m "feat: add optional usage dict param to LlmBase.stream() contract"
 ```
 
@@ -741,11 +741,11 @@ git commit -m "feat: add optional usage dict param to LlmBase.stream() contract"
 ### Task 4: `LangChainLlm` builds the model from `resolve_provider()`
 
 **Files:**
-- Modify: `src/asr_test/llm/langchain_llm.py` (constructor and imports; full current content is 92 lines, shown above)
+- Modify: `src/pos/llm/langchain_llm.py` (constructor and imports; full current content is 92 lines, shown above)
 - Test: `tests/test_langchain_llm.py` (extend existing file)
 
 **Interfaces:**
-- Consumes: `resolve_provider(model_override) -> ProviderConfig` from Task 1 (`src/asr_test/llm/provider.py`); `get_context_window(provider) -> int | None` from Task 2b (`src/asr_test/llm/context_window.py`).
+- Consumes: `resolve_provider(model_override) -> ProviderConfig` from Task 1 (`src/pos/llm/provider.py`); `get_context_window(provider) -> int | None` from Task 2b (`src/pos/llm/context_window.py`).
 - Produces: `LangChainLlm.provider: ProviderConfig` and `LangChainLlm._context_window: int | None` (instance attributes, both read by Task 5 when populating usage). `LangChainLlm.__init__` signature becomes `(self, model: str | None = None, system_prompt=..., max_tokens=120, timeout=30, tools=None, max_tool_rounds=3, warmup=True)` — note `base_url`/`api_key` are **removed** as direct constructor params (now derived from the resolved provider); no existing caller in this codebase passes them (`agent.py` calls `LangChainLlm()`, `server.py` calls `LangChainLlm(model=model)`).
 
 - [ ] **Step 1: Write the failing tests**
@@ -764,7 +764,7 @@ def test_local_provider_builds_chat_openai_with_lm_studio_defaults(monkeypatch):
         mock_model.bind_tools.return_value = _FakeRunnable([[_text_chunk("hi")]])
         return mock_model
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", fake_chat_openai)
+    monkeypatch.setattr("pos.llm.langchain_llm.ChatOpenAI", fake_chat_openai)
 
     llm = LangChainLlm(tools=[], warmup=False)
 
@@ -787,7 +787,7 @@ def test_openai_provider_builds_chat_openai_without_base_url(monkeypatch):
         mock_model.bind_tools.return_value = _FakeRunnable([[_text_chunk("hi")]])
         return mock_model
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", fake_chat_openai)
+    monkeypatch.setattr("pos.llm.langchain_llm.ChatOpenAI", fake_chat_openai)
 
     llm = LangChainLlm(tools=[], warmup=False)
 
@@ -809,7 +809,7 @@ def test_azure_provider_builds_azure_chat_openai(monkeypatch):
         mock_model.bind_tools.return_value = _FakeRunnable([[_text_chunk("hi")]])
         return mock_model
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.AzureChatOpenAI", fake_azure_chat_openai)
+    monkeypatch.setattr("pos.llm.langchain_llm.AzureChatOpenAI", fake_azure_chat_openai)
 
     llm = LangChainLlm(tools=[], warmup=False)
 
@@ -832,7 +832,7 @@ def test_model_kwarg_overrides_env_derived_model(monkeypatch):
         mock_model.bind_tools.return_value = _FakeRunnable([[_text_chunk("hi")]])
         return mock_model
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", fake_chat_openai)
+    monkeypatch.setattr("pos.llm.langchain_llm.ChatOpenAI", fake_chat_openai)
 
     llm = LangChainLlm(model="gpt-4o-mini", tools=[], warmup=False)
 
@@ -846,7 +846,7 @@ def test_warmup_failure_message_omits_lm_studio_hint_for_non_local(monkeypatch, 
     mock_model = MagicMock()
     mock_model.invoke.side_effect = RuntimeError("boom")
     mock_model.bind_tools.return_value = _FakeRunnable([])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", lambda **kw: mock_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.ChatOpenAI", lambda **kw: mock_model)
 
     LangChainLlm(tools=[], warmup=True)
 
@@ -860,14 +860,14 @@ def test_context_window_resolved_once_at_construction(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     mock_model = MagicMock()
     mock_model.bind_tools.return_value = _FakeRunnable([[_text_chunk("hi")]])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.ChatOpenAI", lambda **kw: mock_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.ChatOpenAI", lambda **kw: mock_model)
     calls = []
 
     def fake_get_context_window(provider):
         calls.append(provider)
         return 131072
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.get_context_window", fake_get_context_window)
+    monkeypatch.setattr("pos.llm.langchain_llm.get_context_window", fake_get_context_window)
 
     llm = LangChainLlm(tools=[], warmup=False)
 
@@ -889,7 +889,7 @@ def _clear_provider_env(monkeypatch):
     # context-window lookup (Task 2b's local branch hits LM Studio's
     # REST API) — test_context_window_resolved_once_at_construction
     # below overrides this per-test with its own monkeypatch.setattr.
-    monkeypatch.setattr("asr_test.llm.langchain_llm.get_context_window", lambda provider: None)
+    monkeypatch.setattr("pos.llm.langchain_llm.get_context_window", lambda provider: None)
 ```
 
 (place this fixture and the `import pytest` near the top of the file, after the existing imports — the four pre-existing tests and `_make_llm` helper need no other change; they'll now reliably resolve to the local branch, with no network call for context window either)
@@ -901,7 +901,7 @@ Expected: FAIL — the new tests fail because `LangChainLlm` doesn't have a `.pr
 
 - [ ] **Step 3: Write the implementation**
 
-Replace `src/asr_test/llm/langchain_llm.py` lines 1-53 (everything from the imports through the end of `__init__`, i.e. up to but not including the `stream` method) with:
+Replace `src/pos/llm/langchain_llm.py` lines 1-53 (everything from the imports through the end of `__init__`, i.e. up to but not including the `stream` method) with:
 
 ```python
 from __future__ import annotations
@@ -996,7 +996,7 @@ Expected: PASS, all tests green
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/llm/langchain_llm.py tests/test_langchain_llm.py
+git add src/pos/llm/langchain_llm.py tests/test_langchain_llm.py
 git commit -m "feat: LangChainLlm builds its model from resolve_provider() (local/openai/azure)"
 ```
 
@@ -1005,11 +1005,11 @@ git commit -m "feat: LangChainLlm builds its model from resolve_provider() (loca
 ### Task 5: `LangChainLlm.stream()` populates the `usage` dict
 
 **Files:**
-- Modify: `src/asr_test/llm/langchain_llm.py` (the `stream` method, and its imports)
+- Modify: `src/pos/llm/langchain_llm.py` (the `stream` method, and its imports)
 - Test: `tests/test_langchain_llm.py` (extend)
 
 **Interfaces:**
-- Consumes: `estimate_cost(provider, model, input_tokens, output_tokens) -> float | None` from Task 2 (`src/asr_test/llm/pricing.py`); `self.provider` and `self._context_window` from Task 4.
+- Consumes: `estimate_cost(provider, model, input_tokens, output_tokens) -> float | None` from Task 2 (`src/pos/llm/pricing.py`); `self.provider` and `self._context_window` from Task 4.
 - Produces: `LangChainLlm.stream(self, messages, cancel, usage=None)` now fills `usage` in place with keys `provider`, `model`, `input_tokens`, `output_tokens`, `total_tokens`, `cost_usd`, `tool_calls` (a list of `{"name": str, "args": dict}`), `context_window` once the final tool-loop round finishes — this is what Task 6's `Agent` reads.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1111,7 +1111,7 @@ Expected: FAIL — `usage` stays `{}` for `test_stream_populates_usage_dict_for_
 
 - [ ] **Step 3: Write the implementation**
 
-Add this import to `src/asr_test/llm/langchain_llm.py`, alongside the existing `from .provider import resolve_provider` line:
+Add this import to `src/pos/llm/langchain_llm.py`, alongside the existing `from .provider import resolve_provider` line:
 
 ```python
 from .pricing import estimate_cost
@@ -1189,7 +1189,7 @@ Expected: PASS, all tests green
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/llm/langchain_llm.py tests/test_langchain_llm.py
+git add src/pos/llm/langchain_llm.py tests/test_langchain_llm.py
 git commit -m "feat: LangChainLlm.stream() reports token usage, cost, and tool calls"
 ```
 
@@ -1198,7 +1198,7 @@ git commit -m "feat: LangChainLlm.stream() reports token usage, cost, and tool c
 ### Task 6: Wire usage into `Agent` (console output + `bot_text` event)
 
 **Files:**
-- Modify: `src/asr_test/agent.py:337-371` (shown in full above)
+- Modify: `src/pos/agent.py:337-371` (shown in full above)
 - Test: `tests/test_agent.py` (extend)
 
 **Interfaces:**
@@ -1251,7 +1251,7 @@ Expected: FAIL — `bot_events == [{"text": "hi there "}]`, missing the `"usage"
 
 - [ ] **Step 3: Write the implementation**
 
-In `src/asr_test/agent.py`, change the block from (current lines 341-371):
+In `src/pos/agent.py`, change the block from (current lines 341-371):
 
 ```python
         t_start = time.perf_counter()
@@ -1353,7 +1353,7 @@ Expected: PASS, all tests green (48 original + all tests added across Tasks 1-6 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/agent.py tests/test_agent.py
+git add src/pos/agent.py tests/test_agent.py
 git commit -m "feat: Agent surfaces LLM token usage/cost via console output and bot_text event"
 ```
 

@@ -1,8 +1,8 @@
 import pytest
 
-from asr_test.llm.providers import registry
-from asr_test.llm.providers.base import LlmProviderBase, ProviderConfig
-from asr_test.llm.providers.registry import (
+from pos.llm.providers import registry
+from pos.llm.providers.base import LlmProviderBase, ProviderConfig
+from pos.llm.providers.registry import (
     build_model,
     context_window_for,
     estimate_cost,

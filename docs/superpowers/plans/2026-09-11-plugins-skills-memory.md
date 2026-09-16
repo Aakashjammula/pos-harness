@@ -23,7 +23,7 @@
 ### Task 1: Settings page tab bar
 
 **Files:**
-- Modify: `src/asr_test/static/index.html`
+- Modify: `src/pos/static/index.html`
 
 **Interfaces:**
 - Consumes: nothing new.
@@ -190,7 +190,7 @@ Run:
 ```bash
 python3 -c "
 import re
-content = open('src/asr_test/static/index.html', encoding='utf-8').read()
+content = open('src/pos/static/index.html', encoding='utf-8').read()
 m = re.search(r'<script>(.*)</script>', content, re.S)
 open('scratch_extracted.js', 'w', encoding='utf-8').write(m.group(1))
 "
@@ -198,7 +198,7 @@ node --check scratch_extracted.js && echo "SYNTAX OK"
 rm scratch_extracted.js
 python3 -c "
 import re
-content = open('src/asr_test/static/index.html', encoding='utf-8').read()
+content = open('src/pos/static/index.html', encoding='utf-8').read()
 js_ids = set(re.findall(r'el\(\"([a-zA-Z0-9_]+)\"\)', content))
 html_ids = set(re.findall(r'id=\"([a-zA-Z0-9_]+)\"', content))
 print('JS refs missing from HTML:', js_ids - html_ids or 'none')
@@ -215,7 +215,7 @@ Expected: PASS (240 passed) — this task is frontend-only.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/asr_test/static/index.html
+git add src/pos/static/index.html
 git commit -m "feat: tabbed Settings page (General/Providers/Plugins/Skills/Memory)"
 ```
 
@@ -224,7 +224,7 @@ git commit -m "feat: tabbed Settings page (General/Providers/Plugins/Skills/Memo
 ### Task 2: `llm/plugins.py` — discovery and enable/disable
 
 **Files:**
-- Create: `src/asr_test/llm/plugins.py`
+- Create: `src/pos/llm/plugins.py`
 - Test: `tests/test_plugins.py`
 - Modify: `.gitignore`
 
@@ -239,7 +239,7 @@ Create `tests/test_plugins.py`:
 ```python
 import json
 
-from asr_test.llm import plugins
+from pos.llm import plugins
 
 
 def _write_plugin(plugins_dir, name, description="A test plugin.", entry_point="tool:get_tools", body=None):
@@ -350,11 +350,11 @@ def get_tools():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_plugins.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'asr_test.llm.plugins'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'pos.llm.plugins'`
 
 - [ ] **Step 3: Write the implementation**
 
-Create `src/asr_test/llm/plugins.py`:
+Create `src/pos/llm/plugins.py`:
 
 ```python
 """Installable tool bundles -- see
@@ -417,7 +417,7 @@ def load_enabled_plugin_tools(plugins_dir: Path = PLUGINS_DIR) -> list[BaseTool]
         module_stem, func_name = manifest["entry_point"].split(":")
         module_path = Path(manifest["_dir"]) / f"{module_stem}.py"
         spec = importlib.util.spec_from_file_location(
-            f"asr_test_plugin_{manifest['name']}", module_path
+            f"pos_plugin_{manifest['name']}", module_path
         )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -434,7 +434,7 @@ Expected: PASS (9 tests)
 
 Find:
 ```
-# Local session/turn history (SQLite, see src/asr_test/storage.py) — personal
+# Local session/turn history (SQLite, see src/pos/storage.py) — personal
 # conversation data, generated at runtime, one folder so it's easy to ignore/back up
 /data/
 ```
@@ -443,7 +443,7 @@ Add immediately after it:
 ```
 
 # Installable tool plugins a user drops in locally (code + manifests +
-# enabled.json) -- see src/asr_test/llm/plugins.py. Not shipped with the
+# enabled.json) -- see src/pos/llm/plugins.py. Not shipped with the
 # repo, not something to commit on someone else's behalf.
 /plugins/
 ```
@@ -456,8 +456,8 @@ Expected: PASS, all green (249 tests: 240 + 9 new)
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/asr_test/llm/plugins.py tests/test_plugins.py .gitignore
-git commit -m "feat: plugin discovery/enable/load (src/asr_test/llm/plugins.py)"
+git add src/pos/llm/plugins.py tests/test_plugins.py .gitignore
+git commit -m "feat: plugin discovery/enable/load (src/pos/llm/plugins.py)"
 ```
 
 ---
@@ -465,8 +465,8 @@ git commit -m "feat: plugin discovery/enable/load (src/asr_test/llm/plugins.py)"
 ### Task 3: Wire plugins into `default_tools()`, `GET /options`, and a toggle endpoint
 
 **Files:**
-- Modify: `src/asr_test/llm/tools.py`
-- Modify: `src/asr_test/cli/server.py`
+- Modify: `src/pos/llm/tools.py`
+- Modify: `src/pos/cli/server.py`
 - Test: `tests/test_tools.py`, `tests/test_server.py`
 
 **Interfaces:**
@@ -495,9 +495,9 @@ def get_weather(location: str) -> str:
 def get_tools():
     return [get_weather]
 """)
-    from asr_test.llm import plugins
+    from pos.llm import plugins
     plugins.set_enabled("weather", True, plugins_dir=tmp_path)
-    monkeypatch.setattr("asr_test.llm.tools.plugins.PLUGINS_DIR", tmp_path)
+    monkeypatch.setattr("pos.llm.tools.plugins.PLUGINS_DIR", tmp_path)
 
     tools = default_tools()
 
@@ -509,11 +509,11 @@ Add `import json` to the top of `tests/test_tools.py` if not already present (ch
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_tools.py::test_default_tools_includes_enabled_plugin_tools -v`
-Expected: FAIL — `AttributeError: module 'asr_test.llm.tools' has no attribute 'plugins'`
+Expected: FAIL — `AttributeError: module 'pos.llm.tools' has no attribute 'plugins'`
 
 - [ ] **Step 3: Wire `default_tools()` to include plugin tools**
 
-In `src/asr_test/llm/tools.py`, add the import:
+In `src/pos/llm/tools.py`, add the import:
 ```python
 from . import plugins
 ```
@@ -585,7 +585,7 @@ def test_options_endpoint_includes_plugins_field(monkeypatch, tmp_path):
     (plugin_dir / "plugin.json").write_text(json.dumps({
         "name": "weather", "version": "0.1.0", "description": "Look up weather.", "entry_point": "tool:get_tools",
     }))
-    monkeypatch.setattr("asr_test.cli.server.plugins.PLUGINS_DIR", tmp_path)
+    monkeypatch.setattr("pos.cli.server.plugins.PLUGINS_DIR", tmp_path)
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     app = create_app(
         stt=FakeStt("hello"),
@@ -610,7 +610,7 @@ def test_toggle_plugin_endpoint_enables_it(monkeypatch, tmp_path):
     (plugin_dir / "plugin.json").write_text(json.dumps({
         "name": "weather", "version": "0.1.0", "description": "d", "entry_point": "tool:get_tools",
     }))
-    monkeypatch.setattr("asr_test.cli.server.plugins.PLUGINS_DIR", tmp_path)
+    monkeypatch.setattr("pos.cli.server.plugins.PLUGINS_DIR", tmp_path)
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -624,7 +624,7 @@ def test_toggle_plugin_endpoint_enables_it(monkeypatch, tmp_path):
     resp = client.post("/plugins/weather/toggle", json={"enabled": True})
 
     assert resp.status_code == 200
-    from asr_test.llm import plugins
+    from pos.llm import plugins
     assert plugins.is_enabled("weather", plugins_dir=tmp_path) is True
 ```
 
@@ -635,9 +635,9 @@ Expected: FAIL — `KeyError: 'plugins'` and `404 Not Found` respectively
 
 - [ ] **Step 7: Implement in `server.py`**
 
-Add the import (alongside the existing `from asr_test.llm.tools import tool_status`):
+Add the import (alongside the existing `from pos.llm.tools import tool_status`):
 ```python
-from asr_test.llm import plugins
+from pos.llm import plugins
 ```
 
 Add a module-level request model (same reasoning as `SessionKeysRequest` —
@@ -694,7 +694,7 @@ Expected: PASS, all green
 - [ ] **Step 10: Commit**
 
 ```bash
-git add src/asr_test/llm/tools.py src/asr_test/cli/server.py tests/test_tools.py tests/test_server.py
+git add src/pos/llm/tools.py src/pos/cli/server.py tests/test_tools.py tests/test_server.py
 git commit -m "feat: wire plugins into default_tools(), GET /options, POST /plugins/{name}/toggle"
 ```
 
@@ -703,7 +703,7 @@ git commit -m "feat: wire plugins into default_tools(), GET /options, POST /plug
 ### Task 4: Settings UI — Plugins tab
 
 **Files:**
-- Modify: `src/asr_test/static/index.html`
+- Modify: `src/pos/static/index.html`
 
 **Interfaces:**
 - Consumes: `GET /options`'s `"plugins"` field, `POST /plugins/{name}/toggle` from Task 3; `settingsPanels.plugins` (the `#settingsPanel-plugins` div) from Task 1.
@@ -801,7 +801,7 @@ Expected: `SYNTAX OK`, both diffs `none`.
 
 - [ ] **Step 4: Manual verification**
 
-Start the server (`uv run asr-server`), open `http://localhost:8000/`,
+Start the server (`uv run pos-server`), open `http://localhost:8000/`,
 click the model chip to open Settings, click the "Plugins" tab. With no
 `plugins/` directory present, confirm the empty-state hint shows and no
 console errors appear. Create a throwaway `plugins/test-plugin/plugin.json`
@@ -818,7 +818,7 @@ Expected: PASS — this task is frontend-only.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/asr_test/static/index.html
+git add src/pos/static/index.html
 git commit -m "feat: Plugins tab in Settings (list + enable/disable toggle)"
 ```
 
@@ -827,7 +827,7 @@ git commit -m "feat: Plugins tab in Settings (list + enable/disable toggle)"
 ### Task 5: `llm/skills.py` — parsing and the `load_skill` tool
 
 **Files:**
-- Create: `src/asr_test/llm/skills.py`
+- Create: `src/pos/llm/skills.py`
 - Test: `tests/test_skills.py`
 - Modify: `pyproject.toml`, `uv.lock` (via `uv add`)
 - Modify: `.gitignore`
@@ -849,7 +849,7 @@ that continuing to be true.)
 Create `tests/test_skills.py`:
 
 ```python
-from asr_test.llm import skills
+from pos.llm import skills
 
 
 def _write_skill(skills_dir, name, description="A test skill.", body="Do the thing."):
@@ -937,11 +937,11 @@ def test_load_skill_tool_returns_a_message_for_unknown_skill(tmp_path):
 - [ ] **Step 3: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_skills.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'asr_test.llm.skills'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'pos.llm.skills'`
 
 - [ ] **Step 4: Write the implementation**
 
-Create `src/asr_test/llm/skills.py`:
+Create `src/pos/llm/skills.py`:
 
 ```python
 """Contextually-loaded instruction sets -- see
@@ -1036,7 +1036,7 @@ Add immediately after the `/plugins/` entry from Task 2:
 ```
 
 # Contextually-loaded skill instructions (Markdown, see
-# src/asr_test/llm/skills.py) -- same local/personal reasoning as plugins/.
+# src/pos/llm/skills.py) -- same local/personal reasoning as plugins/.
 /skills/
 ```
 
@@ -1048,8 +1048,8 @@ Expected: PASS, all green
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/asr_test/llm/skills.py tests/test_skills.py pyproject.toml uv.lock .gitignore
-git commit -m "feat: skill discovery/enable + load_skill tool (src/asr_test/llm/skills.py)"
+git add src/pos/llm/skills.py tests/test_skills.py pyproject.toml uv.lock .gitignore
+git commit -m "feat: skill discovery/enable + load_skill tool (src/pos/llm/skills.py)"
 ```
 
 ---
@@ -1057,8 +1057,8 @@ git commit -m "feat: skill discovery/enable + load_skill tool (src/asr_test/llm/
 ### Task 6: Wire skills into `default_tools()`, `GET /options`, and a toggle endpoint
 
 **Files:**
-- Modify: `src/asr_test/llm/tools.py`
-- Modify: `src/asr_test/cli/server.py`
+- Modify: `src/pos/llm/tools.py`
+- Modify: `src/pos/cli/server.py`
 - Test: `tests/test_tools.py`, `tests/test_server.py`
 
 **Interfaces:**
@@ -1076,9 +1076,9 @@ def test_default_tools_includes_load_skill_when_a_skill_is_enabled(tmp_path, mon
     (skill_dir / "SKILL.md").write_text(
         "---\nname: cooking-helper\ndescription: Helps with recipes.\n---\n\nBe a cooking assistant.\n"
     )
-    from asr_test.llm import skills
+    from pos.llm import skills
     skills.set_skill_enabled("cooking-helper", True, skills_dir=tmp_path)
-    monkeypatch.setattr("asr_test.llm.tools.skills.SKILLS_DIR", tmp_path)
+    monkeypatch.setattr("pos.llm.tools.skills.SKILLS_DIR", tmp_path)
 
     tools = default_tools()
 
@@ -1086,7 +1086,7 @@ def test_default_tools_includes_load_skill_when_a_skill_is_enabled(tmp_path, mon
 
 
 def test_default_tools_omits_load_skill_when_none_enabled(tmp_path, monkeypatch):
-    monkeypatch.setattr("asr_test.llm.tools.skills.SKILLS_DIR", tmp_path)
+    monkeypatch.setattr("pos.llm.tools.skills.SKILLS_DIR", tmp_path)
 
     tools = default_tools()
 
@@ -1096,11 +1096,11 @@ def test_default_tools_omits_load_skill_when_none_enabled(tmp_path, monkeypatch)
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_tools.py -k load_skill -v`
-Expected: FAIL — `AttributeError: module 'asr_test.llm.tools' has no attribute 'skills'`
+Expected: FAIL — `AttributeError: module 'pos.llm.tools' has no attribute 'skills'`
 
 - [ ] **Step 3: Wire `default_tools()` to include `load_skill`**
 
-In `src/asr_test/llm/tools.py`, add the import alongside the `plugins`
+In `src/pos/llm/tools.py`, add the import alongside the `plugins`
 import from Task 3:
 ```python
 from . import plugins, skills
@@ -1136,7 +1136,7 @@ def test_options_endpoint_includes_skills_field(monkeypatch, tmp_path):
     (skill_dir / "SKILL.md").write_text(
         "---\nname: cooking-helper\ndescription: Helps with recipes.\n---\n\nBe a cooking assistant.\n"
     )
-    monkeypatch.setattr("asr_test.cli.server.skills.SKILLS_DIR", tmp_path)
+    monkeypatch.setattr("pos.cli.server.skills.SKILLS_DIR", tmp_path)
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     app = create_app(
         stt=FakeStt("hello"),
@@ -1160,7 +1160,7 @@ def test_toggle_skill_endpoint_enables_it(monkeypatch, tmp_path):
     (skill_dir / "SKILL.md").write_text(
         "---\nname: cooking-helper\ndescription: d\n---\n\nBody.\n"
     )
-    monkeypatch.setattr("asr_test.cli.server.skills.SKILLS_DIR", tmp_path)
+    monkeypatch.setattr("pos.cli.server.skills.SKILLS_DIR", tmp_path)
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -1174,7 +1174,7 @@ def test_toggle_skill_endpoint_enables_it(monkeypatch, tmp_path):
     resp = client.post("/skills/cooking-helper/toggle", json={"enabled": True})
 
     assert resp.status_code == 200
-    from asr_test.llm import skills
+    from pos.llm import skills
     assert skills.is_skill_enabled("cooking-helper", skills_dir=tmp_path) is True
 ```
 
@@ -1187,7 +1187,7 @@ Expected: FAIL — `KeyError: 'skills'` and `404 Not Found` respectively
 
 Add the import alongside the `plugins` import from Task 3:
 ```python
-from asr_test.llm import plugins, skills
+from pos.llm import plugins, skills
 ```
 
 Add a second module-level request model, next to `TogglePluginRequest`:
@@ -1225,7 +1225,7 @@ Expected: PASS, all green
 - [ ] **Step 10: Commit**
 
 ```bash
-git add src/asr_test/llm/tools.py src/asr_test/cli/server.py tests/test_tools.py tests/test_server.py
+git add src/pos/llm/tools.py src/pos/cli/server.py tests/test_tools.py tests/test_server.py
 git commit -m "feat: wire skills into default_tools(), GET /options, POST /skills/{name}/toggle"
 ```
 
@@ -1234,7 +1234,7 @@ git commit -m "feat: wire skills into default_tools(), GET /options, POST /skill
 ### Task 7: Settings UI — Skills tab
 
 **Files:**
-- Modify: `src/asr_test/static/index.html`
+- Modify: `src/pos/static/index.html`
 
 **Interfaces:**
 - Consumes: `GET /options`'s `"skills"` field, `POST /skills/{name}/toggle` from Task 6; `settingsPanels.skills` (the `#settingsPanel-skills` div) from Task 1.
@@ -1351,7 +1351,7 @@ Expected: PASS — this task is frontend-only.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/asr_test/static/index.html
+git add src/pos/static/index.html
 git commit -m "feat: Skills tab in Settings (list + enable/disable toggle)"
 ```
 
@@ -1360,9 +1360,9 @@ git commit -m "feat: Skills tab in Settings (list + enable/disable toggle)"
 ### Task 8: `extra_system_context` on `LlmBase.stream()` / `LangChainLlm.stream()` / `OpenAiCompatibleLlm.stream()`
 
 **Files:**
-- Modify: `src/asr_test/interfaces/llm.py`
-- Modify: `src/asr_test/llm/langchain_llm.py`
-- Modify: `src/asr_test/llm/openai_compatible.py`
+- Modify: `src/pos/interfaces/llm.py`
+- Modify: `src/pos/llm/langchain_llm.py`
+- Modify: `src/pos/llm/openai_compatible.py`
 - Test: `tests/test_langchain_llm.py`
 
 **Interfaces:**
@@ -1408,7 +1408,7 @@ Expected: FAIL — `TypeError: LangChainLlm.stream() takes from 3 to 4 positiona
 
 - [ ] **Step 3: Update `LlmBase`**
 
-In `src/asr_test/interfaces/llm.py`, change:
+In `src/pos/interfaces/llm.py`, change:
 ```python
     @abstractmethod
     def stream(
@@ -1431,7 +1431,7 @@ to:
 
 - [ ] **Step 4: Update `LangChainLlm.stream()`**
 
-In `src/asr_test/llm/langchain_llm.py`, change:
+In `src/pos/llm/langchain_llm.py`, change:
 ```python
     def stream(
         self, messages: list[dict], cancel: threading.Event, usage: dict | None = None
@@ -1453,7 +1453,7 @@ to:
 
 - [ ] **Step 5: Update `OpenAiCompatibleLlm.stream()` for interface consistency**
 
-In `src/asr_test/llm/openai_compatible.py`, change:
+In `src/pos/llm/openai_compatible.py`, change:
 ```python
     def stream(
         self, messages: list[dict], cancel: threading.Event, usage: dict | None = None
@@ -1485,7 +1485,7 @@ Expected: PASS, all green
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/asr_test/interfaces/llm.py src/asr_test/llm/langchain_llm.py src/asr_test/llm/openai_compatible.py tests/test_langchain_llm.py
+git add src/pos/interfaces/llm.py src/pos/llm/langchain_llm.py src/pos/llm/openai_compatible.py tests/test_langchain_llm.py
 git commit -m "feat: extra_system_context parameter on LlmBase.stream()"
 ```
 
@@ -1494,7 +1494,7 @@ git commit -m "feat: extra_system_context parameter on LlmBase.stream()"
 ### Task 9: `Agent` — thread `memory_facts` into `respond()`
 
 **Files:**
-- Modify: `src/asr_test/agent.py`
+- Modify: `src/pos/agent.py`
 - Test: `tests/test_agent.py`
 
 **Interfaces:**
@@ -1580,7 +1580,7 @@ Expected: FAIL — `TypeError: Agent.__init__() got an unexpected keyword argume
 
 - [ ] **Step 4: Implement in `agent.py`**
 
-In `src/asr_test/agent.py`, change the constructor signature:
+In `src/pos/agent.py`, change the constructor signature:
 ```python
     def __init__(
         self,
@@ -1654,7 +1654,7 @@ Expected: PASS, all green
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/asr_test/agent.py tests/test_agent.py tests/fakes.py
+git add src/pos/agent.py tests/test_agent.py tests/fakes.py
 git commit -m "feat: Agent.memory_facts callback threaded into respond()'s stream() call"
 ```
 
@@ -1663,7 +1663,7 @@ git commit -m "feat: Agent.memory_facts callback threaded into respond()'s strea
 ### Task 10: `server.py` — `GET/POST /memory` + wiring `memory_facts` into `Agent`
 
 **Files:**
-- Modify: `src/asr_test/cli/server.py`
+- Modify: `src/pos/cli/server.py`
 - Test: `tests/test_server.py`
 - Modify: `.gitignore`
 
@@ -1677,7 +1677,7 @@ Add to `tests/test_server.py`:
 
 ```python
 def test_get_memory_returns_empty_string_when_file_does_not_exist(monkeypatch, tmp_path):
-    monkeypatch.setattr("asr_test.cli.server.MEMORY_PATH", tmp_path / "MEMORY.md")
+    monkeypatch.setattr("pos.cli.server.MEMORY_PATH", tmp_path / "MEMORY.md")
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -1695,7 +1695,7 @@ def test_get_memory_returns_empty_string_when_file_does_not_exist(monkeypatch, t
 
 
 def test_post_memory_writes_the_file_and_get_reflects_it(monkeypatch, tmp_path):
-    monkeypatch.setattr("asr_test.cli.server.MEMORY_PATH", tmp_path / "MEMORY.md")
+    monkeypatch.setattr("pos.cli.server.MEMORY_PATH", tmp_path / "MEMORY.md")
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -1717,7 +1717,7 @@ def test_ws_passes_memory_content_to_agent(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     memory_path = tmp_path / "MEMORY.md"
     memory_path.write_text("- prefers short answers")
-    monkeypatch.setattr("asr_test.cli.server.MEMORY_PATH", memory_path)
+    monkeypatch.setattr("pos.cli.server.MEMORY_PATH", memory_path)
     captured = {}
 
     class _SpyLlm(FakeLlm):
@@ -1747,7 +1747,7 @@ def test_ws_passes_memory_content_to_agent(monkeypatch, tmp_path):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_server.py -k memory -v`
-Expected: FAIL — `AttributeError: module 'asr_test.cli.server' has no attribute 'MEMORY_PATH'` (first two), and the third fails because `_SpyLlm` never receives real memory content (still `None`)
+Expected: FAIL — `AttributeError: module 'pos.cli.server' has no attribute 'MEMORY_PATH'` (first two), and the third fails because `_SpyLlm` never receives real memory content (still `None`)
 
 - [ ] **Step 3: Implement in `server.py`**
 
@@ -1813,7 +1813,7 @@ Add immediately after the `/skills/` entry from Task 5:
 ```
 
 # Always-on user memory, a single Markdown file (see
-# src/asr_test/cli/server.py's MEMORY_PATH) -- same local/personal
+# src/pos/cli/server.py's MEMORY_PATH) -- same local/personal
 # reasoning as plugins/ and skills/.
 /memory/
 ```
@@ -1826,7 +1826,7 @@ Expected: PASS, all green
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/asr_test/cli/server.py tests/test_server.py .gitignore
+git add src/pos/cli/server.py tests/test_server.py .gitignore
 git commit -m "feat: GET/POST /memory, wire memory/MEMORY.md into Agent's memory_facts"
 ```
 
@@ -1835,7 +1835,7 @@ git commit -m "feat: GET/POST /memory, wire memory/MEMORY.md into Agent's memory
 ### Task 11: Settings UI — Memory tab
 
 **Files:**
-- Modify: `src/asr_test/static/index.html`
+- Modify: `src/pos/static/index.html`
 
 **Interfaces:**
 - Consumes: `GET /memory`, `POST /memory` from Task 10; `settingsPanels.memory` (the `#settingsPanel-memory` div) from Task 1.
@@ -1960,6 +1960,6 @@ Expected: PASS — this task is frontend-only.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/asr_test/static/index.html
+git add src/pos/static/index.html
 git commit -m "feat: Memory tab in Settings (textarea + Save, backed by memory/MEMORY.md)"
 ```

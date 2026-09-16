@@ -1,6 +1,6 @@
 import os
 
-from asr_test.llm.tools import default_tools, tool_status
+from pos.llm.tools import default_tools, tool_status
 
 
 def test_get_current_time_is_always_enabled(monkeypatch):

@@ -5,10 +5,10 @@ import numpy as np
 from fakes import FakeLlm, FakeStt, FakeTts, FakeVad
 from starlette.testclient import TestClient
 
-from asr_test import config
-from asr_test.cli.server import _default_llm_models, create_app
-from asr_test.storage import SessionStore
-from asr_test.utils import float32_to_pcm16
+from pos import config
+from pos.cli.server import _default_llm_models, create_app
+from pos.storage import SessionStore
+from pos.utils import float32_to_pcm16
 
 
 def _receive_json_skipping_audio(ws, max_messages=200):
@@ -70,7 +70,7 @@ def test_two_concurrent_sessions_have_independent_history(monkeypatch):
 
 
 def test_options_endpoint_lists_tts_voices_and_llm_models(monkeypatch):
-    monkeypatch.setattr("asr_test.cli.server._default_llm_models", lambda base_url, fallback: ["model-a", "model-b"])
+    monkeypatch.setattr("pos.cli.server._default_llm_models", lambda base_url, fallback: ["model-a", "model-b"])
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -93,7 +93,7 @@ def test_options_endpoint_includes_provider_and_tools_for_connections_diagram(mo
     monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    monkeypatch.setattr("asr_test.cli.server._default_llm_models", lambda base_url, fallback: ["model-a"])
+    monkeypatch.setattr("pos.cli.server._default_llm_models", lambda base_url, fallback: ["model-a"])
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -120,7 +120,7 @@ def test_default_llm_models_falls_back_when_lm_studio_unreachable(monkeypatch):
         def get(self, *a, **kw):
             raise ConnectionError("no server")
 
-    monkeypatch.setattr("asr_test.cli.server.requests", _BoomSession())
+    monkeypatch.setattr("pos.cli.server.requests", _BoomSession())
 
     assert _default_llm_models("http://localhost:1234/v1", "fallback-model") == ["fallback-model"]
 
