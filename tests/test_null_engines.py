@@ -1,6 +1,6 @@
 import numpy as np
 
-from asr_test.null_engines import NullTts, NullVad
+from pos.null_engines import NullTts, NullVad
 
 
 def test_null_tts_returns_empty_audio():

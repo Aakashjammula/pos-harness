@@ -1,7 +1,7 @@
 import os
 
-from asr_test.llm.providers.base import ProviderConfig
-from asr_test.llm.providers.openrouter import OpenRouterProvider
+from pos.llm.providers.base import ProviderConfig
+from pos.llm.providers.openrouter import OpenRouterProvider
 
 
 def _openrouter_provider(model="openrouter/auto"):
@@ -82,7 +82,7 @@ def test_build_model_passes_expected_kwargs(monkeypatch):
         captured_kwargs.update(kwargs)
         return "the-model"
 
-    monkeypatch.setattr("asr_test.llm.providers.openrouter.ChatOpenRouter", fake_chat_openrouter)
+    monkeypatch.setattr("pos.llm.providers.openrouter.ChatOpenRouter", fake_chat_openrouter)
 
     result = OpenRouterProvider().build_model(
         _openrouter_provider(), max_tokens=120, temperature=0.7, timeout=30, stream_usage=True

@@ -1,7 +1,7 @@
 import os
 
-from asr_test.llm.providers.base import ProviderConfig
-from asr_test.llm.providers.gemini import GeminiProvider
+from pos.llm.providers.base import ProviderConfig
+from pos.llm.providers.gemini import GeminiProvider
 
 
 def _gemini_provider(model="gemini-3.7-flash"):
@@ -82,7 +82,7 @@ def test_build_model_passes_expected_kwargs(monkeypatch):
         captured_kwargs.update(kwargs)
         return "the-model"
 
-    monkeypatch.setattr("asr_test.llm.providers.gemini.ChatGoogleGenerativeAI", fake_chat_gemini)
+    monkeypatch.setattr("pos.llm.providers.gemini.ChatGoogleGenerativeAI", fake_chat_gemini)
 
     result = GeminiProvider().build_model(
         _gemini_provider(), max_tokens=120, temperature=0.7, timeout=30, stream_usage=True
@@ -104,7 +104,7 @@ def test_build_model_strips_unsupported_stream_usage_kwarg(monkeypatch):
         captured_kwargs.update(kwargs)
         return "the-model"
 
-    monkeypatch.setattr("asr_test.llm.providers.gemini.ChatGoogleGenerativeAI", fake_chat_gemini)
+    monkeypatch.setattr("pos.llm.providers.gemini.ChatGoogleGenerativeAI", fake_chat_gemini)
 
     GeminiProvider().build_model(_gemini_provider(), max_tokens=120, temperature=0.7, timeout=30, stream_usage=True)
 

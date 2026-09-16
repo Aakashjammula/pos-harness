@@ -9,9 +9,9 @@ Per-turn timing printed inline:
     tts_rtf     synth_time / audio_duration   (<1.0 = faster than realtime)
     ttfa        end-of-speech to first speaker sample
 
-Code lives in src/asr_test/. To swap an engine (VAD/STT/LLM/TTS), pass a
-different implementation of its interface (src/asr_test/interfaces/) into
-Agent(...) — see src/asr_test/vad, stt, tts, llm for the built-in ones.
+Code lives in src/pos/. To swap an engine (VAD/STT/LLM/TTS), pass a
+different implementation of its interface (src/pos/interfaces/) into
+Agent(...) — see src/pos/vad, stt, tts, llm for the built-in ones.
 Pick a TTS engine at launch with --tts; VAD/STT/LLM currently have a
 single built-in implementation each, so there's nothing to select yet.
 
@@ -47,12 +47,12 @@ Usage:
 import argparse
 import uuid
 
-from asr_test import config
-from asr_test.agent import Agent
-from asr_test.storage import SessionStore
-from asr_test.tts import KokoroTts, SupertonicTts
-from asr_test.utils import list_input_devices, resolve_input_device, start_mute_toggle_listener
-from asr_test.vad import SileroVad
+from pos import config
+from pos.agent import Agent
+from pos.storage import SessionStore
+from pos.tts import KokoroTts, SupertonicTts
+from pos.utils import list_input_devices, resolve_input_device, start_mute_toggle_listener
+from pos.vad import SileroVad
 
 _TTS_ENGINES = {
     "kokoro": KokoroTts,

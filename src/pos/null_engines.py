@@ -7,7 +7,7 @@ that needs "a null engine, nothing else" would otherwise drag in
 KokoroTts/SupertonicTts/SileroVad's own imports just by asking for
 these -- exactly the cost text mode exists to avoid, and exactly what
 this project's existing lazy-import convention (see create_app()'s own
-deferred `from asr_test.tts import ...`) is careful to prevent for
+deferred `from pos.tts import ...`) is careful to prevent for
 tests that inject fake engines instead."""
 
 from __future__ import annotations

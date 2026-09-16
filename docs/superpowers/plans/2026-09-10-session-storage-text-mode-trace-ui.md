@@ -26,8 +26,8 @@
 ### Task 1: `SessionStore` core (schema, create/list/get)
 
 **Files:**
-- Create: `src/asr_test/storage.py`
-- Modify: `src/asr_test/config.py` (add `SESSIONS_DB_PATH`)
+- Create: `src/pos/storage.py`
+- Modify: `src/pos/config.py` (add `SESSIONS_DB_PATH`)
 - Test: `tests/test_storage.py`
 
 **Interfaces:**
@@ -39,7 +39,7 @@
 Create `tests/test_storage.py`:
 
 ```python
-from asr_test.storage import SessionStore
+from pos.storage import SessionStore
 
 
 def _store():
@@ -115,17 +115,17 @@ def test_add_turn_without_usage_stores_none():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_storage.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'asr_test.storage'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'pos.storage'`
 
 - [ ] **Step 3: Write the implementation**
 
-Add to `src/asr_test/config.py` (near the other top-level constants, e.g. after `HISTORY_TURNS`):
+Add to `src/pos/config.py` (near the other top-level constants, e.g. after `HISTORY_TURNS`):
 
 ```python
 SESSIONS_DB_PATH = "sessions.db"   # SQLite file for session/turn history — see storage.py
 ```
 
-Create `src/asr_test/storage.py`:
+Create `src/pos/storage.py`:
 
 ```python
 """SQLite-backed session/turn history. Owned entirely by the transport
@@ -255,7 +255,7 @@ Expected: PASS, all tests green
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/storage.py src/asr_test/config.py tests/test_storage.py
+git add src/pos/storage.py src/pos/config.py tests/test_storage.py
 git commit -m "feat: add SQLite SessionStore for session/turn history"
 ```
 
@@ -276,7 +276,7 @@ git commit -m "feat: add SQLite SessionStore for session/turn history"
 Add to `tests/test_server.py` (near the top, alongside other imports):
 
 ```python
-from asr_test.storage import SessionStore
+from pos.storage import SessionStore
 ```
 
 Add these tests (place near the other `_make_client`-style tests):
@@ -399,14 +399,14 @@ Expected: FAIL — `create_app() got an unexpected keyword argument 'session_sto
 
 - [ ] **Step 3: Write the implementation**
 
-In `server.py`, add imports (alongside the existing `from asr_test...` imports):
+In `server.py`, add imports (alongside the existing `from pos...` imports):
 
 ```python
 import uuid
 
 from fastapi import HTTPException
 
-from asr_test.storage import SessionStore
+from pos.storage import SessionStore
 ```
 
 Change `create_app`'s signature — add one new parameter after `llm_base_url`:
@@ -525,7 +525,7 @@ After Step 3's implementation, run:
 
 ```bash
 uv run python -c "
-from asr_test.storage import SessionStore
+from pos.storage import SessionStore
 import uuid
 store = SessionStore('sessions.db')
 store.create_session(uuid.uuid4().hex, mode='voice', tts_engine='kokoro', llm_model='test-model')
@@ -539,12 +539,12 @@ Expected: prints a list containing the just-created session — confirms `Sessio
 
 - [ ] **Step 3: Write the implementation**
 
-In `main.py`, add to the imports (alongside the existing `from asr_test...` imports):
+In `main.py`, add to the imports (alongside the existing `from pos...` imports):
 
 ```python
 import uuid
 
-from asr_test.storage import SessionStore
+from pos.storage import SessionStore
 ```
 
 In `main()`, right before the existing `agent = Agent(vad=vad, tts=tts, trigger_word=args.trigger_word)` line, add:
@@ -591,7 +591,7 @@ git commit -m "feat: persist local-mode sessions to SessionStore"
 ### Task 4: `Agent` gains `text_only` mode
 
 **Files:**
-- Modify: `src/asr_test/agent.py` (`__init__`, `respond()`'s `enqueue()`, new `on_text_message()`)
+- Modify: `src/pos/agent.py` (`__init__`, `respond()`'s `enqueue()`, new `on_text_message()`)
 - Test: `tests/test_agent.py` (extend)
 
 **Interfaces:**
@@ -649,7 +649,7 @@ Expected: FAIL — `TypeError: Agent.__init__() got an unexpected keyword argume
 
 - [ ] **Step 3: Write the implementation**
 
-In `src/asr_test/agent.py`, add `text_only: bool = False` to `Agent.__init__`'s parameter list, right after `trigger_word: str | None = None,`:
+In `src/pos/agent.py`, add `text_only: bool = False` to `Agent.__init__`'s parameter list, right after `trigger_word: str | None = None,`:
 
 ```python
         text_only: bool = False,
@@ -712,7 +712,7 @@ Expected: PASS, all tests green
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/asr_test/agent.py tests/test_agent.py
+git add src/pos/agent.py tests/test_agent.py
 git commit -m "feat: add Agent text_only mode and on_text_message() entry point"
 ```
 
@@ -726,7 +726,7 @@ git commit -m "feat: add Agent text_only mode and on_text_message() entry point"
 
 **Interfaces:**
 - Consumes: `Agent(text_only=...)` and `Agent.on_text_message()` from Task 4.
-- Produces: `/ws?mode=text|voice` query param, validated the same way as `vad_*`; a `NullAudioSink` (new, `src/asr_test/audio/null_sink.py`) used instead of `WebSocketAudioSink` when `mode == "text"`. Task 6 (browser UI) is the client of this.
+- Produces: `/ws?mode=text|voice` query param, validated the same way as `vad_*`; a `NullAudioSink` (new, `src/pos/audio/null_sink.py`) used instead of `WebSocketAudioSink` when `mode == "text"`. Task 6 (browser UI) is the client of this.
 
 **Correction found while implementing this task (not anticipated in
 the spec):** `WebSocketAudioSink` cannot be constructed unconditionally

@@ -5,11 +5,11 @@ Status: draft, awaiting review
 
 ## Context
 
-`asr_test` is currently one local process: `main.py` builds an `Agent`
+`pos` is currently one local process: `main.py` builds an `Agent`
 that owns a `sounddevice` mic `InputStream`, runs VAD/STT/LLM/TTS on three
 background threads connected by queues, and writes synthesized audio to a
 `sounddevice` `OutputStream`. VAD/STT/LLM/TTS already sit behind small
-ABCs (`src/asr_test/interfaces/`) so engines are swappable, but only one
+ABCs (`src/pos/interfaces/`) so engines are swappable, but only one
 concrete implementation per stage is wired up today (STT: Parakeet-TDT
 via onnx-asr; LLM: any OpenAI-compatible server, currently LM Studio;
 TTS: Kokoro or Supertonic — both local/CPU).
@@ -234,7 +234,7 @@ main.py                          local mode (unchanged behavior, thin wrapper ov
 server.py                        NEW — FastAPI app, /ws endpoint, serves static/index.html
 ws_client.py                     NEW — CLI relay client
 static/index.html                NEW — browser relay client
-src/asr_test/
+src/pos/
   agent.py                       feed_audio()/start()/shutdown() split out of mic_callback()/run()
   interfaces/
     audio_sink.py                NEW — AudioSinkBase

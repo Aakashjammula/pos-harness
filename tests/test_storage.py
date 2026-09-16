@@ -1,4 +1,4 @@
-from asr_test.storage import SessionStore
+from pos.storage import SessionStore
 
 
 def _store():

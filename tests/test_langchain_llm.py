@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 from langchain_core.messages import AIMessageChunk
 
-from asr_test.llm.langchain_llm import LangChainLlm
+from pos.llm.langchain_llm import LangChainLlm
 
 
 @pytest.fixture(autouse=True)
@@ -15,7 +15,7 @@ def _clear_provider_env(monkeypatch):
     # context-window lookup (local's provider hits LM Studio's REST
     # API) — test_context_window_resolved_once_at_construction below
     # overrides this per-test with its own monkeypatch.setattr.
-    monkeypatch.setattr("asr_test.llm.langchain_llm.context_window_for", lambda provider: None)
+    monkeypatch.setattr("pos.llm.langchain_llm.context_window_for", lambda provider: None)
 
 
 def _text_chunk(content):
@@ -57,7 +57,7 @@ def _make_llm(monkeypatch, runnable, tools=()):
     mock_model = MagicMock()
     mock_model.bind_tools.return_value = runnable
     mock_model.stream = runnable.stream  # used verbatim when tools=[] (no bind_tools wrapping)
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
     return LangChainLlm(tools=list(tools), warmup=False)
 
 
@@ -134,11 +134,11 @@ def test_init_passes_env_override_to_resolve_provider(monkeypatch):
 
     def fake_resolve_provider(model_override=None, env=None):
         seen["env"] = env
-        from asr_test.llm.providers import ProviderConfig
+        from pos.llm.providers import ProviderConfig
         return ProviderConfig(name="local", model="m", base_url="http://x", api_key="k")
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.resolve_provider", fake_resolve_provider)
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: MagicMock(
+    monkeypatch.setattr("pos.llm.langchain_llm.resolve_provider", fake_resolve_provider)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", lambda provider, **kw: MagicMock(
         bind_tools=lambda tools: _FakeRunnable([])
     ))
 
@@ -154,8 +154,8 @@ def test_init_passes_env_override_to_default_tools_when_tools_not_given(monkeypa
         seen["env"] = env
         return []
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.default_tools", fake_default_tools)
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: MagicMock(
+    monkeypatch.setattr("pos.llm.langchain_llm.default_tools", fake_default_tools)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", lambda provider, **kw: MagicMock(
         bind_tools=lambda tools: _FakeRunnable([])
     ))
 
@@ -173,7 +173,7 @@ def test_init_passes_expected_kwargs_to_build_model(monkeypatch):
         mock_model.bind_tools.return_value = _FakeRunnable([])
         return mock_model
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", fake_build_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", fake_build_model)
 
     LangChainLlm(max_tokens=99, timeout=12, tools=[], warmup=False)
 
@@ -189,7 +189,7 @@ def test_warmup_failure_message_omits_lm_studio_hint_for_non_local(monkeypatch, 
     mock_model = MagicMock()
     mock_model.invoke.side_effect = RuntimeError("boom")
     mock_model.bind_tools.return_value = _FakeRunnable([])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
 
     LangChainLlm(tools=[], warmup=True, warmup_attempts=1)
 
@@ -199,11 +199,11 @@ def test_warmup_failure_message_omits_lm_studio_hint_for_non_local(monkeypatch, 
 
 
 def test_warmup_retries_on_failure_and_succeeds_before_attempts_exhausted(monkeypatch, capsys):
-    monkeypatch.setattr("asr_test.llm.langchain_llm.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("pos.llm.langchain_llm.time.sleep", lambda seconds: None)
     mock_model = MagicMock()
     mock_model.invoke.side_effect = [ConnectionError("not up yet"), MagicMock()]
     mock_model.bind_tools.return_value = _FakeRunnable([])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
 
     LangChainLlm(tools=[], warmup=True, warmup_attempts=3, warmup_backoff_base=1.0)
 
@@ -214,11 +214,11 @@ def test_warmup_retries_on_failure_and_succeeds_before_attempts_exhausted(monkey
 
 
 def test_warmup_gives_up_and_logs_after_exhausting_attempts(monkeypatch, capsys):
-    monkeypatch.setattr("asr_test.llm.langchain_llm.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("pos.llm.langchain_llm.time.sleep", lambda seconds: None)
     mock_model = MagicMock()
     mock_model.invoke.side_effect = ConnectionError("still not up")
     mock_model.bind_tools.return_value = _FakeRunnable([])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
 
     LangChainLlm(tools=[], warmup=True, warmup_attempts=3, warmup_backoff_base=1.0)
 
@@ -232,14 +232,14 @@ def test_context_window_resolved_once_at_construction(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     mock_model = MagicMock()
     mock_model.bind_tools.return_value = _FakeRunnable([[_text_chunk("hi")]])
-    monkeypatch.setattr("asr_test.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", lambda provider, **kw: mock_model)
     calls = []
 
     def fake_context_window_for(provider):
         calls.append(provider)
         return 131072
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.context_window_for", fake_context_window_for)
+    monkeypatch.setattr("pos.llm.langchain_llm.context_window_for", fake_context_window_for)
 
     llm = LangChainLlm(tools=[], warmup=False)
 
@@ -355,7 +355,7 @@ def test_stream_retries_context_window_lookup_on_next_turn_when_still_none(monke
         calls.append(provider)
         return 131072
 
-    monkeypatch.setattr("asr_test.llm.langchain_llm.context_window_for", fake_context_window_for)
+    monkeypatch.setattr("pos.llm.langchain_llm.context_window_for", fake_context_window_for)
 
     usage1 = {}
     list(llm.stream([{"role": "user", "content": "hi"}], threading.Event(), usage1))

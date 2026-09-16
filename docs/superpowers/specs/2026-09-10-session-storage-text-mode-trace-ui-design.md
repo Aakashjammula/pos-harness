@@ -40,7 +40,7 @@ sub-project A) is sent over the wire but nothing renders it.
 
 ## B — Session persistence
 
-### Schema (`src/asr_test/storage.py`)
+### Schema (`src/pos/storage.py`)
 
 ```sql
 CREATE TABLE IF NOT EXISTS sessions (
@@ -114,7 +114,7 @@ class SessionStore:
 
 ## C — Text chat mode
 
-### `Agent` changes (`src/asr_test/agent.py`)
+### `Agent` changes (`src/pos/agent.py`)
 
 - New constructor param `text_only: bool = False`.
 - `respond()`'s `enqueue()` (the inner function that currently does
@@ -163,7 +163,7 @@ class SessionStore:
   `blocksize/rate` seconds unconditionally). A text-mode session would
   therefore stream continuous silent binary frames even though no TTS
   ever runs. Fix: a new `NullAudioSink(AudioSinkBase)`
-  (`src/asr_test/audio/null_sink.py`) — every method a no-op,
+  (`src/pos/audio/null_sink.py`) — every method a no-op,
   `playing` always `False` — constructed instead of `WebSocketAudioSink`
   when `mode == "text"`.
 

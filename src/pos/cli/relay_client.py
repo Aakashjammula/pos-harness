@@ -35,8 +35,8 @@ import numpy as np
 import sounddevice as sd
 import websockets
 
-from asr_test import config
-from asr_test.utils import (
+from pos import config
+from pos.utils import (
     float32_to_pcm16,
     list_input_devices,
     pcm16_to_float32,

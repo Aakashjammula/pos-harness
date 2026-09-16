@@ -1,5 +1,5 @@
 [project]
-name = "asr-test"
+name = "pos-harness"
 version = "0.1.0"
 description = "Full-duplex local speech-to-speech voice agent (VAD/STT/LLM/TTS) with barge-in, session history, and a browser or CLI client."
 readme = "README.md"
@@ -29,12 +29,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/asr_test"]
+packages = ["src/pos"]
 
 [project.scripts]
-asr-agent = "asr_test.cli.local:main"
-asr-server = "asr_test.cli.server:run"
-asr-client = "asr_test.cli.relay_client:main"
+pos-agent = "pos.cli.local:main"
+pos-server = "pos.cli.server:run"
+pos-client = "pos.cli.relay_client:main"
 
 [dependency-groups]
 dev = [

@@ -1,6 +1,6 @@
 import pytest
 
-from asr_test.llm.providers import ProviderConfig, estimate_cost, resolve_provider
+from pos.llm.providers import ProviderConfig, estimate_cost, resolve_provider
 
 
 def test_defaults_to_local_when_no_env_vars_set(monkeypatch):
