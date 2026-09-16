@@ -560,3 +560,4 @@ overlaps with LLM generation of the next one instead of blocking it.
   leading filler words before the trigger will cause a genuine command to
   be dropped; raise `TRIGGER_LOOKAHEAD_WORDS` if that happens often in
   your own speech.
+# pos-harness
