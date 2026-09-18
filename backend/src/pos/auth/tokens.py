@@ -15,6 +15,7 @@ from pos import config
 
 ACCESS_TOKEN_TTL = timedelta(minutes=15)
 REFRESH_TOKEN_TTL = timedelta(days=30)
+MAGIC_LINK_TOKEN_TTL = timedelta(minutes=15)
 _ALGORITHM = "HS256"
 
 
@@ -43,3 +44,12 @@ def hash_refresh_token(raw: str) -> str:
 def new_refresh_token() -> tuple[str, str]:
     raw = secrets.token_urlsafe(48)
     return raw, hash_refresh_token(raw)
+
+
+def hash_magic_link_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def new_magic_link_token() -> tuple[str, str]:
+    raw = secrets.token_urlsafe(32)
+    return raw, hash_magic_link_token(raw)

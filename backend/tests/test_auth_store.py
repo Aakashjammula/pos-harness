@@ -32,7 +32,7 @@ def _shared_pool():
 def _store():
     pool = _shared_pool()
     with pool.connection() as conn:
-        conn.execute("TRUNCATE users RESTART IDENTITY CASCADE")
+        conn.execute("TRUNCATE users, magic_link_tokens RESTART IDENTITY CASCADE")
     return UserStore(pool)
 
 
@@ -154,3 +154,47 @@ def test_delete_credential():
     assert store.delete_credential(user["id"], "openai") is True
     assert store.delete_credential(user["id"], "openai") is False
     assert store.get_credential(user["id"], "openai") is None
+
+
+def test_create_user_without_a_password_defaults_to_none():
+    store = _store()
+    user = store.create_user("a@test")
+    assert store.get_user_by_email("a@test")["password_hash"] is None
+    assert user["email"] == "a@test"
+
+
+def test_get_or_create_user_by_email_creates_a_passwordless_account():
+    store = _store()
+    user = store.get_or_create_user_by_email("new@test")
+    assert store.get_user_by_email("new@test")["password_hash"] is None
+    assert user["email"] == "new@test"
+
+
+def test_get_or_create_user_by_email_returns_the_existing_user():
+    store = _store()
+    created = store.create_user("a@test", "h")
+    found = store.get_or_create_user_by_email("a@test")
+    assert found["id"] == created["id"]
+
+
+def test_magic_link_token_is_single_use():
+    store = _store()
+    expires = datetime.now(UTC) + timedelta(minutes=15)
+    store.store_magic_link_token("a@test", "hash-1", expires)
+
+    assert store.consume_magic_link_token("hash-1") == "a@test"
+    assert store.consume_magic_link_token("hash-1") is None
+
+
+def test_expired_magic_link_token_is_rejected():
+    store = _store()
+    store.store_magic_link_token("a@test", "hash-old", datetime.now(UTC) - timedelta(seconds=1))
+    assert store.consume_magic_link_token("hash-old") is None
+
+
+def test_recent_magic_link_request_detects_a_throttle_window():
+    store = _store()
+    store.store_magic_link_token("a@test", "hash-1", datetime.now(UTC) + timedelta(minutes=15))
+
+    assert store.recent_magic_link_request("a@test", within=timedelta(seconds=60)) is True
+    assert store.recent_magic_link_request("nobody@test", within=timedelta(seconds=60)) is False
