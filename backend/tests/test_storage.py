@@ -5,12 +5,24 @@ from pos.storage import SessionStore
 
 _DSN = os.environ.get("TEST_DATABASE_URL", "postgresql://pos:pos@localhost:5432/pos")
 
+_pool = None
+
+
+def _shared_pool():
+    """One ConnectionPool reused by every test in this module -- a fresh
+    pool per test exhausts Postgres's default max_connections=100 once
+    enough tests accumulate in one process."""
+    global _pool
+    if _pool is None:
+        _pool = create_pool(_DSN, max_size=5)
+        init_schema(_pool)
+    return _pool
+
 
 def _store():
     """A SessionStore on a clean database, plus one user that owns
     everything the test creates."""
-    pool = create_pool(_DSN, max_size=5)
-    init_schema(pool)
+    pool = _shared_pool()
     with pool.connection() as conn:
         conn.execute("TRUNCATE users, sessions, turns RESTART IDENTITY CASCADE")
         user = conn.execute(

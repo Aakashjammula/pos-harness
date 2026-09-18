@@ -4,21 +4,12 @@ FastAPI websocket server — see docs/superpowers/specs/
 2026-09-10-web-ui-provider-selection-design.md (model/provider
 selection, this file's /options + query-param handling).
 
-Five endpoints:
+Four endpoints (plus /auth/* and /credentials/* -- see pos.auth.routes):
   GET  /options          what the UI can offer before connecting (TTS
                          engines/voices, LLM models currently loaded in
                          LM Studio, the active provider, and which tools
                          are bound/enabled — for the Settings page's
                          Connections diagram)
-  POST /session-keys     accepts optional per-connection API keys typed
-                         into the browser's Settings page (openai_api_key,
-                         azure_api_key/azure_endpoint/azure_deployment,
-                         tavily_api_key) and returns a short-lived, single-use
-                         key_token -- kept only in server memory (never
-                         written to disk), never echoed back, and never
-                         put in a URL/query string itself (which would
-                         otherwise leak into uvicorn's own access log);
-                         only the opaque token travels in the /ws URL.
   GET  /sessions         list of past sessions (id, mode, turn count, ...),
                          newest first — read-only, see storage.py
   GET  /sessions/{id}    one session's stored turns, 404 if unknown
@@ -58,14 +49,18 @@ Five endpoints:
                          reconnect with resume_session_id set to the same
                          session_id — see the browser client's mode toggle.
 
-                         `key_token` (optional) applies the per-connection
-                         API key override from a prior POST /session-keys
-                         call. An unknown/expired/already-used token gets
-                         the same error+close treatment as an invalid mode.
-                         A connection with an override never uses the
-                         shared per-model LLM cache -- it gets its own
-                         uncached LangChainLlm, since two sessions sharing
-                         one model name must never share one session's key.
+                         `provider` (optional) selects which stored, per-user
+                         encrypted credential to load for this connection --
+                         see pos.auth.routes.PROVIDER_FIELDS for the set of
+                         providers and pos.auth.store.UserStore for how
+                         credentials are stored. A connection with stored
+                         credentials never uses the shared per-model LLM
+                         cache -- it gets its own uncached LangChainLlm,
+                         since two sessions sharing one model name must
+                         never share one session's key.
+
+Every /ws connection and every /sessions* request requires a signed-in
+user (see pos.auth.deps) -- there is no anonymous mode.
 
 Each connection gets its own Agent (own VAD state, own conversation
 history), but STT and same-(engine,voice)/same-model TTS/LLM instances
@@ -82,21 +77,21 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import secrets
-import time
 import uuid
 from collections.abc import Callable, Mapping
-from pathlib import Path
 
 import requests
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 
 from pos import config
 from pos.agent import Agent
 from pos.audio.null_sink import NullAudioSink
 from pos.audio.ws_sink import WebSocketAudioSink
+from pos.auth.deps import require_user_id, user_id_from_request
+from pos.auth.routes import build_auth_router
+from pos.auth.store import UserStore
+from pos.db import create_pool, init_schema
 from pos.interfaces import LlmBase, SttBase, TtsBase, VadBase
 from pos.llm.providers import resolve_provider
 from pos.llm.tools import tool_status
@@ -117,30 +112,6 @@ def _default_vad_factory(
         min_silence_ms=min_silence_ms,
         speech_pad_ms=speech_pad_ms,
     )
-
-
-class SessionKeysRequest(BaseModel):
-    """POST /session-keys body -- see create_app's /session-keys route.
-    Defined at module level (not nested inside create_app) since
-    `from __future__ import annotations` stringifies the route
-    function's annotation, and FastAPI can't resolve a forward
-    reference to a class that only exists in a function's local
-    scope -- it would otherwise silently fall back to treating this
-    as a query parameter instead of a JSON body."""
-
-    local_api_key: str | None = None
-    local_base_url: str | None = None
-    openai_api_key: str | None = None
-    azure_api_key: str | None = None
-    azure_endpoint: str | None = None
-    azure_deployment: str | None = None
-    anthropic_api_key: str | None = None
-    gemini_api_key: str | None = None
-    openrouter_api_key: str | None = None
-    bedrock_access_key_id: str | None = None
-    bedrock_secret_access_key: str | None = None
-    bedrock_region: str | None = None
-    tavily_api_key: str | None = None
 
 
 def _default_llm_models(base_url: str, fallback: str) -> list[str]:
@@ -166,6 +137,7 @@ def create_app(
     default_llm_model: str = "lfm2.5-230m",
     llm_base_url: str = "http://localhost:1234/v1",
     session_store: SessionStore | None = None,
+    user_store: UserStore | None = None,
 ) -> FastAPI:
     if tts_engines is None:
         from pos.tts import KokoroTts, SupertonicTts
@@ -178,14 +150,29 @@ def create_app(
         if llm_factory is None:
             llm_factory = lambda model: LangChainLlm(model=model)  # noqa: E731
         if llm_env_factory is None:
-            # Used only for a connection with a per-connection key
-            # override (see key_token below) -- deliberately bypasses
-            # the shared _llm_cache below, since two sessions sharing a
-            # model name must never share one session's personal key.
+            # Used only for a connection with stored per-user credentials --
+            # deliberately bypasses the shared _llm_cache below, since two
+            # sessions sharing a model name must never share one session's
+            # personal key.
             llm_env_factory = lambda model, env: LangChainLlm(model=model, env=env)  # noqa: E731
 
+    if session_store is None or user_store is None:
+        pool = create_pool()
+        init_schema(pool)
+        session_store = session_store or SessionStore(pool)
+        user_store = user_store or UserStore(pool)
+    store = session_store
+    users = user_store
+
     app = FastAPI()
-    store = session_store or SessionStore(config.DATABASE_URL)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(build_auth_router(users))
 
     # Eagerly warm the default (engine, voice)/model combo at startup —
     # before uvicorn ever accepts a connection — so the *first* client
@@ -216,60 +203,6 @@ def create_app(
                 _llm_cache[model] = await loop.run_in_executor(None, llm_factory, model)
         return _llm_cache[model]
 
-    # Per-connection API key overrides typed into the browser's Settings
-    # page -- held in server memory only (never written to disk), keyed
-    # by a short-lived, single-use opaque token so the actual keys never
-    # travel in a URL/query string (which uvicorn's own access log would
-    # otherwise write to disk in plaintext). See POST /session-keys and
-    # /ws's key_token param.
-    _KEY_TOKEN_TTL_SECONDS = 60
-    _key_tokens: dict[str, tuple[dict[str, str], float]] = {}
-
-    def _prune_expired_key_tokens() -> None:
-        now = time.monotonic()
-        for token, (_, expires_at) in list(_key_tokens.items()):
-            if expires_at < now:
-                del _key_tokens[token]
-
-    @app.post("/session-keys")
-    async def session_keys(body: SessionKeysRequest):
-        overrides: dict[str, str] = {}
-        if body.local_api_key:
-            overrides["LOCAL_API_KEY"] = body.local_api_key
-        if body.local_base_url:
-            overrides["LOCAL_BASE_URL"] = body.local_base_url
-        if body.openai_api_key:
-            overrides["OPENAI_API_KEY"] = body.openai_api_key
-        if body.azure_api_key:
-            overrides["AZURE_OPENAI_API_KEY"] = body.azure_api_key
-        if body.azure_endpoint:
-            overrides["AZURE_OPENAI_ENDPOINT"] = body.azure_endpoint
-        if body.azure_deployment:
-            overrides["AZURE_OPENAI_DEPLOYMENT"] = body.azure_deployment
-        if body.anthropic_api_key:
-            overrides["ANTHROPIC_API_KEY"] = body.anthropic_api_key
-        if body.gemini_api_key:
-            overrides["GOOGLE_API_KEY"] = body.gemini_api_key
-        if body.openrouter_api_key:
-            overrides["OPENROUTER_API_KEY"] = body.openrouter_api_key
-        if body.bedrock_access_key_id:
-            overrides["AWS_ACCESS_KEY_ID"] = body.bedrock_access_key_id
-        if body.bedrock_secret_access_key:
-            overrides["AWS_SECRET_ACCESS_KEY"] = body.bedrock_secret_access_key
-        if body.bedrock_region:
-            overrides["AWS_REGION"] = body.bedrock_region
-        if body.tavily_api_key:
-            overrides["TAVILY_API_KEY"] = body.tavily_api_key
-
-        _prune_expired_key_tokens()
-        token = secrets.token_urlsafe(24)
-        _key_tokens[token] = (overrides, time.monotonic() + _KEY_TOKEN_TTL_SECONDS)
-        return {"key_token": token}
-
-    @app.get("/")
-    async def index():
-        return FileResponse(Path(__file__).parent.parent / "static" / "index.html")
-
     @app.get("/options")
     async def options():
         loop = asyncio.get_running_loop()
@@ -286,19 +219,19 @@ def create_app(
         }
 
     @app.get("/sessions")
-    async def list_sessions():
-        return store.list_sessions()
+    async def list_sessions(user_id: str = Depends(require_user_id)):
+        return store.list_sessions(user_id)
 
     @app.get("/sessions/{session_id}")
-    async def get_session(session_id: str):
-        result = store.get_session(session_id)
+    async def get_session(session_id: str, user_id: str = Depends(require_user_id)):
+        result = store.get_session(session_id, user_id)
         if result is None:
             raise HTTPException(status_code=404, detail="session not found")
         return result
 
     @app.delete("/sessions/{session_id}")
-    async def delete_session(session_id: str):
-        if not store.delete_session(session_id):
+    async def delete_session(session_id: str, user_id: str = Depends(require_user_id)):
+        if not store.delete_session(session_id, user_id):
             raise HTTPException(status_code=404, detail="session not found")
         return {"deleted": True}
 
@@ -307,25 +240,21 @@ def create_app(
         await websocket.accept()
         loop = asyncio.get_running_loop()
 
+        user_id = user_id_from_request(websocket)
+        if user_id is None:
+            await websocket.send_json({"event": "error", "message": "not authenticated"})
+            await websocket.close(code=1008)
+            return
+
         params = websocket.query_params
         tts_engine = params.get("tts", default_tts_engine)
         voice = params.get("voice") or None
         llm_model = params.get("llm_model", default_llm_model)
         trigger_word = params.get("trigger_word") or None
 
-        key_token = params.get("key_token") or None
-        env_overrides: dict[str, str] | None = None
-        if key_token:
-            _prune_expired_key_tokens()
-            entry = _key_tokens.pop(key_token, None)
-            if entry is None:
-                await websocket.send_json({
-                    "event": "error",
-                    "message": f"unknown, expired, or already-used key_token {key_token!r}",
-                })
-                await websocket.close(code=1008)
-                return
-            env_overrides = entry[0]
+        stored = users.get_credential(user_id, params.get("provider", "local"))
+        tavily = users.get_credential(user_id, "tavily")
+        env_overrides = {**(stored or {}), **(tavily or {})} or None
 
         mode = params.get("mode", "voice")
         if mode not in ("voice", "text"):
@@ -363,7 +292,7 @@ def create_app(
         resume_session_id = params.get("resume_session_id") or None
         resumed_conversation = None
         if resume_session_id:
-            existing = store.get_session(resume_session_id)
+            existing = store.get_session(resume_session_id, user_id)
             if existing is None:
                 await websocket.send_json({
                     "event": "error",
@@ -414,7 +343,10 @@ def create_app(
         stored_tts_engine = None if mode == "text" else tts_engine
         if not resume_session_id:
             try:
-                store.create_session(session_id, mode=mode, tts_engine=stored_tts_engine, llm_model=llm_model)
+                store.create_session(
+                    session_id, user_id, mode=mode,
+                    tts_engine=stored_tts_engine, llm_model=llm_model,
+                )
             except Exception as e:
                 print(f"  session store error (create_session): {e}")
         elif existing["session"]["mode"] != mode:

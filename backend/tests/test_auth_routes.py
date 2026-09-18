@@ -12,6 +12,8 @@ from pos.db import create_pool, init_schema
 
 _DSN = os.environ.get("TEST_DATABASE_URL", "postgresql://pos:pos@localhost:5432/pos")
 
+_pool = None
+
 
 @pytest.fixture(autouse=True)
 def _secrets(monkeypatch):
@@ -19,9 +21,19 @@ def _secrets(monkeypatch):
     monkeypatch.setattr(config, "ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
 
 
+def _shared_pool():
+    """One ConnectionPool reused by every test in this module -- a fresh
+    pool per test exhausts Postgres's default max_connections=100 once
+    enough tests accumulate in one process."""
+    global _pool
+    if _pool is None:
+        _pool = create_pool(_DSN, max_size=5)
+        init_schema(_pool)
+    return _pool
+
+
 def _client():
-    pool = create_pool(_DSN, max_size=5)
-    init_schema(pool)
+    pool = _shared_pool()
     with pool.connection() as conn:
         conn.execute("TRUNCATE users RESTART IDENTITY CASCADE")
     app = FastAPI()

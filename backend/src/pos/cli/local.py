@@ -45,10 +45,14 @@ Usage:
 """
 
 import argparse
+import secrets
 import uuid
 
 from pos import config
 from pos.agent import Agent
+from pos.auth.passwords import hash_password
+from pos.auth.store import UserStore
+from pos.db import create_pool, init_schema
 from pos.storage import SessionStore
 from pos.tts import KokoroTts, SupertonicTts
 from pos.utils import list_input_devices, resolve_input_device, start_mute_toggle_listener
@@ -125,10 +129,16 @@ def main():
         speech_pad_ms=args.vad_speech_pad_ms,
     )
 
-    session_store = SessionStore(config.DATABASE_URL)
+    pool = create_pool()
+    init_schema(pool)
+    users = UserStore(pool)
+    cli_user = users.get_user_by_email("cli@localhost")
+    if cli_user is None:
+        cli_user = users.create_user("cli@localhost", hash_password(secrets.token_urlsafe(32)))
+    session_store = SessionStore(pool)
     session_id = uuid.uuid4().hex
     session_store.create_session(
-        session_id, mode="voice", tts_engine=args.tts, llm_model="lfm2.5-230m"
+        session_id, cli_user["id"], mode="voice", tts_engine=args.tts, llm_model="lfm2.5-230m"
     )
 
     def on_event(name: str, data: dict) -> None:
