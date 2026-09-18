@@ -27,7 +27,7 @@ export interface ConnectConfig {
   vadThreshold: string;
   vadMinSilenceMs: string;
   vadSpeechPadMs: string;
-  keyToken: string | null;
+  provider?: string;
   resumeSessionId: string | null;
 }
 
@@ -274,7 +274,7 @@ export function useVoiceSession() {
       params.set("tts", config.ttsEngine);
       if (config.ttsVoice) params.set("voice", config.ttsVoice);
       params.set("llm_model", config.llmModel);
-      if (config.keyToken) params.set("key_token", config.keyToken);
+      if (config.provider) params.set("provider", config.provider);
       if (!textMode) params.set("voice_input_mode", activeVoiceInputModeRef.current);
       if (config.triggerWord.trim()) params.set("trigger_word", config.triggerWord.trim());
       if (config.vadThreshold.trim()) params.set("vad_threshold", config.vadThreshold.trim());

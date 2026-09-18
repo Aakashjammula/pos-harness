@@ -1,6 +1,6 @@
 "use client";
 
-import { isProviderConfigured } from "@/lib/api";
+import { removeCredential, saveCredential, saveTavilyKey } from "@/lib/credentials";
 import type { ApiKeyFields, KeyProvider, OptionsResponse, Settings, SessionMode } from "@/lib/types";
 import { ConnectionsDiagram } from "./ConnectionsDiagram";
 
@@ -13,6 +13,8 @@ interface SettingsPanelProps {
   disabled: boolean;
   onBack: () => void;
   mode: SessionMode;
+  configured: string[];
+  onCredentialsChanged: () => void;
 }
 
 const PROVIDERS: { value: Exclude<KeyProvider, "">; label: string }[] = [
@@ -39,6 +41,37 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor: string; c
   );
 }
 
+function SaveRemoveRow({
+  configured,
+  onSave,
+  onRemove,
+}: {
+  configured: boolean;
+  onSave: () => Promise<void>;
+  onRemove: () => Promise<void>;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={onSave}
+        className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-hover"
+      >
+        Save
+      </button>
+      {configured && (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="rounded-lg px-3 py-1.5 text-[12.5px] text-danger hover:bg-danger-tint"
+        >
+          Remove
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function SettingsPanel({
   settings,
   onSettingsChange,
@@ -48,6 +81,8 @@ export function SettingsPanel({
   disabled,
   onBack,
   mode,
+  configured,
+  onCredentialsChanged,
 }: SettingsPanelProps) {
   const textMode = mode === "text";
   const voices = options?.tts[settings.ttsEngine] || [];
@@ -216,9 +251,8 @@ export function SettingsPanel({
 
         <div className="mt-7 mb-1 text-[11px] font-semibold tracking-wide text-text-faint uppercase">API keys</div>
         <p className="mb-3.5 max-w-[640px] text-[12.5px] leading-relaxed text-text-faint">
-          Optional. Leave blank to use whatever the server&apos;s own environment has configured. Kept in
-          server memory for this connection only — never saved to disk, never sent anywhere else, and not
-          pre-filled on reload.
+          Saved securely on the server, encrypted at rest, and never sent back to the browser. Leave blank
+          to use the server&apos;s own environment.
         </p>
 
         <div className="mb-1 flex max-w-[420px] flex-col gap-0.5">
@@ -239,7 +273,7 @@ export function SettingsPanel({
               <span className="flex-1">{p.label}</span>
               <span
                 className={`h-2 w-2 shrink-0 rounded-full ${
-                  isProviderConfigured(p.value, settings.keys) ? "bg-accent" : "bg-text-faint"
+                  configured.includes(p.value) ? "bg-accent" : "bg-text-faint"
                 }`}
               />
             </label>
@@ -277,6 +311,17 @@ export function SettingsPanel({
                   onChange={(e) => onKeysChange({ localBaseUrl: e.target.value })}
                 />
               </Field>
+              <SaveRemoveRow
+                configured={configured.includes("local")}
+                onSave={async () => {
+                  await saveCredential("local", settings.keys);
+                  onCredentialsChanged();
+                }}
+                onRemove={async () => {
+                  await removeCredential("local");
+                  onCredentialsChanged();
+                }}
+              />
             </div>
           )}
           {settings.provider === "openai" && (
@@ -293,6 +338,17 @@ export function SettingsPanel({
                   onChange={(e) => onKeysChange({ openaiApiKey: e.target.value })}
                 />
               </Field>
+              <SaveRemoveRow
+                configured={configured.includes("openai")}
+                onSave={async () => {
+                  await saveCredential("openai", settings.keys);
+                  onCredentialsChanged();
+                }}
+                onRemove={async () => {
+                  await removeCredential("openai");
+                  onCredentialsChanged();
+                }}
+              />
             </div>
           )}
           {settings.provider === "azure" && (
@@ -327,6 +383,17 @@ export function SettingsPanel({
                   onChange={(e) => onKeysChange({ azureDeployment: e.target.value })}
                 />
               </Field>
+              <SaveRemoveRow
+                configured={configured.includes("azure")}
+                onSave={async () => {
+                  await saveCredential("azure", settings.keys);
+                  onCredentialsChanged();
+                }}
+                onRemove={async () => {
+                  await removeCredential("azure");
+                  onCredentialsChanged();
+                }}
+              />
             </div>
           )}
           {settings.provider === "anthropic" && (
@@ -343,6 +410,17 @@ export function SettingsPanel({
                   onChange={(e) => onKeysChange({ anthropicApiKey: e.target.value })}
                 />
               </Field>
+              <SaveRemoveRow
+                configured={configured.includes("anthropic")}
+                onSave={async () => {
+                  await saveCredential("anthropic", settings.keys);
+                  onCredentialsChanged();
+                }}
+                onRemove={async () => {
+                  await removeCredential("anthropic");
+                  onCredentialsChanged();
+                }}
+              />
             </div>
           )}
           {settings.provider === "gemini" && (
@@ -358,6 +436,17 @@ export function SettingsPanel({
                   onChange={(e) => onKeysChange({ geminiApiKey: e.target.value })}
                 />
               </Field>
+              <SaveRemoveRow
+                configured={configured.includes("gemini")}
+                onSave={async () => {
+                  await saveCredential("gemini", settings.keys);
+                  onCredentialsChanged();
+                }}
+                onRemove={async () => {
+                  await removeCredential("gemini");
+                  onCredentialsChanged();
+                }}
+              />
             </div>
           )}
           {settings.provider === "bedrock" && (
@@ -394,6 +483,17 @@ export function SettingsPanel({
                   onChange={(e) => onKeysChange({ bedrockRegion: e.target.value })}
                 />
               </Field>
+              <SaveRemoveRow
+                configured={configured.includes("bedrock")}
+                onSave={async () => {
+                  await saveCredential("bedrock", settings.keys);
+                  onCredentialsChanged();
+                }}
+                onRemove={async () => {
+                  await removeCredential("bedrock");
+                  onCredentialsChanged();
+                }}
+              />
             </div>
           )}
           {settings.provider === "openrouter" && (
@@ -410,6 +510,17 @@ export function SettingsPanel({
                   onChange={(e) => onKeysChange({ openrouterApiKey: e.target.value })}
                 />
               </Field>
+              <SaveRemoveRow
+                configured={configured.includes("openrouter")}
+                onSave={async () => {
+                  await saveCredential("openrouter", settings.keys);
+                  onCredentialsChanged();
+                }}
+                onRemove={async () => {
+                  await removeCredential("openrouter");
+                  onCredentialsChanged();
+                }}
+              />
             </div>
           )}
           <div className="grid content-start gap-2.5">
@@ -425,6 +536,17 @@ export function SettingsPanel({
                 onChange={(e) => onKeysChange({ tavilyApiKey: e.target.value })}
               />
             </Field>
+            <SaveRemoveRow
+              configured={configured.includes("tavily")}
+              onSave={async () => {
+                await saveTavilyKey(settings.keys);
+                onCredentialsChanged();
+              }}
+              onRemove={async () => {
+                await removeCredential("tavily");
+                onCredentialsChanged();
+              }}
+            />
           </div>
         </div>
 

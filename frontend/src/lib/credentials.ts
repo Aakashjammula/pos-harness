@@ -1,0 +1,52 @@
+import { API_URL } from "./config";
+import type { ApiKeyFields, KeyProvider } from "./types";
+
+const PROVIDER_PAYLOAD: Record<string, (k: ApiKeyFields) => Record<string, string>> = {
+  local: (k) => ({ local_api_key: k.localApiKey, local_base_url: k.localBaseUrl }),
+  openai: (k) => ({ openai_api_key: k.openaiApiKey }),
+  azure: (k) => ({
+    azure_api_key: k.azureApiKey,
+    azure_endpoint: k.azureEndpoint,
+    azure_deployment: k.azureDeployment,
+  }),
+  anthropic: (k) => ({ anthropic_api_key: k.anthropicApiKey }),
+  gemini: (k) => ({ gemini_api_key: k.geminiApiKey }),
+  bedrock: (k) => ({
+    bedrock_access_key_id: k.bedrockAccessKeyId,
+    bedrock_secret_access_key: k.bedrockSecretAccessKey,
+    bedrock_region: k.bedrockRegion,
+  }),
+  openrouter: (k) => ({ openrouter_api_key: k.openrouterApiKey }),
+  tavily: (k) => ({ tavily_api_key: k.tavilyApiKey }),
+};
+
+export async function fetchConfiguredProviders(): Promise<string[]> {
+  const res = await fetch(`${API_URL}/credentials`, { credentials: "include" });
+  if (!res.ok) throw new Error("Couldn't load saved credentials.");
+  return (await res.json()).configured;
+}
+
+export async function saveCredential(provider: Exclude<KeyProvider, "">, keys: ApiKeyFields): Promise<void> {
+  const res = await fetch(`${API_URL}/credentials/${provider}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(PROVIDER_PAYLOAD[provider](keys)),
+  });
+  if (res.status === 422) throw new Error("Fill in at least one field before saving.");
+  if (!res.ok) throw new Error("Couldn't save. Try again.");
+}
+
+export async function saveTavilyKey(keys: ApiKeyFields): Promise<void> {
+  const res = await fetch(`${API_URL}/credentials/tavily`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tavily_api_key: keys.tavilyApiKey }),
+  });
+  if (!res.ok) throw new Error("Couldn't save. Try again.");
+}
+
+export async function removeCredential(provider: string): Promise<void> {
+  await fetch(`${API_URL}/credentials/${provider}`, { method: "DELETE", credentials: "include" });
+}
