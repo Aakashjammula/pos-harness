@@ -28,8 +28,9 @@ Four endpoints (plus /auth/* and /credentials/* -- see pos.auth.routes):
                          an "error" event and the socket is closed rather
                          than silently falling back.
 
-                         `mode` is "voice" (default) or "text" — text mode
-                         skips mic/VAD/STT/TTS entirely: the client sends
+                         `mode` is "text" (default) or "voice" — text is the
+                         product's primary mode, voice is secondary. Text
+                         mode skips mic/VAD/STT/TTS entirely: the client sends
                          {"text": "..."} JSON messages instead of PCM audio,
                          and never receives binary audio frames back. An
                          invalid mode gets the same error+close treatment as
@@ -256,7 +257,7 @@ def create_app(
         tavily = users.get_credential(user_id, "tavily")
         env_overrides = {**(stored or {}), **(tavily or {})} or None
 
-        mode = params.get("mode", "voice")
+        mode = params.get("mode", "text")
         if mode not in ("voice", "text"):
             await websocket.send_json({
                 "event": "error",
