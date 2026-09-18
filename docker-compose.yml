@@ -32,6 +32,14 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       DB_POOL_MAX_SIZE: ${DB_POOL_MAX_SIZE:-10}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_SERVER: ${MAIL_SERVER:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_TLS: ${MAIL_TLS:-true}
+      MAIL_SSL: ${MAIL_SSL:-false}
     ports:
       - "8000:8000"
     extra_hosts:
