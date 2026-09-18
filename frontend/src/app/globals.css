@@ -93,3 +93,26 @@ body {
     animation: none !important;
   }
 }
+
+/* Login/signup brand panel: the waveform bars breathe out of phase. */
+@keyframes auth-bar {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.auth-bar {
+  transform-origin: center;
+  animation: auth-bar 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-bar {
+    animation: none;
+    transform: scaleY(0.7);
+  }
+}

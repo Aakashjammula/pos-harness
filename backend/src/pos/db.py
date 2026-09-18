@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT,
+    name TEXT,
+    username TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -36,6 +38,15 @@ CREATE TABLE IF NOT EXISTS users (
 -- database created under the old schema already has the constraint;
 -- dropping one that was never added (a fresh database) is a no-op.
 ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+-- name/username arrived with the signup form; a database created before
+-- that has neither. Both stay NULLable: magic-link sign-in creates an
+-- account from an email alone and has no name to put there.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
+-- Unique but case-insensitive, and only over rows that have one, so the
+-- passwordless magic-link accounts (username IS NULL) don't collide.
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_key
+    ON users (lower(username)) WHERE username IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS user_settings (
     user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

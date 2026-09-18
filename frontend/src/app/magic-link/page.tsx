@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { verifyMagicLink } from "@/lib/auth";
-import { AuthBackdrop, authDarkVars, BrandWordmark } from "@/components/AuthTheme";
+import { AuthHeading, AuthShell } from "@/components/AuthShell";
 
 function MagicLinkVerifier() {
   const router = useRouter();
@@ -22,33 +22,21 @@ function MagicLinkVerifier() {
   }, [token, router]);
 
   return (
-    <main
-      style={authDarkVars}
-      className="relative flex min-h-screen flex-col items-center justify-center gap-9 bg-bg px-4"
-    >
-      <AuthBackdrop />
-      <div className="relative z-10">
-        <BrandWordmark />
-      </div>
-      <div className="relative z-10 w-full max-w-[440px] rounded-2xl border border-border bg-bg p-9 pt-8 text-center shadow-[var(--shadow)]">
-        {error ? (
-          <>
-            <h1 className="mb-2 font-mono text-[24px] font-semibold tracking-tight text-text">
-              Link didn&apos;t work
-            </h1>
-            <p className="mb-7 text-[13.5px] leading-relaxed text-text-muted">{error}</p>
-            <Link
-              href="/login"
-              className="inline-block w-full rounded-lg bg-accent px-3 py-2.5 text-[13.5px] font-semibold text-white hover:bg-accent-hover"
-            >
-              Back to sign in
-            </Link>
-          </>
-        ) : (
-          <p className="text-[13.5px] text-text-muted">Signing you in…</p>
-        )}
-      </div>
-    </main>
+    <AuthShell>
+      {error ? (
+        <>
+          <AuthHeading title="Link didn't work" subtitle={error} />
+          <Link
+            href="/login"
+            className="block w-full rounded-[0.6em] bg-accent px-[1em] py-[0.85em] text-center text-[1em] font-semibold text-white transition-colors hover:bg-accent-hover"
+          >
+            Back to sign in
+          </Link>
+        </>
+      ) : (
+        <AuthHeading title="Signing you in" subtitle="Hold on, this takes a moment." />
+      )}
+    </AuthShell>
   );
 }
 

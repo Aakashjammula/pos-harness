@@ -21,10 +21,45 @@ export async function login(email: string, password: string): Promise<CurrentUse
   return res.json();
 }
 
-export async function signup(email: string, password: string): Promise<CurrentUser> {
-  const res = await post("/auth/signup", { email, password });
-  if (res.status === 409) throw new Error("That email is already registered.");
-  if (res.status === 422) throw new Error("Password must be at least 8 characters.");
+export interface SignupInput {
+  name: string;
+  username: string;
+  email: string;
+  /** Omitted entirely for a magic-link-only account. */
+  password?: string;
+}
+
+export interface SignupResult extends CurrentUser {
+  /** True when no password was given: the account exists but this
+   * browser is NOT signed in -- the link in their inbox is. */
+  magic_link_sent: boolean;
+}
+
+export async function signup(input: SignupInput): Promise<SignupResult> {
+  const body: Record<string, unknown> = {
+    name: input.name,
+    username: input.username,
+    email: input.email,
+  };
+  if (input.password) body.password = input.password;
+
+  const res = await post("/auth/signup", body);
+  if (res.status === 409) {
+    // The two collisions need different words -- "email taken" sends
+    // someone to the login page, "username taken" sends them back to
+    // the same form to pick another.
+    const detail = await res.json().catch(() => null);
+    throw new Error(
+      detail?.detail === "username already taken"
+        ? "That username is taken. Try another."
+        : "That email is already registered.",
+    );
+  }
+  if (res.status === 422) {
+    throw new Error(
+      "Check your details: username can use letters, numbers, - and _ (3+ characters), and a password must be 8+ characters.",
+    );
+  }
   if (!res.ok) throw new Error("Couldn't create your account. Try again.");
   return res.json();
 }

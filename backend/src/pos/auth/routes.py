@@ -19,7 +19,7 @@ from pos.auth.deps import (
 )
 from pos.auth.mailer import send_magic_link_email
 from pos.auth.passwords import hash_password, verify_password
-from pos.auth.store import EmailTaken, UserStore
+from pos.auth.store import EmailTaken, UsernameTaken, UserStore
 from pos.auth.tokens import (
     MAGIC_LINK_TOKEN_TTL,
     REFRESH_TOKEN_TTL,
@@ -68,6 +68,18 @@ class Credentials(BaseModel):
     password: str = Field(min_length=8)
 
 
+class SignupBody(BaseModel):
+    """Signup asks for more than login does, and its password is
+    optional: leaving it blank creates a magic-link-only account, which
+    the store has always allowed (password_hash is NULLable) but no
+    endpoint could reach until now."""
+
+    name: str = Field(min_length=1, max_length=80)
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[a-zA-Z0-9_-]+$")
+    email: EmailStr
+    password: str | None = Field(default=None, min_length=8)
+
+
 def build_auth_router(users: UserStore) -> APIRouter:
     router = APIRouter()
 
@@ -77,13 +89,30 @@ def build_auth_router(users: UserStore) -> APIRouter:
         set_auth_cookies(response, create_access_token(user_id), raw_refresh)
 
     @router.post("/auth/signup")
-    async def signup(body: Credentials, response: Response):
+    async def signup(body: SignupBody, response: Response):
         try:
-            user = users.create_user(body.email, hash_password(body.password))
+            user = users.create_user(
+                body.email,
+                hash_password(body.password) if body.password else None,
+                name=body.name.strip(),
+                username=body.username,
+            )
         except EmailTaken as e:
             raise HTTPException(status_code=409, detail="email already registered") from e
+        except UsernameTaken as e:
+            raise HTTPException(status_code=409, detail="username already taken") from e
+
+        # With a password they are signed in here and now. Without one
+        # there is nothing to authenticate against, so the account exists
+        # but the session does not: send the link and let them in from
+        # their inbox. Never issue cookies on this branch -- doing so
+        # would make an unverified email a logged-in session.
+        if body.password is None:
+            await _send_magic_link(body.email.lower())
+            return {"id": user["id"], "email": user["email"], "magic_link_sent": True}
+
         _issue(response, user["id"])
-        return {"id": user["id"], "email": user["email"]}
+        return {"id": user["id"], "email": user["email"], "magic_link_sent": False}
 
     @router.post("/auth/login")
     async def login(body: Credentials, response: Response):
@@ -100,21 +129,28 @@ def build_auth_router(users: UserStore) -> APIRouter:
         _issue(response, user["id"])
         return {"id": user["id"], "email": user["email"]}
 
+    async def _send_magic_link(email: str) -> None:
+        """Mint, store and mail one link, honouring the cooldown. Shared
+        by the request endpoint and by a passwordless signup, so the
+        throttle covers both -- signing up repeatedly must not be a way
+        around the rate limit on the request endpoint."""
+        if users.recent_magic_link_request(email, within=MAGIC_LINK_REQUEST_COOLDOWN):
+            return
+        raw, token_hash = new_magic_link_token()
+        users.store_magic_link_token(email, token_hash, datetime.now(UTC) + MAGIC_LINK_TOKEN_TTL)
+        link_url = f"{config.FRONTEND_URL}/magic-link?token={raw}"
+        try:
+            await send_magic_link_email(email, link_url)
+        except Exception as e:
+            print(f"  magic-link email send failed for {email}: {e}")
+
     @router.post("/auth/magic-link/request")
     async def request_magic_link(body: MagicLinkRequest):
-        email = body.email.lower()
         # Always 200 regardless of throttle/send outcome -- the caller
         # can't distinguish "already has one outstanding" from "just sent
         # a new one" from "email is known", any of which would leak
         # whether that address has an account.
-        if not users.recent_magic_link_request(email, within=MAGIC_LINK_REQUEST_COOLDOWN):
-            raw, token_hash = new_magic_link_token()
-            users.store_magic_link_token(email, token_hash, datetime.now(UTC) + MAGIC_LINK_TOKEN_TTL)
-            link_url = f"{config.FRONTEND_URL}/magic-link?token={raw}"
-            try:
-                await send_magic_link_email(email, link_url)
-            except Exception as e:
-                print(f"  magic-link email send failed for {email}: {e}")
+        await _send_magic_link(body.email.lower())
         return {"ok": True}
 
     @router.post("/auth/magic-link/verify")
