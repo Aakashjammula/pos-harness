@@ -574,6 +574,10 @@ overlaps with LLM generation of the next one instead of blocking it.
 
 ## Running with Docker Compose
 
+Copy `.env.example` to `.env` and fill in `JWT_SECRET` and `ENCRYPTION_KEY`
+(both `openssl rand -base64 32`). The stack will not start without them.
+Losing `ENCRYPTION_KEY` makes every stored API credential unrecoverable.
+
 ```
 docker compose up --build
 ```
