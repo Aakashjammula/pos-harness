@@ -21,6 +21,20 @@ def _secrets(monkeypatch):
     monkeypatch.setattr(config, "ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
 
 
+sent_magic_links: list[tuple[str, str]] = []
+
+
+@pytest.fixture(autouse=True)
+def _stub_mailer(monkeypatch):
+    """Never hit real SMTP in tests -- record what would have been sent."""
+    sent_magic_links.clear()
+
+    async def _fake_send(email: str, link_url: str) -> None:
+        sent_magic_links.append((email, link_url))
+
+    monkeypatch.setattr("pos.auth.routes.send_magic_link_email", _fake_send)
+
+
 def _shared_pool():
     """One ConnectionPool reused by every test in this module -- a fresh
     pool per test exhausts Postgres's default max_connections=100 once
@@ -35,7 +49,7 @@ def _shared_pool():
 def _client():
     pool = _shared_pool()
     with pool.connection() as conn:
-        conn.execute("TRUNCATE users RESTART IDENTITY CASCADE")
+        conn.execute("TRUNCATE users, magic_link_tokens RESTART IDENTITY CASCADE")
     app = FastAPI()
     app.include_router(build_auth_router(UserStore(pool)))
     return TestClient(app)
@@ -168,3 +182,77 @@ def test_credentials_require_authentication():
     client = _client()
     assert client.get("/credentials").status_code == 401
     assert client.put("/credentials/openai", json={"openai_api_key": "x"}).status_code == 401
+
+
+def _requested_token(email: str) -> str:
+    """The tests can't read the real email, so pull the raw token out of
+    the fake mailer's recorded link_url instead."""
+    _, link_url = next(pair for pair in sent_magic_links if pair[0] == email)
+    return link_url.rsplit("token=", 1)[1]
+
+
+def test_magic_link_request_always_returns_ok(monkeypatch):
+    client = _client()
+    resp = client.post("/auth/magic-link/request", json={"email": "new@test.com"})
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert len(sent_magic_links) == 1
+
+
+def test_magic_link_verify_creates_a_passwordless_account_and_signs_in():
+    client = _client()
+    client.post("/auth/magic-link/request", json={"email": "new@test.com"})
+    token = _requested_token("new@test.com")
+
+    resp = client.post("/auth/magic-link/verify", json={"token": token})
+
+    assert resp.status_code == 200
+    assert resp.json()["email"] == "new@test.com"
+    assert "pos_access" in resp.cookies
+    assert client.get("/auth/me").json()["email"] == "new@test.com"
+
+
+def test_magic_link_verify_signs_in_an_existing_account():
+    client = _client()
+    signup = client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"})
+    existing_id = signup.json()["id"]
+    client.cookies.clear()
+
+    client.post("/auth/magic-link/request", json={"email": "a@test.com"})
+    token = _requested_token("a@test.com")
+    resp = client.post("/auth/magic-link/verify", json={"token": token})
+
+    assert resp.json()["id"] == existing_id
+
+
+def test_magic_link_token_is_single_use():
+    client = _client()
+    client.post("/auth/magic-link/request", json={"email": "new@test.com"})
+    token = _requested_token("new@test.com")
+
+    assert client.post("/auth/magic-link/verify", json={"token": token}).status_code == 200
+    assert client.post("/auth/magic-link/verify", json={"token": token}).status_code == 401
+
+
+def test_unknown_magic_link_token_is_rejected():
+    client = _client()
+    assert client.post("/auth/magic-link/verify", json={"token": "not-a-real-token"}).status_code == 401
+
+
+def test_repeated_magic_link_requests_are_throttled():
+    client = _client()
+    client.post("/auth/magic-link/request", json={"email": "new@test.com"})
+    client.post("/auth/magic-link/request", json={"email": "new@test.com"})
+
+    assert len(sent_magic_links) == 1
+
+
+def test_login_rejects_password_for_a_magic_link_only_account():
+    client = _client()
+    client.post("/auth/magic-link/request", json={"email": "new@test.com"})
+    token = _requested_token("new@test.com")
+    client.post("/auth/magic-link/verify", json={"token": token})
+    client.post("/auth/logout")
+
+    resp = client.post("/auth/login", json={"email": "new@test.com", "password": "anything123"})
+    assert resp.status_code == 401

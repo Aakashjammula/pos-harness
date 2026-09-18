@@ -6,10 +6,13 @@ import pytest
 from pos import config
 from pos.auth.tokens import (
     ACCESS_TOKEN_TTL,
+    MAGIC_LINK_TOKEN_TTL,
     REFRESH_TOKEN_TTL,
     create_access_token,
     decode_access_token,
+    hash_magic_link_token,
     hash_refresh_token,
+    new_magic_link_token,
     new_refresh_token,
 )
 
@@ -56,3 +59,11 @@ def test_refresh_token_returns_raw_and_hash_and_never_stores_raw():
 def test_ttls_match_the_spec():
     assert ACCESS_TOKEN_TTL == timedelta(minutes=15)
     assert REFRESH_TOKEN_TTL == timedelta(days=30)
+    assert MAGIC_LINK_TOKEN_TTL == timedelta(minutes=15)
+
+
+def test_magic_link_token_returns_raw_and_hash_and_never_stores_raw():
+    raw, digest = new_magic_link_token()
+    assert raw != digest
+    assert hash_magic_link_token(raw) == digest
+    assert len(digest) == 64

@@ -6,7 +6,7 @@ would make one class own two unrelated lifecycles."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import psycopg
 from psycopg_pool import ConnectionPool
@@ -22,7 +22,7 @@ class UserStore:
     def __init__(self, pool: ConnectionPool):
         self._pool = pool
 
-    def create_user(self, email: str, password_hash: str) -> dict:
+    def create_user(self, email: str, password_hash: str | None = None) -> dict:
         try:
             with self._pool.connection() as conn:
                 return conn.execute(
@@ -32,6 +32,19 @@ class UserStore:
                 ).fetchone()
         except psycopg.errors.UniqueViolation as e:
             raise EmailTaken(email) from e
+
+    def get_or_create_user_by_email(self, email: str) -> dict:
+        """For magic-link sign-in: a first-time email creates a
+        passwordless account, an existing one just logs in -- there's no
+        separate signup step. Falls back to a fetch on the (rare) race
+        where two requests create the same email concurrently."""
+        existing = self.get_user_by_email(email)
+        if existing is not None:
+            return existing
+        try:
+            return self.create_user(email, password_hash=None)
+        except EmailTaken:
+            return self.get_user_by_email(email)
 
     def get_user_by_email(self, email: str) -> dict | None:
         with self._pool.connection() as conn:
@@ -83,6 +96,38 @@ class UserStore:
                 "WHERE user_id = %s AND revoked_at IS NULL",
                 (user_id,),
             )
+
+    def store_magic_link_token(self, email: str, token_hash: str, expires_at: datetime) -> None:
+        with self._pool.connection() as conn:
+            conn.execute(
+                "INSERT INTO magic_link_tokens (email, token_hash, expires_at) VALUES (%s, %s, %s)",
+                (email.lower(), token_hash, expires_at),
+            )
+
+    def consume_magic_link_token(self, token_hash: str) -> str | None:
+        """Single-use, like consume_refresh_token: revokes the token as
+        it's read, so replaying a link is always rejected."""
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "UPDATE magic_link_tokens SET consumed_at = now() "
+                "WHERE token_hash = %s AND consumed_at IS NULL AND expires_at > now() "
+                "RETURNING email",
+                (token_hash,),
+            ).fetchone()
+        return row["email"] if row else None
+
+    def recent_magic_link_request(self, email: str, within: timedelta) -> bool:
+        """True if a token for this email was requested within `within` --
+        throttles repeat requests so one email address can't be spammed
+        with sign-in links."""
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM magic_link_tokens "
+                "WHERE email = %s AND created_at > now() - %s "
+                "LIMIT 1",
+                (email.lower(), within),
+            ).fetchone()
+        return row is not None
 
     def save_credential(self, user_id: str, provider: str, payload: dict) -> None:
         ciphertext, nonce = encrypt_payload(payload)

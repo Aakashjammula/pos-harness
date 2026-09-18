@@ -5,25 +5,40 @@ transport rather than account management."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 
+from pos import config
 from pos.auth.deps import (
     REFRESH_COOKIE,
     clear_auth_cookies,
     require_user_id,
     set_auth_cookies,
 )
+from pos.auth.mailer import send_magic_link_email
 from pos.auth.passwords import hash_password, verify_password
 from pos.auth.store import EmailTaken, UserStore
 from pos.auth.tokens import (
+    MAGIC_LINK_TOKEN_TTL,
     REFRESH_TOKEN_TTL,
     create_access_token,
+    hash_magic_link_token,
     hash_refresh_token,
+    new_magic_link_token,
     new_refresh_token,
 )
+
+MAGIC_LINK_REQUEST_COOLDOWN = timedelta(seconds=60)
+
+
+class MagicLinkRequest(BaseModel):
+    email: EmailStr
+
+
+class MagicLinkVerify(BaseModel):
+    token: str
 
 # Which request fields belong to which provider, and what environment
 # variable each one becomes. Mirrors the mapping cli/server.py used for
@@ -73,10 +88,41 @@ def build_auth_router(users: UserStore) -> APIRouter:
     @router.post("/auth/login")
     async def login(body: Credentials, response: Response):
         user = users.get_user_by_email(body.email)
-        # Same 401 for an unknown email and a wrong password: distinguishing
-        # them tells an attacker which addresses are registered.
-        if user is None or not verify_password(body.password, user["password_hash"]):
+        # Same 401 for an unknown email, a magic-link-only account (no
+        # password set), and a wrong password: distinguishing any of
+        # these tells an attacker which addresses are registered.
+        if (
+            user is None
+            or user["password_hash"] is None
+            or not verify_password(body.password, user["password_hash"])
+        ):
             raise HTTPException(status_code=401, detail="invalid email or password")
+        _issue(response, user["id"])
+        return {"id": user["id"], "email": user["email"]}
+
+    @router.post("/auth/magic-link/request")
+    async def request_magic_link(body: MagicLinkRequest):
+        email = body.email.lower()
+        # Always 200 regardless of throttle/send outcome -- the caller
+        # can't distinguish "already has one outstanding" from "just sent
+        # a new one" from "email is known", any of which would leak
+        # whether that address has an account.
+        if not users.recent_magic_link_request(email, within=MAGIC_LINK_REQUEST_COOLDOWN):
+            raw, token_hash = new_magic_link_token()
+            users.store_magic_link_token(email, token_hash, datetime.now(UTC) + MAGIC_LINK_TOKEN_TTL)
+            link_url = f"{config.FRONTEND_URL}/magic-link?token={raw}"
+            try:
+                await send_magic_link_email(email, link_url)
+            except Exception as e:
+                print(f"  magic-link email send failed for {email}: {e}")
+        return {"ok": True}
+
+    @router.post("/auth/magic-link/verify")
+    async def verify_magic_link(body: MagicLinkVerify, response: Response):
+        email = users.consume_magic_link_token(hash_magic_link_token(body.token))
+        if email is None:
+            raise HTTPException(status_code=401, detail="invalid or expired link")
+        user = users.get_or_create_user_by_email(email)
         _issue(response, user["id"])
         return {"id": user["id"], "email": user["email"]}
 

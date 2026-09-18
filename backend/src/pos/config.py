@@ -68,3 +68,19 @@ CORS_ORIGINS = [
 ]
 
 ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "")
+
+# Where the magic-link email points -- the frontend, not this backend, since
+# the browser needs to land on a page that calls back into /auth/magic-link/verify
+# with cookies attached (a direct link to the backend would cross origins).
+FRONTEND_URL = os.environ.get("FRONTEND_URL", CORS_ORIGINS[0] if CORS_ORIGINS else "http://localhost:3000")
+
+# fastapi-mail's ConnectionConfig wants MAIL_STARTTLS/MAIL_SSL_TLS (current
+# versions); kept as MAIL_TLS/MAIL_SSL here to match how this deployment's
+# env is already named, and translated when building ConnectionConfig.
+MAIL_USERNAME = os.environ.get("MAIL_USERNAME", "")
+MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD", "")
+MAIL_FROM = os.environ.get("MAIL_FROM", "")
+MAIL_SERVER = os.environ.get("MAIL_SERVER", "")
+MAIL_PORT = int(os.environ.get("MAIL_PORT", "587"))
+MAIL_TLS = os.environ.get("MAIL_TLS", "true").lower() == "true"
+MAIL_SSL = os.environ.get("MAIL_SSL", "false").lower() == "true"

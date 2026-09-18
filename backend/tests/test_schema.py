@@ -9,6 +9,7 @@ _EXPECTED_TABLES = {
     "user_settings",
     "user_pii_rules",
     "refresh_tokens",
+    "magic_link_tokens",
     "api_credentials",
     "sessions",
     "turns",
@@ -64,4 +65,16 @@ def test_deleting_a_user_cascades_to_sessions_and_turns():
         assert conn.execute(
             "SELECT 1 FROM turns WHERE session_id = 'cascade-s1'"
         ).fetchone() is None
+    pool.close()
+
+
+def test_users_can_be_created_without_a_password():
+    pool = _pool()
+    with pool.connection() as conn:
+        conn.execute("DELETE FROM users WHERE email = 'passwordless@test.com'")
+        user = conn.execute(
+            "INSERT INTO users (email, password_hash) VALUES ('passwordless@test.com', NULL) "
+            "RETURNING password_hash"
+        ).fetchone()
+        assert user["password_hash"] is None
     pool.close()
