@@ -6,8 +6,13 @@ instrumentation printed live. Everything runs on CPU except the LLM, which
 talks to any OpenAI-compatible server (developed against
 [LM Studio](https://lmstudio.ai/)).
 
+The repo is split into `backend/` (this Python voice pipeline + FastAPI
+server) and `frontend/` (the browser client). See `docker-compose.yml` to
+run backend + Postgres + frontend together, or run each piece directly as
+described below.
+
 Every stage — VAD, STT, LLM, TTS — sits behind a small abstract interface
-(`src/pos/interfaces/`), so any of them can be swapped for a different
+(`backend/src/pos/interfaces/`), so any of them can be swapped for a different
 implementation without touching the pipeline code in `agent.py`.
 
 ## Requirements
@@ -60,12 +65,18 @@ set up Supertonic.
 ## Install
 
 ```
+cd backend
 uv sync
 ```
 
-This creates `.venv/` and installs everything, including this project
+This creates `backend/.venv/` and installs everything, including this project
 itself (editable), so the `pos-agent`/`pos-server`/`pos-client` console
-scripts and `src/pos/cli/local.py` can `from pos... import ...`.
+scripts and `src/pos/cli/local.py` can `from pos... import ...`. All `uv
+run`/`uv sync` commands below are run from `backend/`.
+
+You'll also need a Postgres database for session history — see
+"Running with Docker Compose" below, or point `DATABASE_URL` at your own
+instance (defaults to `postgresql://pos:pos@localhost:5432/pos`).
 
 Then start LM Studio, load a model, and start its local server (default
 `http://localhost:1234/v1` — matches `LangChainLlm`'s default; see
@@ -225,7 +236,7 @@ uv run pos-client --trigger-word "computer"
 ```
 
 These are forwarded to `pos-server` as the same `/ws` query params the
-browser client uses — see `src/pos/cli/server.py`'s own module
+browser client uses — see `backend/src/pos/cli/server.py`'s own module
 docstring for the full query-param reference.
 
 ### VAD tuning
@@ -250,7 +261,7 @@ event and the socket is closed rather than silently falling back.
 
 ### LLM: LangChain + tool calling
 
-The LLM stage (`src/pos/llm/langchain_llm.py`, `LangChainLlm`) runs
+The LLM stage (`backend/src/pos/llm/langchain_llm.py`, `LangChainLlm`) runs
 on `langchain` + `langchain-openai`'s `ChatOpenAI` instead of talking to
 the OpenAI SDK directly — same LM Studio (or any OpenAI-compatible)
 backend, no new server required. `LlmBase.stream(messages, cancel)`'s
@@ -266,7 +277,7 @@ Execution Loop" pattern, not `create_agent` — that owns its own
 conversation memory (`AgentState` + a checkpointer), which would
 duplicate the history `Agent` already tracks in `self.conversation`.
 
-Tools bound by default (`src/pos/llm/tools.py`):
+Tools bound by default (`backend/src/pos/llm/tools.py`):
 - **`get_current_time`** — always on, no setup. A voice assistant with
   no sense of the current date/time is asked about it constantly.
 - **web search** (via [Tavily](https://tavily.com/), free tier available)
@@ -392,7 +403,7 @@ comparison; look for a consistent shift across several turns.
 
 ## Configuration
 
-Shared, engine-agnostic tuning lives in `src/pos/config.py`. Notable
+Shared, engine-agnostic tuning lives in `backend/src/pos/config.py`. Notable
 knobs:
 
 - **`MIN_SILENCE_MS`** (default `1200`) — how long a pause must last before
@@ -426,11 +437,11 @@ URL/model name, etc.) are constructor defaults on each concrete
 implementation instead, so swapping an engine doesn't require touching
 `config.py`:
 
-- `src/pos/vad/silero.py` — `SileroVad`
-- `src/pos/stt/onnx_asr_engine.py` — `OnnxAsrEngine`
-- `src/pos/tts/kokoro.py` — `KokoroTts`
-- `src/pos/tts/supertonic.py` — `SupertonicTts`
-- `src/pos/llm/langchain_llm.py` — `LangChainLlm` (base URL, API
+- `backend/src/pos/vad/silero.py` — `SileroVad`
+- `backend/src/pos/stt/onnx_asr_engine.py` — `OnnxAsrEngine`
+- `backend/src/pos/tts/kokoro.py` — `KokoroTts`
+- `backend/src/pos/tts/supertonic.py` — `SupertonicTts`
+- `backend/src/pos/llm/langchain_llm.py` — `LangChainLlm` (base URL, API
   key, model name, system prompt, tools, `max_tool_rounds` — this is
   where you'd point at a different LM Studio model or port;
   conversation history length is `config.HISTORY_TURNS`, owned by
@@ -455,7 +466,7 @@ as a drop-in alternative (different voices/prosody) via `--tts supertonic`.
 ## Architecture
 
 ```
-src/pos/
+backend/src/pos/
   cli/
     local.py                     local-mode CLI entrypoint (--tts, --voice, --trigger-word, --vad-*)
                                   — console script: `uv run pos-agent`
@@ -470,7 +481,7 @@ src/pos/
   agent.py                       orchestrator: threads + queues wiring; feed_audio/on_text_message/
                                   start/shutdown are the transport-agnostic entry points
                                   cli/local.py and cli/server.py both drive
-  storage.py                     SessionStore — SQLite session/turn history (create/add_turn/
+  storage.py                     SessionStore — Postgres session/turn history (create/add_turn/
                                   set_title/delete_session/list_sessions/get_session)
   null_engines.py                NullTts/NullVad — no-op stand-ins for text-mode sessions; kept
                                   outside tts/ and vad/ on purpose, see the file's own docstring
@@ -560,4 +571,29 @@ overlaps with LLM generation of the next one instead of blocking it.
   leading filler words before the trigger will cause a genuine command to
   be dropped; raise `TRIGGER_LOOKAHEAD_WORDS` if that happens often in
   your own speech.
-# pos-harness
+
+## Running with Docker Compose
+
+```
+docker compose up --build
+```
+
+Starts three services:
+
+- **postgres** — Postgres 16, database `pos`, user/password `pos`/`pos`
+  (override via `.env`, see `docker-compose.yml`), data persisted in the
+  `pgdata` named volume
+- **backend** — the FastAPI server (`backend/Dockerfile`), on
+  `http://localhost:8000`, with `DATABASE_URL` pointed at the `postgres`
+  service
+- **frontend** — the Next.js browser client (`frontend/Dockerfile`), on
+  `http://localhost:3000`, with `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_WS_URL`
+  pointed at the backend service
+
+The `backend` image does not bundle the STT/TTS model weights (`assets/`,
+gitignored, ~1GB+) — they auto-download on first run into a container
+volume, same as running locally. LM Studio (or another OpenAI-compatible
+server) still runs on the host, outside Compose — set `LOCAL_BASE_URL` if
+it's not on the default `http://localhost:1234/v1` from inside the
+backend container (`http://host.docker.internal:1234/v1` on
+Windows/Mac).

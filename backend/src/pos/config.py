@@ -8,6 +8,7 @@ this file.
 
 from __future__ import annotations
 
+import os
 import re
 
 MIC_RATE = 16000
@@ -53,4 +54,6 @@ HISTORY_TURNS = 3   # how many prior user/assistant turn-pairs to include as LLM
                      # moved to Agent since the LLM engine is now stateless and
                      # (in server mode) shared across concurrent sessions.
 
-SESSIONS_DB_PATH = "data/sessions.db"   # SQLite file for session/turn history — see storage.py
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://pos:pos@localhost:5432/pos"
+)   # Postgres DSN for session/turn history — see storage.py

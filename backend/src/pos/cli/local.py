@@ -125,7 +125,7 @@ def main():
         speech_pad_ms=args.vad_speech_pad_ms,
     )
 
-    session_store = SessionStore(config.SESSIONS_DB_PATH)
+    session_store = SessionStore(config.DATABASE_URL)
     session_id = uuid.uuid4().hex
     session_store.create_session(
         session_id, mode="voice", tts_engine=args.tts, llm_model="lfm2.5-230m"

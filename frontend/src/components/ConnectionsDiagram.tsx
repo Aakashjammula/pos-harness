@@ -1,0 +1,43 @@
+"use client";
+
+import type { OptionsResponse } from "@/lib/types";
+
+// The original static/index.html lazy-loaded React Flow from a CDN (unpkg)
+// on first Settings visit to draw an interactive provider->tools graph.
+// That trick relies on a second, CDN-hosted copy of React sharing the page
+// with this app's own React/Next.js bundle via ad hoc UMD globals, which
+// doesn't fit cleanly into a bundled Next.js app (and would fight React's
+// module singleton assumptions). This renders the same information --
+// provider + which tools are wired/enabled -- as a static flex diagram
+// instead of pulling in a graph library for one read-only diagram.
+export function ConnectionsDiagram({ options }: { options: OptionsResponse | null }) {
+  if (!options) {
+    return <div className="mt-2.5 text-[12.5px] text-text-faint">Loading…</div>;
+  }
+
+  const providerLabel = `${options.provider.name} · ${options.provider.model}`;
+
+  return (
+    <div className="grid content-start gap-2.5">
+      <div className="mt-2 flex min-h-[220px] w-full flex-col items-center gap-8 rounded-xl border border-border p-8">
+        <div className="rounded-[10px] border border-border bg-surface-sunken px-[22px] py-3.5 text-center text-[15px] font-semibold text-text">
+          {providerLabel}
+        </div>
+        <div className="flex flex-wrap justify-center gap-4">
+          {options.tools.map((t) => (
+            <div key={t.name} className="flex flex-col items-center gap-1.5">
+              <span className={`h-6 w-px ${t.enabled ? "bg-text-faint" : "bg-border"}`} />
+              <div
+                className={`rounded-[10px] border border-border px-[22px] py-3.5 text-center text-[15px] font-semibold ${
+                  t.enabled ? "bg-surface-sunken text-text" : "bg-surface-sunken text-text opacity-50"
+                }`}
+              >
+                {t.enabled ? t.label : `${t.label} (disabled)`}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

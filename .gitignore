@@ -10,7 +10,7 @@ wheels/
 .venv
 
 # Local model assets (766MB, own nested .git+LFS repo — never commit this)
-/assets/
+/backend/assets/
 
 # Downloaded pretrained wake-word classifier models (auto-fetched on first use)
 /.cache/
@@ -22,6 +22,12 @@ wheels/
 /.playwright-mcp/
 /*.png
 
-# Local session/turn history (SQLite, see src/asr_test/storage.py) — personal
-# conversation data, generated at runtime, one folder so it's easy to ignore/back up
-/data/
+# Postgres data volume (docker-compose)
+/pgdata/
+
+# Frontend
+/frontend/node_modules/
+/frontend/.next/
+
+# Local env overrides
+.env

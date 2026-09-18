@@ -14,10 +14,13 @@ dependencies = [
     "onnx-asr[cpu,hub]>=0.12.0",
     "onnxruntime>=1.29.0",
     "openai>=3.8.0",
+    "psycopg[binary]>=3.2.0",
     "requests>=2.34.2",
     "sherpa-onnx>=1.13.7",
     "silero-vad>=6.2.1",
     "sounddevice>=0.5.6",
+    "torch",
+    "torchaudio",
     "ttstokenizer>=1.1.0",
     "uvicorn[standard]>=0.52.4",
     "websockets>=17.1",
@@ -30,6 +33,19 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pos"]
+
+# silero-vad pulls in torch, and the default Linux torch wheel on PyPI
+# depends on the nvidia-* CUDA runtime packages (~2-3GB) even though
+# nothing here uses a GPU -- everything runs on CPU via ONNX Runtime.
+# Pin torch/torchaudio to PyTorch's own CPU-only wheel index instead.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchaudio = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [project.scripts]
 pos-agent = "pos.cli.local:main"
