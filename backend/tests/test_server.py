@@ -90,7 +90,7 @@ def _make_client(monkeypatch):
 def test_ws_endpoint_sends_ready_event_then_audio_reply(monkeypatch):
     client, _ = _make_client(monkeypatch)
     _sign_in(client)
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect("/ws?mode=voice") as ws:
         ready = ws.receive_json()
         assert ready["event"] == "ready"
 
@@ -107,7 +107,10 @@ def test_two_concurrent_sessions_have_independent_history(monkeypatch):
     _sign_in(client)
     frame = np.zeros(config.FRAME, dtype=np.float32)
 
-    with client.websocket_connect("/ws") as ws_a, client.websocket_connect("/ws") as ws_b:
+    with (
+        client.websocket_connect("/ws?mode=voice") as ws_a,
+        client.websocket_connect("/ws?mode=voice") as ws_b,
+    ):
         ws_a.receive_json()
         ws_b.receive_json()
         for ws in (ws_a, ws_b):
@@ -222,9 +225,9 @@ def test_tts_engine_cache_reuses_instance_for_same_voice(monkeypatch):
     client = TestClient(app)
     _sign_in(client)
 
-    with client.websocket_connect("/ws?voice=voice-a") as ws1:
+    with client.websocket_connect("/ws?mode=voice&voice=voice-a") as ws1:
         ws1.receive_json()
-    with client.websocket_connect("/ws?voice=voice-a") as ws2:
+    with client.websocket_connect("/ws?mode=voice&voice=voice-a") as ws2:
         ws2.receive_json()
 
     assert FakeTts.instances_created - before == 1
@@ -245,7 +248,7 @@ def test_ws_query_params_select_voice_and_llm_model(monkeypatch):
     client = TestClient(app)
     _sign_in(client)
 
-    with client.websocket_connect("/ws?tts=kokoro&voice=voice-b&llm_model=custom-model") as ws:
+    with client.websocket_connect("/ws?mode=voice&tts=kokoro&voice=voice-b&llm_model=custom-model") as ws:
         ready = ws.receive_json()
 
     assert ready["llm_model"] == "custom-model"
@@ -274,7 +277,7 @@ def test_ws_vad_query_params_are_passed_to_vad_factory(monkeypatch):
     _sign_in(client)
 
     with client.websocket_connect(
-        "/ws?vad_threshold=0.3&vad_min_silence_ms=800&vad_speech_pad_ms=100"
+        "/ws?mode=voice&vad_threshold=0.3&vad_min_silence_ms=800&vad_speech_pad_ms=100"
     ) as ws:
         ws.receive_json()
 
@@ -400,7 +403,7 @@ def test_ws_wake_word_mode_with_trigger_word_is_accepted(monkeypatch):
     client = TestClient(app)
     _sign_in(client)
 
-    with client.websocket_connect("/ws?voice_input_mode=wake_word&trigger_word=computer") as ws:
+    with client.websocket_connect("/ws?mode=voice&voice_input_mode=wake_word&trigger_word=computer") as ws:
         ready = ws.receive_json()
         assert ready["event"] == "ready"
 
@@ -433,7 +436,7 @@ def test_ws_push_to_talk_mode_never_calls_vad_factory(monkeypatch):
     client = TestClient(app)
     _sign_in(client)
 
-    with client.websocket_connect("/ws?voice_input_mode=push_to_talk") as ws:
+    with client.websocket_connect("/ws?mode=voice&voice_input_mode=push_to_talk") as ws:
         ws.receive_json()  # ready
         ws.send_json({"event": "ptt_start"})
         frame = np.zeros(config.FRAME, dtype=np.float32)
@@ -459,7 +462,7 @@ def test_ws_push_to_talk_produces_a_response_on_ptt_stop(monkeypatch):
     client = TestClient(app)
     _sign_in(client)
 
-    with client.websocket_connect("/ws?voice_input_mode=push_to_talk") as ws:
+    with client.websocket_connect("/ws?mode=voice&voice_input_mode=push_to_talk") as ws:
         ws.receive_json()  # ready
         ws.send_json({"event": "ptt_start"})
         frame = np.zeros(config.FRAME, dtype=np.float32)
@@ -489,7 +492,7 @@ def test_ws_push_to_talk_ignores_trigger_word(monkeypatch):
     client = TestClient(app)
     _sign_in(client)
 
-    with client.websocket_connect("/ws?voice_input_mode=push_to_talk&trigger_word=computer") as ws:
+    with client.websocket_connect("/ws?mode=voice&voice_input_mode=push_to_talk&trigger_word=computer") as ws:
         ws.receive_json()  # ready
         ws.send_json({"event": "ptt_start"})
         frame = np.zeros(config.FRAME, dtype=np.float32)
@@ -876,7 +879,7 @@ def test_completed_turn_is_persisted_to_session_store(monkeypatch):
     client = TestClient(app)
     user_id = _sign_in(client)
 
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect("/ws?mode=voice") as ws:
         ready = ws.receive_json()
         session_id = ready["session_id"]
         frame = np.zeros(config.FRAME, dtype=np.float32)
@@ -1025,7 +1028,7 @@ def test_first_exchange_generates_a_session_title(monkeypatch):
     client = TestClient(app)
     user_id = _sign_in(client)
 
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect("/ws?mode=voice") as ws:
         ready = ws.receive_json()
         frame = np.zeros(config.FRAME, dtype=np.float32)
         for _ in range(3):
