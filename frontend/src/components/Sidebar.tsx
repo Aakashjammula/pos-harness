@@ -1,6 +1,7 @@
 "use client";
 
 import { formatSessionTimestamp } from "@/lib/format";
+import { logout } from "@/lib/auth";
 import type { SessionSummary } from "@/lib/types";
 import { BrandMark } from "./icons";
 
@@ -9,9 +10,10 @@ interface SidebarProps {
   loadError: boolean;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
+  userEmail: string;
 }
 
-export function Sidebar({ sessions, loadError, onSelect, onDelete }: SidebarProps) {
+export function Sidebar({ sessions, loadError, onSelect, onDelete, userEmail }: SidebarProps) {
   return (
     <aside className="flex w-[260px] shrink-0 flex-col gap-0.5 overflow-y-auto bg-sidebar-bg p-2 max-[900px]:w-auto max-[900px]:max-h-[220px] max-[900px]:border-b max-[900px]:border-border">
       <div className="flex items-center gap-2.5 px-2 pt-2 pb-3.5">
@@ -54,6 +56,19 @@ export function Sidebar({ sessions, loadError, onSelect, onDelete }: SidebarProp
             </div>
           ))
         )}
+      </div>
+      <div className="mt-auto border-t border-border px-2 pt-2">
+        <div className="truncate px-2 py-1 text-[12px] text-text-faint">{userEmail}</div>
+        <button
+          type="button"
+          onClick={async () => {
+            await logout();
+            window.location.href = "/login";
+          }}
+          className="w-full rounded-lg px-2 py-1.5 text-left text-[13px] text-text-muted hover:bg-surface-sunken hover:text-text"
+        >
+          Log out
+        </button>
       </div>
     </aside>
   );

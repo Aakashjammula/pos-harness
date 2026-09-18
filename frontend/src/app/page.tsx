@@ -1,14 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  deleteSession,
-  fetchKeyTokenIfNeeded,
-  fetchOptions,
-  fetchSession,
-  fetchSessions,
-  keyProviderValidationError,
-} from "@/lib/api";
+import { deleteSession, fetchOptions, fetchSession, fetchSessions } from "@/lib/api";
+import { AuthGuard } from "@/components/AuthGuard";
+import type { CurrentUser } from "@/lib/auth";
+import { fetchConfiguredProviders } from "@/lib/credentials";
 import { DEFAULT_SETTINGS, type ApiKeyFields, type OptionsResponse, type SessionMode, type SessionSummary, type Settings } from "@/lib/types";
 import { useVoiceSession } from "@/hooks/useVoiceSession";
 import { Sidebar } from "@/components/Sidebar";
@@ -21,6 +17,10 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 export default function Home() {
+  return <AuthGuard>{(user) => <VoiceAgent user={user} />}</AuthGuard>;
+}
+
+function VoiceAgent({ user }: { user: CurrentUser }) {
   const session = useVoiceSession();
   const [mode, setMode] = useState<SessionMode>("text");
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -30,6 +30,7 @@ export default function Home() {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [sessionsError, setSessionsError] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [configured, setConfigured] = useState<string[]>([]);
 
   // --- initial data: /options, mic list, session history ---
 
@@ -81,6 +82,20 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     refreshHistoryList();
   }, [refreshHistoryList]);
+
+  const refreshConfigured = useCallback(async () => {
+    try {
+      setConfigured(await fetchConfiguredProviders());
+    } catch {
+      // leave the previous list in place -- a transient failure here
+      // shouldn't blank out dots the user just saw as configured
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    refreshConfigured();
+  }, [refreshConfigured]);
 
   // hash-based settings route, so #/settings survives refresh/back-forward
   useEffect(() => {
@@ -138,18 +153,6 @@ export default function Home() {
 
   const doConnect = useCallback(
     async (resumeSessionId: string | null, connectMode: SessionMode) => {
-      const keyError = keyProviderValidationError(settings.provider, settings.keys);
-      if (keyError) {
-        session.reportError(keyError);
-        return;
-      }
-      let keyToken: string | null = null;
-      try {
-        keyToken = await fetchKeyTokenIfNeeded(settings.provider, settings.keys);
-      } catch {
-        session.reportError("Couldn't apply your API key(s) — check the server and try again");
-        return;
-      }
       await session.connect(
         {
           mode: connectMode,
@@ -162,7 +165,7 @@ export default function Home() {
           vadThreshold: settings.vadThreshold,
           vadMinSilenceMs: settings.vadMinSilenceMs,
           vadSpeechPadMs: settings.vadSpeechPadMs,
-          keyToken,
+          provider: settings.provider || undefined,
           resumeSessionId,
         },
         resumeSessionId !== null
@@ -244,7 +247,13 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen items-stretch max-[900px]:flex-col">
-      <Sidebar sessions={sessions} loadError={sessionsError} onSelect={continueSession} onDelete={handleDeleteSession} />
+      <Sidebar
+        sessions={sessions}
+        loadError={sessionsError}
+        onSelect={continueSession}
+        onDelete={handleDeleteSession}
+        userEmail={user.email}
+      />
       {settingsOpen ? (
         <SettingsPanel
           settings={settings}
@@ -255,6 +264,8 @@ export default function Home() {
           disabled={fieldsDisabled}
           onBack={closeSettings}
           mode={mode}
+          configured={configured}
+          onCredentialsChanged={refreshConfigured}
         />
       ) : (
         <ChatPanel
