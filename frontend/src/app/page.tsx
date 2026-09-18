@@ -22,7 +22,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 export default function Home() {
   const session = useVoiceSession();
-  const [mode, setMode] = useState<SessionMode>("voice");
+  const [mode, setMode] = useState<SessionMode>("text");
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [options, setOptions] = useState<OptionsResponse | null>(null);
   const [optionsError, setOptionsError] = useState(false);
