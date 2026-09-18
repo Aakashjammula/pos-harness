@@ -1,4 +1,5 @@
 import json
+import os
 import time
 
 import numpy as np
@@ -9,6 +10,21 @@ from pos import config
 from pos.cli.server import _default_llm_models, create_app
 from pos.storage import SessionStore
 from pos.utils import float32_to_pcm16
+
+# Requires a running Postgres reachable at TEST_DATABASE_URL -- see
+# docker-compose.yml and tests/test_storage.py.
+_TEST_DSN = os.environ.get("TEST_DATABASE_URL", "postgresql://pos:pos@localhost:5432/pos")
+
+
+def _fresh_store() -> SessionStore:
+    """A SessionStore backed by the test Postgres, with both tables
+    truncated first -- each test needs its own clean slate, unlike the
+    old sqlite3 ":memory:" store this replaces."""
+    store = SessionStore(_TEST_DSN)
+    with store._lock:
+        store._conn.execute("TRUNCATE turns, sessions RESTART IDENTITY CASCADE")
+        store._conn.commit()
+    return store
 
 
 def _receive_json_skipping_audio(ws, max_messages=200):
@@ -34,7 +50,7 @@ def _make_client(monkeypatch):
         llm_factory=lambda model: fake_llm,
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     return TestClient(app), fake_llm
 
@@ -76,7 +92,7 @@ def test_options_endpoint_lists_tts_voices_and_llm_models(monkeypatch):
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -99,7 +115,7 @@ def test_options_endpoint_includes_provider_and_tools_for_connections_diagram(mo
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -139,7 +155,7 @@ def test_create_app_eagerly_warms_default_tts_and_llm():
         llm_factory=llm_factory,
         default_tts_engine="kokoro",
         default_llm_model="default-model",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
 
     assert FakeTts.instances_created - before_tts == 1
@@ -155,7 +171,7 @@ def test_tts_engine_cache_reuses_instance_for_same_voice(monkeypatch):
         llm_factory=lambda model: fake_llm,
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     # Snapshot *after* create_app() — it now eagerly warms the default
     # (engine, voice="") combo at startup, which is a different cache key
@@ -179,7 +195,7 @@ def test_ws_query_params_select_voice_and_llm_model(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -204,7 +220,7 @@ def test_ws_vad_query_params_are_passed_to_vad_factory(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=spy_vad_factory,
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -224,7 +240,7 @@ def test_ws_rejects_out_of_range_vad_threshold(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -242,7 +258,7 @@ def test_ws_rejects_non_numeric_vad_param(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -260,7 +276,7 @@ def test_ws_rejects_negative_vad_min_silence_ms(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -277,7 +293,7 @@ def test_ws_rejects_wake_word_mode_without_trigger_word(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -295,7 +311,7 @@ def test_ws_rejects_invalid_voice_input_mode(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -313,7 +329,7 @@ def test_ws_wake_word_mode_with_trigger_word_is_accepted(monkeypatch):
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -343,7 +359,7 @@ def test_ws_push_to_talk_mode_never_calls_vad_factory(monkeypatch):
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=spy_vad_factory,
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -366,7 +382,7 @@ def test_ws_push_to_talk_produces_a_response_on_ptt_stop(monkeypatch):
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -393,7 +409,7 @@ def test_ws_push_to_talk_ignores_trigger_word(monkeypatch):
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -418,7 +434,7 @@ def test_ws_text_mode_accepts_json_text_and_replies_with_bot_text(monkeypatch):
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -442,7 +458,7 @@ def test_ws_text_mode_never_sends_binary_audio(monkeypatch):
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -464,7 +480,7 @@ def test_ws_rejects_invalid_mode(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -488,7 +504,7 @@ def test_ws_text_mode_never_calls_vad_factory(monkeypatch):
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=spy_vad_factory,
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -510,7 +526,7 @@ def test_ws_text_mode_never_constructs_a_real_tts_engine(monkeypatch):
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     # create_app() eagerly warms the default (engine, voice="") combo at
     # startup regardless of mode -- snapshot after that, not before.
@@ -534,7 +550,7 @@ def test_session_keys_endpoint_returns_a_key_token(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -560,7 +576,7 @@ def test_ws_key_token_is_applied_via_llm_env_factory(monkeypatch):
         llm_env_factory=spy_llm_env_factory,
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -587,7 +603,7 @@ def test_session_keys_maps_azure_and_tavily_fields(monkeypatch):
         llm_env_factory=spy_llm_env_factory,
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -621,7 +637,7 @@ def test_session_keys_maps_local_fields(monkeypatch):
         llm_env_factory=spy_llm_env_factory,
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -651,7 +667,7 @@ def test_session_keys_maps_anthropic_gemini_openrouter_bedrock_fields(monkeypatc
         llm_env_factory=spy_llm_env_factory,
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -683,7 +699,7 @@ def test_ws_key_token_is_single_use(monkeypatch):
         llm_env_factory=lambda model, env: FakeLlm("hi there"),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -705,7 +721,7 @@ def test_ws_unknown_key_token_gets_error(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -725,7 +741,7 @@ def test_ws_without_key_token_never_calls_llm_env_factory(monkeypatch):
         llm_env_factory=lambda model, env: calls.append((model, env)) or FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -737,7 +753,7 @@ def test_ws_without_key_token_never_calls_llm_env_factory(monkeypatch):
 
 def test_ready_event_includes_session_id(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = SessionStore(":memory:")
+    store = _fresh_store()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -757,7 +773,7 @@ def test_ready_event_includes_session_id(monkeypatch):
 
 def test_ws_resume_session_id_seeds_conversation_and_keeps_writing_to_it(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = SessionStore(":memory:")
+    store = _fresh_store()
     store.create_session("s1", mode="text", tts_engine=None, llm_model="lfm2.5-230m")
     store.add_turn("s1", "user", "what's your name")
     store.add_turn("s1", "assistant", "Assistant.")
@@ -795,7 +811,7 @@ def test_ws_resume_session_id_seeds_conversation_and_keeps_writing_to_it(monkeyp
 
 def test_ws_resuming_with_a_different_mode_updates_the_stored_mode(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = SessionStore(":memory:")
+    store = _fresh_store()
     store.create_session("s1", mode="voice", tts_engine="kokoro", llm_model="lfm2.5-230m")
     store.add_turn("s1", "user", "hello")
     store.add_turn("s1", "assistant", "hi there")
@@ -821,7 +837,7 @@ def test_ws_resuming_with_a_different_mode_updates_the_stored_mode(monkeypatch):
 
 def test_ws_resuming_with_the_same_mode_leaves_stored_mode_unchanged(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = SessionStore(":memory:")
+    store = _fresh_store()
     store.create_session("s1", mode="text", tts_engine=None, llm_model="lfm2.5-230m")
     app = create_app(
         stt=FakeStt("hello"),
@@ -850,7 +866,7 @@ def test_ws_resume_unknown_session_id_gets_error(monkeypatch):
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -862,7 +878,7 @@ def test_ws_resume_unknown_session_id_gets_error(monkeypatch):
 
 def test_completed_turn_is_persisted_to_session_store(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = SessionStore(":memory:")
+    store = _fresh_store()
     fake_usage = {"input_tokens": 5, "output_tokens": 3}
     app = create_app(
         stt=FakeStt("hello"),
@@ -900,7 +916,7 @@ def test_completed_turn_is_persisted_to_session_store(monkeypatch):
 
 def test_get_sessions_lists_created_sessions(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = SessionStore(":memory:")
+    store = _fresh_store()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -923,7 +939,7 @@ def test_get_sessions_lists_created_sessions(monkeypatch):
 
 def test_get_session_by_id_returns_detail(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = SessionStore(":memory:")
+    store = _fresh_store()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -944,7 +960,7 @@ def test_get_session_by_id_returns_detail(monkeypatch):
 
 
 def test_get_session_by_unknown_id_returns_404(monkeypatch):
-    store = SessionStore(":memory:")
+    store = _fresh_store()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -961,7 +977,7 @@ def test_get_session_by_unknown_id_returns_404(monkeypatch):
 
 def test_delete_session_removes_it(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = SessionStore(":memory:")
+    store = _fresh_store()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -987,7 +1003,7 @@ def test_delete_session_unknown_id_returns_404():
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 
@@ -998,7 +1014,7 @@ def test_delete_session_unknown_id_returns_404():
 
 def test_first_exchange_generates_a_session_title(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = SessionStore(":memory:")
+    store = _fresh_store()
     fake_llm = FakeLlm("hi there", fake_title="Weekend trip planning")
     app = create_app(
         stt=FakeStt("hello"),
@@ -1029,7 +1045,7 @@ def test_first_exchange_generates_a_session_title(monkeypatch):
 
 def test_title_generation_is_not_retriggered_on_later_turns(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = SessionStore(":memory:")
+    store = _fresh_store()
     fake_llm = FakeLlm("hi there", fake_title="Weekend trip planning")
     app = create_app(
         stt=FakeStt("hello"),
@@ -1063,7 +1079,7 @@ def test_title_generation_is_not_retriggered_on_later_turns(monkeypatch):
 
 def test_resuming_a_session_does_not_regenerate_its_title(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = SessionStore(":memory:")
+    store = _fresh_store()
     store.create_session("s1", mode="text", tts_engine=None, llm_model="lfm2.5-230m")
     store.add_turn("s1", "user", "hi")
     store.add_turn("s1", "assistant", "hello")
@@ -1095,7 +1111,7 @@ def test_index_page_is_served():
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         default_tts_engine="kokoro",
-        session_store=SessionStore(":memory:"),
+        session_store=_fresh_store(),
     )
     client = TestClient(app)
 

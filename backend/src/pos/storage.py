@@ -1,4 +1,4 @@
-"""SQLite-backed session/turn history. Owned entirely by the transport
+"""Postgres-backed session/turn history. Owned entirely by the transport
 layers (server.py, main.py) -- Agent itself never imports this; it only
 ever calls on_event(), and that's where storage hooks in (see
 docs/superpowers/specs/2026-09-10-session-storage-text-mode-trace-ui-design.md).
@@ -8,52 +8,44 @@ errors itself so a genuine bug surfaces during development."""
 
 from __future__ import annotations
 
-import json
-import os
-import sqlite3
 import threading
 from datetime import UTC, datetime
 
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+
+
+def _iso(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat()
+
 
 class SessionStore:
-    def __init__(self, path: str = "sessions.db"):
-        dirname = os.path.dirname(path)
-        if dirname:
-            os.makedirs(dirname, exist_ok=True)
-        self._conn = sqlite3.connect(path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+    def __init__(self, dsn: str):
+        self._conn = psycopg.connect(dsn, autocommit=False, row_factory=dict_row)
         self._lock = threading.Lock()
         with self._lock:
-            self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY,
-                    created_at TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
                     mode TEXT NOT NULL,
                     tts_engine TEXT,
-                    llm_model TEXT NOT NULL
+                    llm_model TEXT NOT NULL,
+                    title TEXT
                 )
                 """
             )
-            # Migration for DBs created before `title` existed -- CREATE
-            # TABLE IF NOT EXISTS above is a no-op on an already-existing
-            # file, so the column has to be added separately. Sqlite has
-            # no "ADD COLUMN IF NOT EXISTS"; ignore the one error it
-            # raises when the column is already there.
-            try:
-                self._conn.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
-            except sqlite3.OperationalError:
-                pass
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS turns (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id BIGSERIAL PRIMARY KEY,
                     session_id TEXT NOT NULL REFERENCES sessions(id),
                     role TEXT NOT NULL,
                     text TEXT NOT NULL,
-                    usage_json TEXT,
-                    created_at TEXT NOT NULL
+                    usage_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL
                 )
                 """
             )
@@ -68,8 +60,8 @@ class SessionStore:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO sessions (id, created_at, mode, tts_engine, llm_model) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (session_id, datetime.now(UTC).isoformat(), mode, tts_engine, llm_model),
+                "VALUES (%s, %s, %s, %s, %s)",
+                (session_id, datetime.now(UTC), mode, tts_engine, llm_model),
             )
             self._conn.commit()
 
@@ -77,11 +69,11 @@ class SessionStore:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO turns (session_id, role, text, usage_json, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "VALUES (%s, %s, %s, %s, %s)",
                 (
                     session_id, role, text,
-                    json.dumps(usage) if usage is not None else None,
-                    datetime.now(UTC).isoformat(),
+                    Jsonb(usage) if usage is not None else None,
+                    datetime.now(UTC),
                 ),
             )
             self._conn.commit()
@@ -89,7 +81,7 @@ class SessionStore:
     def set_title(self, session_id: str, title: str) -> None:
         with self._lock:
             self._conn.execute(
-                "UPDATE sessions SET title = ? WHERE id = ?", (title, session_id)
+                "UPDATE sessions SET title = %s WHERE id = %s", (title, session_id)
             )
             self._conn.commit()
 
@@ -100,15 +92,15 @@ class SessionStore:
         connection's mode differs from what's on record."""
         with self._lock:
             self._conn.execute(
-                "UPDATE sessions SET mode = ? WHERE id = ?", (mode, session_id)
+                "UPDATE sessions SET mode = %s WHERE id = %s", (mode, session_id)
             )
             self._conn.commit()
 
     def delete_session(self, session_id: str) -> bool:
         """Returns True if a session was deleted, False if id was unknown."""
         with self._lock:
-            self._conn.execute("DELETE FROM turns WHERE session_id = ?", (session_id,))
-            cursor = self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            self._conn.execute("DELETE FROM turns WHERE session_id = %s", (session_id,))
+            cursor = self._conn.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
             self._conn.commit()
             return cursor.rowcount > 0
 
@@ -122,31 +114,32 @@ class SessionStore:
                 LEFT JOIN turns t ON t.session_id = s.id
                 GROUP BY s.id
                 ORDER BY s.created_at DESC
-                LIMIT ?
+                LIMIT %s
                 """,
                 (limit,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [{**row, "created_at": _iso(row["created_at"])} for row in rows]
 
     def get_session(self, session_id: str) -> dict | None:
         with self._lock:
             session_row = self._conn.execute(
-                "SELECT id, created_at, mode, tts_engine, llm_model, title FROM sessions WHERE id = ?",
+                "SELECT id, created_at, mode, tts_engine, llm_model, title FROM sessions WHERE id = %s",
                 (session_id,),
             ).fetchone()
             if session_row is None:
                 return None
             turn_rows = self._conn.execute(
-                "SELECT role, text, usage_json FROM turns WHERE session_id = ? ORDER BY id",
+                "SELECT role, text, usage_json FROM turns WHERE session_id = %s ORDER BY id",
                 (session_id,),
             ).fetchall()
+        session_row = {**session_row, "created_at": _iso(session_row["created_at"])}
         return {
-            "session": dict(session_row),
+            "session": session_row,
             "turns": [
                 {
                     "role": row["role"],
                     "text": row["text"],
-                    "usage": json.loads(row["usage_json"]) if row["usage_json"] else None,
+                    "usage": row["usage_json"],
                 }
                 for row in turn_rows
             ],

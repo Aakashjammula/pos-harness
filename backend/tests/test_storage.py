@@ -1,8 +1,21 @@
+import os
+
 from pos.storage import SessionStore
+
+# Requires a running Postgres reachable at TEST_DATABASE_URL (defaults to the
+# docker-compose "postgres" service exposed on localhost) -- see
+# docker-compose.yml. Each test truncates both tables first for isolation,
+# since a real Postgres instance persists across test runs unlike the old
+# sqlite3 ":memory:" store.
+_DSN = os.environ.get("TEST_DATABASE_URL", "postgresql://pos:pos@localhost:5432/pos")
 
 
 def _store():
-    return SessionStore(":memory:")
+    store = SessionStore(_DSN)
+    with store._lock:
+        store._conn.execute("TRUNCATE turns, sessions RESTART IDENTITY CASCADE")
+        store._conn.commit()
+    return store
 
 
 def test_create_and_list_sessions():

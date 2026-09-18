@@ -185,7 +185,7 @@ def create_app(
             llm_env_factory = lambda model, env: LangChainLlm(model=model, env=env)  # noqa: E731
 
     app = FastAPI()
-    store = session_store or SessionStore(config.SESSIONS_DB_PATH)
+    store = session_store or SessionStore(config.DATABASE_URL)
 
     # Eagerly warm the default (engine, voice)/model combo at startup —
     # before uvicorn ever accepts a connection — so the *first* client
@@ -557,7 +557,8 @@ def run() -> None:
 
     from pos.stt import OnnxAsrEngine
 
-    app = create_app(stt=OnnxAsrEngine())
+    llm_base_url = os.environ.get("LOCAL_BASE_URL", "http://localhost:1234/v1")
+    app = create_app(stt=OnnxAsrEngine(), llm_base_url=llm_base_url)
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 
