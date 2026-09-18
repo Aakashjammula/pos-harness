@@ -224,16 +224,22 @@ default from `config.py`):
   retries, fall back to the current truncation behavior and log it —
   silently inventing a summary corrupts the conversation.
 
-**Compaction runs off the turn path.** This is the constraint that
-makes this project different from every reference implementation above.
-TTFA is currently ~3.3s with `llm_ttft` about 65% of it; inserting a
-synchronous summarization call into the turn path would add seconds of
-dead air to a live voice conversation. Compaction is therefore performed
-by a background worker triggered while the user is speaking or during
-idle, never between "user stopped talking" and "bot starts talking".
-This is the same reasoning behind OpenAI's "compact at boundaries, not
-every turn" and their guidance to call `run_compaction()` manually for
-fast turn-taking.
+**Text mode is the primary mode; voice is secondary.** Compaction is
+therefore designed the ordinary way — synchronously, at a turn boundary,
+as all three reference implementations do. A multi-second pause before a
+reply is normal in text chat and is what every chat product already does
+behind a typing indicator.
+
+**Voice mode gets one extra accommodation.** TTFA there is currently
+~3.3s with `llm_ttft` about 65% of it, so a synchronous summarization
+call inserted between "user stopped talking" and "bot starts talking"
+would add seconds of dead air. In voice mode only, compaction is deferred
+to a background worker triggered while the user is speaking or during
+idle. This is a mode-specific scheduling detail, not a different
+mechanism — the trigger, the prompt, the `keep` window, and the stored
+result are identical. It is the same reasoning behind OpenAI's "compact
+at boundaries, not every turn" and their guidance to call
+`run_compaction()` manually when turn-taking is fast.
 
 **Storage.** `turns` remains the full verbatim record — the UI keeps
 showing every message, which is what "maintain all messages" requires.
@@ -291,10 +297,13 @@ only. Their own documentation shows SSN as a *custom* detector example.
 
 **Design:**
 - Detection runs at two points already present in the pipeline: on the
-  STT transcript before it is sent to the LLM (`apply_to_input`), and
-  optionally on the reply before TTS (`apply_to_output`).
-- `pii_strategy` per user, default `redact`, with `off` as an explicit
-  additional value (the local-only single-user case).
+  user's message before it is sent to the LLM (`apply_to_input`), and
+  optionally on the reply before it is returned or spoken
+  (`apply_to_output`).
+- **Off by default is not the design — off by *choice* is.** The whole
+  feature is gated by `pii_enabled` per user (see "Configurability"
+  below), and each individual detector can be enabled or disabled on its
+  own.
 - **Do not redact what is stored.** `turns.text` keeps the user's own
   words — redacting a user's own history from themselves is the wrong
   tradeoff, and the verbatim record is what the UI and compaction both
@@ -335,14 +344,59 @@ limit (their `thread_limit`, which requires a checkpointer in LangGraph
   call, indexed on `(user_id, kind, created_at DESC)`. The limit check
   is an indexed range count over the last hour.
 
-### 5c. User-facing configuration
+### 5c. Configurability (every guardrail is opt-out and tunable)
 
-All Phase 4 and 5 settings are exposed in the existing Settings panel
-under a new section, reading and writing `user_settings` through
-`GET/PUT /settings`. Every field shows the inherited default when unset.
-This is the "user can change it, defaults follow LangChain" requirement:
-defaults live in `config.py`, overrides live per user in the database,
-and the resolution order is always *user setting → global default*.
+Nothing in phases 4 and 5 is mandatory or fixed. Each feature has an
+explicit on/off switch and tunable parameters, all per user, all editable
+from the Settings UI. The resolution order is always **user setting →
+global default from `config.py`**, and `NULL` in the database means
+"inherit", never "disabled" — so raising a default later reaches every
+user who has not deliberately overridden it.
+
+**Master switches** (`user_settings`, one boolean each):
+
+| Switch | Default | Effect when off |
+|---|---|---|
+| `compaction_enabled` | `true` | Fall back to the current fixed-window truncation |
+| `pii_enabled` | `false` | No detection, no redaction, no `pii_flags` written |
+| `rate_limits_enabled` | `false` | No counting, no blocking |
+
+PII and rate limiting default to **off** because both change what the
+model receives or whether a request runs at all, and a self-hosted
+single-user install should not silently acquire either. Compaction
+defaults to **on** because it strictly improves on the truncation it
+replaces.
+
+**Tunable parameters** (`user_settings`, `NULL` = inherit):
+
+| Setting | Default | Source of the default |
+|---|---|---|
+| `compact_trigger_fraction` | `0.8` | LangChain `("fraction", 0.8)` |
+| `compact_keep_messages` | `20` | LangChain `keep=("messages", 20)` |
+| `pii_strategy` | `redact` | LangChain PII middleware default |
+| `pii_apply_to_output` | `false` | LangChain `apply_to_output=False` |
+| `tool_calls_per_hour` | `100` | ours — LangChain ships no numeric default |
+| `model_calls_per_hour` | `500` | ours |
+| `max_cost_usd_per_day` | `5.00` | ours |
+
+**Per-detector customization** (`user_pii_rules`, one row per detector a
+user has customized): each row carries `pii_type`, `enabled`, an optional
+`strategy` overriding the user's global `pii_strategy` for that type
+alone, and an optional `pattern` holding a custom regex. A user with no
+rows gets the built-in detector set at their global strategy. This is a
+table rather than more columns because "a set of detectors, each with its
+own settings" is a repeating group — exactly what a child table is for —
+and because custom patterns are open-ended.
+
+The built-in detector set is seeded as rows on first use rather than
+hardcoded, so enabling, disabling, restyling, or adding a detector are
+all the same operation against the same table.
+
+**Deliberately not built:** per-tool call limits (LangChain's
+`tool_name` parameter). A global tool-call ceiling covers the stated
+need; per-tool ceilings are speculative until someone asks for one. The
+`usage_events.name` column already records which tool was called, so
+adding them later is a query change, not a migration.
 
 ---
 
@@ -371,17 +425,27 @@ two-statement delete.
 │ user_settings            │  │ refresh_tokens       │  │ api_credentials           │
 ├──────────────────────────┤  ├──────────────────────┤  ├───────────────────────────┤
 │ user_id   UUID PK/FK     │  │ id        UUID PK    │  │ id        UUID PK         │
-│ compact_trigger_fraction │  │ user_id   FK NN      │  │ user_id   FK NN           │
-│ compact_keep_messages    │  │ token_hash TEXT NN   │  │ provider  TEXT NN         │
-│ pii_strategy             │  │ expires_at TSTZ NN   │  │ encrypted_payload BYTEA NN│
-│ pii_apply_to_output      │  │ revoked_at TSTZ      │  │ nonce     BYTEA NN        │
-│ tool_calls_per_hour      │  │ created_at TSTZ NN   │  │ created_at TSTZ NN        │
-│ model_calls_per_hour     │  └──────────────────────┘  │ updated_at TSTZ NN        │
-│ max_cost_usd_per_day     │   IX (expires_at)          │ UNIQUE (user_id, provider)│
-│ updated_at TIMESTAMPTZ NN│   IX (user_id)             └───────────────────────────┘
-└──────────────────────────┘
- (all setting columns NULL
-  = inherit config.py default)
+│ compaction_enabled  BOOL │  │ user_id   FK NN      │  │ user_id   FK NN           │
+│ pii_enabled         BOOL │  │ token_hash TEXT NN   │  │ provider  TEXT NN         │
+│ rate_limits_enabled BOOL │  │ expires_at TSTZ NN   │  │ encrypted_payload BYTEA NN│
+│ compact_trigger_fraction │  │ revoked_at TSTZ      │  │ nonce     BYTEA NN        │
+│ compact_keep_messages    │  │ created_at TSTZ NN   │  │ created_at TSTZ NN        │
+│ pii_strategy             │  └──────────────────────┘  │ updated_at TSTZ NN        │
+│ pii_apply_to_output      │   IX (expires_at)          │ UNIQUE (user_id, provider)│
+│ tool_calls_per_hour      │   IX (user_id)             └───────────────────────────┘
+│ model_calls_per_hour     │
+│ max_cost_usd_per_day     │  ┌──────────────────────────────┐
+│ updated_at TIMESTAMPTZ NN│  │ user_pii_rules     (Phase 5) │
+└──────────────────────────┘  ├──────────────────────────────┤
+ (every column NULL           │ id        BIGSERIAL PK       │
+  = inherit config.py         │ user_id   FK -> users NN     │
+  default; NULL never         │ pii_type  TEXT NN            │
+  means "disabled")           │ enabled   BOOLEAN NN         │
+        │ 1                   │ strategy  TEXT               │
+        └──────────────────>  │ pattern   TEXT               │
+                          N   │ updated_at TIMESTAMPTZ NN    │
+                              │ UNIQUE (user_id, pii_type)   │
+                              └──────────────────────────────┘
 
 ┌───────────────────────────────┐        ┌──────────────────────────────────┐
 │ sessions                      │        │ usage_events         (Phase 5)   │
@@ -423,6 +487,12 @@ two-statement delete.
   widening the hot table and separates two different change rates. A
   typed 1:1 table is chosen over a generic key/value settings table so
   defaults and types stay explicit.
+- **`user_pii_rules` is a child table, not more `user_settings`
+  columns.** Per-detector settings are a repeating group — the same three
+  attributes (enabled, strategy, pattern) for an open-ended set of
+  detector types. Flattening that into columns would mean a schema change
+  every time a detector is added, and custom patterns make the set
+  genuinely unbounded.
 - **`api_credentials` is one row per `(user_id, provider)`, not one per
   field.** Azure's key+endpoint+deployment are never read or written
   independently — they are one atomic credential set, decrypted together
@@ -483,35 +553,44 @@ exist as LangChain middleware, and **every LangChain middleware requires
 accumulation is a fair argument for reconsidering, so the reasoning is
 recorded here rather than re-litigated per phase.
 
-The codebase already made this call: `LangChainLlm` hand-rolls the
-tool-execution loop specifically to avoid `create_agent`'s `AgentState`
-plus checkpointer, "which would duplicate the history `Agent` already
-tracks in `self.conversation`". Beyond that, this is not a
-request/response agent:
+**This argument is weaker than it first looks, and the weakening should
+be recorded.** The most compelling reasons to stay hand-rolled were
+voice-specific — barge-in needing mid-generation cancellation, and tokens
+streaming into a sentence-boundary TTS chunker (`FIRST_CHUNK_CHARS` /
+`MAX_CHUNK_CHARS`) so synthesis of one sentence overlaps generation of the
+next. With **text as the primary mode**, those become constraints on a
+secondary path rather than on the product's main flow.
 
-- **Barge-in requires mid-stream cancellation.** `LlmBase.stream(messages,
-  cancel)` must abandon an in-flight generation the moment VAD detects
-  the user talking over the reply.
-- **Tokens stream into a TTS chunker**, grouped at sentence boundaries
-  (`FIRST_CHUNK_CHARS` / `MAX_CHUNK_CHARS`) so synthesis of one sentence
-  overlaps generation of the next.
+What still holds independently of mode:
+
 - **One stateless `LlmBase` is shared across all concurrent sessions**,
-  with per-connection history owned by `Agent` — this is what keeps
-  memory flat as session count grows.
-- Voice/text mode, wake-word gating, and push-to-talk all branch outside
-  a standard tool loop.
+  with per-connection history owned by `Agent`. This is what keeps memory
+  flat as session count grows, and it is the opposite of `create_agent`'s
+  model, where state lives in the graph.
+- **The checkpointer would duplicate `turns`.** `LangChainLlm` hand-rolls
+  its loop specifically to avoid `create_agent`'s `AgentState` plus
+  checkpointer, "which would duplicate the history `Agent` already tracks
+  in `self.conversation`". That remains true, and the UI still needs
+  readable rows the checkpointer's `BYTEA` blobs cannot provide.
+- **Migration cost against a working pipeline.** Rewriting the agent
+  runtime is a large change with no user-visible benefit on its own; the
+  benefit is only unlocked afterwards, via middleware.
 
-LangChain's own guidance is to use `create_agent` when the workflow fits
-a standard model-and-tools loop, and to hand-roll or drop to direct
-LangGraph when the loop's shape itself must differ — which is this case.
+So the recommendation stands for phases 4 and 5 — port the middleware
+designs and defaults — but it now stands mostly on migration cost rather
+than on technical impossibility, and it should be re-examined rather than
+inherited.
 
-**The condition that would change this answer** is narrow and testable:
-if `create_agent` can be shown to support token-level streaming into an
-external consumer *with* mid-generation cancellation, the middleware
-ecosystem becomes worth the migration. That is a spike, not an
-assumption, and it is out of scope here. Until it is run, phases 4 and 5
-port the middleware *designs and defaults* rather than adopting the
-runtime.
+**The spike that would settle it** is narrow and worth running before
+phase 5, not after: can `create_agent` stream tokens to an external
+consumer *with* mid-generation cancellation, and can its middleware stack
+be driven per-user (per-user PII rules, per-user limits) rather than
+configured once at graph construction? The second half matters as much as
+the first: this design requires every guardrail to be user-configurable,
+and middleware instantiated at `create_agent()` time is the wrong shape
+for per-user settings unless it can read them from runtime context. If
+both answers are yes, adopting the runtime likely beats porting four
+middleware by hand.
 
 Likewise, LangGraph's `PostgresSaver` checkpointer is not adopted: it
 persists serialized graph execution state per `thread_id`/`checkpoint_id`

@@ -12,7 +12,8 @@
 
 ## Global Constraints
 
-- **Phases 4 and 5 are NOT in this plan.** Their tables and columns (`user_settings`, `session_summaries`, `usage_events`, `turns.token_count`, `turns.pii_flags`) ARE created in Task 2 so the schema is built once, but nothing reads or writes them here. Do **not** build `GET`/`PUT /settings`, compaction, PII detection, or call limits — they belong to later plans.
+- **Phases 4 and 5 are NOT in this plan.** Their tables and columns (`user_settings`, `user_pii_rules`, `session_summaries`, `usage_events`, `turns.token_count`, `turns.pii_flags`) ARE created in Task 2 so the schema is built once, but nothing reads or writes them here. Do **not** build `GET`/`PUT /settings`, compaction, PII detection, or call limits — they belong to later plans.
+- **Text mode is the product's primary mode; voice is secondary.** Where a tradeoff appears between the two, favor text. This does not change anything in phases 1-3, which are mode-independent, but it matters for how later phases are scheduled.
 - **Run everything from `backend/`.** All `uv run` commands assume that working directory.
 - **Tests need a live Postgres.** `TEST_DATABASE_URL` defaults to `postgresql://pos:pos@localhost:5432/pos`. Start one with `docker compose up -d postgres` from the repo root.
 - **Ruff is the lint gate:** `uv run ruff check .` must pass. Line length 120. Selected rules: `E`, `F`, `I`, `UP`, `B`.
@@ -174,6 +175,7 @@ _DSN = os.environ.get("TEST_DATABASE_URL", "postgresql://pos:pos@localhost:5432/
 _EXPECTED_TABLES = {
     "users",
     "user_settings",
+    "user_pii_rules",
     "refresh_tokens",
     "api_credentials",
     "sessions",
@@ -259,6 +261,9 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS user_settings (
     user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    compaction_enabled BOOLEAN,
+    pii_enabled BOOLEAN,
+    rate_limits_enabled BOOLEAN,
     compact_trigger_fraction REAL,
     compact_keep_messages INTEGER,
     pii_strategy TEXT,
@@ -267,6 +272,17 @@ CREATE TABLE IF NOT EXISTS user_settings (
     model_calls_per_hour INTEGER,
     max_cost_usd_per_day NUMERIC(10, 4),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS user_pii_rules (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    pii_type TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    strategy TEXT,
+    pattern TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, pii_type)
 );
 
 CREATE TABLE IF NOT EXISTS refresh_tokens (
