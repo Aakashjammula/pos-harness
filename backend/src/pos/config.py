@@ -66,3 +66,5 @@ CORS_ORIGINS = [
     for o in os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
     if o.strip()
 ]
+
+ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "")
