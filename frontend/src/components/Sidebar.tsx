@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { formatSessionTimestamp } from "@/lib/format";
 import { logout } from "@/lib/auth";
 import type { SessionSummary } from "@/lib/types";
@@ -14,13 +15,14 @@ interface SidebarProps {
 }
 
 export function Sidebar({ sessions, loadError, onSelect, onDelete, userEmail }: SidebarProps) {
+  const router = useRouter();
   return (
     <aside className="flex w-[260px] shrink-0 flex-col gap-0.5 overflow-y-auto bg-sidebar-bg p-2 max-[900px]:w-auto max-[900px]:max-h-[220px] max-[900px]:border-b max-[900px]:border-border">
       <div className="flex items-center gap-2.5 px-2 pt-2 pb-3.5">
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent">
           <BrandMark className="h-3.5 w-3.5" />
         </span>
-        <span className="text-sm font-semibold tracking-tight">Voice Agent</span>
+        <span className="text-sm font-semibold tracking-tight">POS</span>
       </div>
       <div className="px-2 pt-2.5 pb-1.5 text-[11.5px] font-medium text-text-faint">History</div>
       <div className="flex flex-col gap-px">
@@ -63,7 +65,7 @@ export function Sidebar({ sessions, loadError, onSelect, onDelete, userEmail }: 
           type="button"
           onClick={async () => {
             await logout();
-            window.location.href = "/login";
+            router.push("/login");
           }}
           className="w-full rounded-lg px-2 py-1.5 text-left text-[13px] text-text-muted hover:bg-surface-sunken hover:text-text"
         >

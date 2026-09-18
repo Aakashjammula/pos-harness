@@ -9,8 +9,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Voice Agent",
-  description: "Voice + text chat client for the pos-harness voice agent backend.",
+  title: "POS",
+  description: "Voice, text, and local/cloud model agent client.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
