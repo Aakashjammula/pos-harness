@@ -18,19 +18,35 @@ class EmailTaken(Exception):
     pass
 
 
+class UsernameTaken(Exception):
+    pass
+
+
 class UserStore:
     def __init__(self, pool: ConnectionPool):
         self._pool = pool
 
-    def create_user(self, email: str, password_hash: str | None = None) -> dict:
+    def create_user(
+        self,
+        email: str,
+        password_hash: str | None = None,
+        name: str | None = None,
+        username: str | None = None,
+    ) -> dict:
         try:
             with self._pool.connection() as conn:
                 return conn.execute(
-                    "INSERT INTO users (email, password_hash) VALUES (%s, %s) "
-                    "RETURNING id::text, email, created_at",
-                    (email.lower(), password_hash),
+                    "INSERT INTO users (email, password_hash, name, username) "
+                    "VALUES (%s, %s, %s, %s) "
+                    "RETURNING id::text, email, name, username, created_at",
+                    (email.lower(), password_hash, name, username),
                 ).fetchone()
         except psycopg.errors.UniqueViolation as e:
+            # Two unique constraints reach here and the caller owes the
+            # user different words for each, so read which one fired
+            # rather than reporting every collision as a taken email.
+            if e.diag.constraint_name == "users_username_lower_key":
+                raise UsernameTaken(username or "") from e
             raise EmailTaken(email) from e
 
     def get_or_create_user_by_email(self, email: str) -> dict:
