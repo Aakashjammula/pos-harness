@@ -58,3 +58,11 @@ DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://pos:pos@localhost:5432/pos"
 )   # Postgres DSN for session/turn history — see storage.py
 DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "10"))
+
+JWT_SECRET = os.environ.get("JWT_SECRET", "")
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
+    if o.strip()
+]
