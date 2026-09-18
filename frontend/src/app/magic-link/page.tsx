@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { verifyMagicLink } from "@/lib/auth";
-import { BrandMark } from "@/components/icons";
+import { authDarkVars, BrandWordmark } from "@/components/AuthTheme";
 
 function MagicLinkVerifier() {
   const router = useRouter();
@@ -22,13 +22,11 @@ function MagicLinkVerifier() {
   }, [token, router]);
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-7 bg-bg px-4">
-      <div className="flex items-center gap-2.5">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent">
-          <BrandMark className="h-4 w-4" />
-        </span>
-        <span className="text-[15px] font-semibold tracking-tight text-text">POS</span>
-      </div>
+    <main
+      style={authDarkVars}
+      className="flex min-h-screen flex-col items-center justify-center gap-8 bg-bg px-4"
+    >
+      <BrandWordmark />
       <div className="w-full max-w-[380px] rounded-2xl border border-border bg-bg p-8 pt-7 text-center shadow-[var(--shadow)]">
         {error ? (
           <>

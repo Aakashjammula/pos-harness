@@ -21,6 +21,14 @@ export async function login(email: string, password: string): Promise<CurrentUse
   return res.json();
 }
 
+export async function signup(email: string, password: string): Promise<CurrentUser> {
+  const res = await post("/auth/signup", { email, password });
+  if (res.status === 409) throw new Error("That email is already registered.");
+  if (res.status === 422) throw new Error("Password must be at least 8 characters.");
+  if (!res.ok) throw new Error("Couldn't create your account. Try again.");
+  return res.json();
+}
+
 // Always resolves -- the backend returns 200 regardless of whether the
 // email is known or a link was just sent a moment ago, so there's
 // nothing meaningful to branch on here besides a network failure.
