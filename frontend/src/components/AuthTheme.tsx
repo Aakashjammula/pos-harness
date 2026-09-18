@@ -1,5 +1,7 @@
 "use client";
 
+import { BrandMark } from "./icons";
+
 // Auth pages are forced dark regardless of the viewer's system theme --
 // a deliberate "boot screen" moment for the harness, distinct from the
 // rest of the app which follows prefers-color-scheme. Values mirror
@@ -24,12 +26,30 @@ export const authDarkVars = {
 export function BrandWordmark() {
   return (
     <div className="flex items-center gap-2.5">
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent">
-        <svg viewBox="0 0 24 24" fill="#fff" className="h-4 w-4">
-          <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z" />
-        </svg>
-      </span>
-      <span className="font-mono text-[15px] font-semibold tracking-tight text-text">pos</span>
+      <BrandMark className="h-6 w-auto shrink-0" />
+      <span className="font-mono text-[16px] font-semibold tracking-tight text-text">pos</span>
+    </div>
+  );
+}
+
+// Textured backdrop for auth pages -- a faint dot grid (the "harness" is a
+// technical tool, not a consumer app) plus one soft glow in the logo's own
+// blue, so the mark isn't the only place that color appears. Decorative
+// only: aria-hidden, and it never intercepts clicks.
+export function AuthBackdrop() {
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div
+        className="absolute inset-0 opacity-[0.05]"
+        style={{
+          backgroundImage: "radial-gradient(var(--border) 1px, transparent 1px)",
+          backgroundSize: "24px 24px",
+        }}
+      />
+      <div
+        className="absolute -top-[280px] left-1/2 h-[560px] w-[820px] -translate-x-1/2 rounded-full opacity-[0.14] blur-[110px]"
+        style={{ background: "#297AFF" }}
+      />
     </div>
   );
 }
