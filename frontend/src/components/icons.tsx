@@ -48,8 +48,11 @@ export function StateIcon({ state, className }: { state: ConnState; className?: 
 
 export function BrandMark({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="#fff" className={className}>
-      <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z" />
+    <svg viewBox="0 0 50 40" fill="none" className={className}>
+      <path
+        d="M43 31L31 40H5L7 35L12 31H29L32 35L40 11L45 7H50L43 31ZM43 5L38 9H21L18 5L10 29L5 33H0L7 9L19 0H45L43 5ZM24 13H35L29 31L26 27H15L21 9L24 13Z"
+        fill="#297AFF"
+      />
     </svg>
   );
 }

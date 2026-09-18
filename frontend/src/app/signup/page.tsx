@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import Link from "next/link";
 import { requestMagicLink, signup } from "@/lib/auth";
-import { authDarkVars, BrandWordmark } from "@/components/AuthTheme";
+import { AuthBackdrop, authDarkVars, BrandWordmark } from "@/components/AuthTheme";
 
 const EXAMPLE_SESSIONS = [
   { title: "Refactoring the export pipeline", meta: "text · 14 turns" },
@@ -77,18 +77,19 @@ export default function SignupPage() {
         <ProductPreview />
       </div>
 
-      <div className="flex flex-1 flex-col items-center justify-center gap-8 px-4 py-10">
-        <div className="lg:hidden">
+      <div className="relative flex flex-1 flex-col items-center justify-center gap-9 px-4 py-12">
+        <AuthBackdrop />
+        <div className="relative z-10 lg:hidden">
           <BrandWordmark />
         </div>
 
-        <div className="w-full max-w-[380px]">
+        <div className="relative z-10 w-full max-w-[420px]">
           {linkSentTo ? (
             <>
-              <h1 className="mb-1.5 text-[19px] font-semibold tracking-tight text-text text-balance">
+              <h1 className="mb-2 font-mono text-[24px] font-semibold tracking-tight text-text text-balance">
                 Check your email
               </h1>
-              <p className="mb-6 text-[13px] leading-relaxed text-text-muted">
+              <p className="mb-7 text-[13.5px] leading-relaxed text-text-muted">
                 Sent a sign-in link to <span className="font-medium text-text">{linkSentTo}</span>. It
                 works once and expires in 15 minutes.
               </p>
@@ -102,10 +103,10 @@ export default function SignupPage() {
             </>
           ) : (
             <>
-              <h1 className="mb-1.5 text-[19px] font-semibold tracking-tight text-text text-balance">
+              <h1 className="mb-2 font-mono text-[24px] font-semibold tracking-tight text-text text-balance">
                 Create your account
               </h1>
-              <p className="mb-6 text-[13px] leading-relaxed text-text-muted">
+              <p className="mb-7 text-[13.5px] leading-relaxed text-text-muted">
                 Set a password, or leave it blank and we&apos;ll send you a sign-in link instead.
               </p>
 

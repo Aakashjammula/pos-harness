@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { verifyMagicLink } from "@/lib/auth";
-import { authDarkVars, BrandWordmark } from "@/components/AuthTheme";
+import { AuthBackdrop, authDarkVars, BrandWordmark } from "@/components/AuthTheme";
 
 function MagicLinkVerifier() {
   const router = useRouter();
@@ -24,16 +24,19 @@ function MagicLinkVerifier() {
   return (
     <main
       style={authDarkVars}
-      className="flex min-h-screen flex-col items-center justify-center gap-8 bg-bg px-4"
+      className="relative flex min-h-screen flex-col items-center justify-center gap-9 bg-bg px-4"
     >
-      <BrandWordmark />
-      <div className="w-full max-w-[380px] rounded-2xl border border-border bg-bg p-8 pt-7 text-center shadow-[var(--shadow)]">
+      <AuthBackdrop />
+      <div className="relative z-10">
+        <BrandWordmark />
+      </div>
+      <div className="relative z-10 w-full max-w-[440px] rounded-2xl border border-border bg-bg p-9 pt-8 text-center shadow-[var(--shadow)]">
         {error ? (
           <>
-            <h1 className="mb-1.5 text-[20px] font-semibold tracking-tight text-text">
+            <h1 className="mb-2 font-mono text-[24px] font-semibold tracking-tight text-text">
               Link didn&apos;t work
             </h1>
-            <p className="mb-6 text-[13px] leading-relaxed text-text-muted">{error}</p>
+            <p className="mb-7 text-[13.5px] leading-relaxed text-text-muted">{error}</p>
             <Link
               href="/login"
               className="inline-block w-full rounded-lg bg-accent px-3 py-2.5 text-[13.5px] font-semibold text-white hover:bg-accent-hover"

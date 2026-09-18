@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import Link from "next/link";
 import { login, requestMagicLink } from "@/lib/auth";
-import { authDarkVars, BrandWordmark } from "@/components/AuthTheme";
+import { AuthBackdrop, authDarkVars, BrandWordmark } from "@/components/AuthTheme";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -36,17 +36,20 @@ export default function LoginPage() {
   return (
     <main
       style={authDarkVars}
-      className="flex min-h-screen flex-col items-center justify-center gap-8 bg-bg px-4 py-10"
+      className="relative flex min-h-screen flex-col items-center justify-center gap-9 bg-bg px-4 py-12"
     >
-      <BrandWordmark />
+      <AuthBackdrop />
+      <div className="relative z-10">
+        <BrandWordmark />
+      </div>
 
-      <div className="w-full max-w-[380px] rounded-2xl border border-border bg-bg p-8 pt-7 shadow-[var(--shadow)]">
+      <div className="relative z-10 w-full max-w-[440px] rounded-2xl border border-border bg-bg p-9 pt-8 shadow-[var(--shadow)]">
         {linkSentTo ? (
           <>
-            <h1 className="mb-1.5 text-[19px] font-semibold tracking-tight text-text text-balance">
+            <h1 className="mb-2 font-mono text-[24px] font-semibold tracking-tight text-text text-balance">
               Check your email
             </h1>
-            <p className="mb-6 text-[13px] leading-relaxed text-text-muted">
+            <p className="mb-7 text-[13.5px] leading-relaxed text-text-muted">
               Sent a sign-in link to <span className="font-medium text-text">{linkSentTo}</span>. It
               works once and expires in 15 minutes.
             </p>
@@ -60,10 +63,10 @@ export default function LoginPage() {
           </>
         ) : (
           <>
-            <h1 className="mb-1.5 text-[19px] font-semibold tracking-tight text-text text-balance">
+            <h1 className="mb-2 font-mono text-[24px] font-semibold tracking-tight text-text text-balance">
               Sign in
             </h1>
-            <p className="mb-6 text-[13px] leading-relaxed text-text-muted">
+            <p className="mb-7 text-[13.5px] leading-relaxed text-text-muted">
               Enter your email — leave the password blank to sign in with a link instead.
             </p>
 
