@@ -1,13 +1,17 @@
+import base64
 import json
 import os
 import time
 
 import numpy as np
+import pytest
 from fakes import FakeLlm, FakeStt, FakeTts, FakeVad
 from starlette.testclient import TestClient
 
 from pos import config
+from pos.auth.store import UserStore
 from pos.cli.server import _default_llm_models, create_app
+from pos.db import create_pool, init_schema
 from pos.storage import SessionStore
 from pos.utils import float32_to_pcm16
 
@@ -16,15 +20,41 @@ from pos.utils import float32_to_pcm16
 _TEST_DSN = os.environ.get("TEST_DATABASE_URL", "postgresql://pos:pos@localhost:5432/pos")
 
 
-def _fresh_store() -> SessionStore:
-    """A SessionStore backed by the test Postgres, with both tables
-    truncated first -- each test needs its own clean slate, unlike the
-    old sqlite3 ":memory:" store this replaces."""
-    store = SessionStore(_TEST_DSN)
-    with store._lock:
-        store._conn.execute("TRUNCATE turns, sessions RESTART IDENTITY CASCADE")
-        store._conn.commit()
-    return store
+@pytest.fixture(autouse=True)
+def _secrets(monkeypatch):
+    monkeypatch.setattr(config, "JWT_SECRET", "test-secret")
+    monkeypatch.setattr(config, "ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
+
+
+_pool = None
+
+
+def _shared_pool():
+    """One ConnectionPool reused by every test in this module. A fresh
+    pool per test (min_size=2) exhausts Postgres's default
+    max_connections=100 once enough tests accumulate in one process --
+    this file alone has ~40."""
+    global _pool
+    if _pool is None:
+        _pool = create_pool(_TEST_DSN, max_size=5)
+        init_schema(_pool)
+    return _pool
+
+
+def _fresh_stores() -> tuple[SessionStore, UserStore]:
+    """A SessionStore + UserStore backed by the test Postgres, with every
+    table truncated first -- each test needs its own clean slate, unlike
+    the old sqlite3 ":memory:" store this replaces."""
+    pool = _shared_pool()
+    with pool.connection() as conn:
+        conn.execute("TRUNCATE users, sessions, turns RESTART IDENTITY CASCADE")
+    return SessionStore(pool), UserStore(pool)
+
+
+def _sign_in(client, email="a@test.com") -> str:
+    resp = client.post("/auth/signup", json={"email": email, "password": "pw-12345678"})
+    assert resp.status_code == 200
+    return resp.json()["id"]
 
 
 def _receive_json_skipping_audio(ws, max_messages=200):
@@ -44,19 +74,22 @@ def _receive_json_skipping_audio(ws, max_messages=200):
 def _make_client(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     fake_llm = FakeLlm(reply="hi there")
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: fake_llm,
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     return TestClient(app), fake_llm
 
 
 def test_ws_endpoint_sends_ready_event_then_audio_reply(monkeypatch):
     client, _ = _make_client(monkeypatch)
+    _sign_in(client)
     with client.websocket_connect("/ws") as ws:
         ready = ws.receive_json()
         assert ready["event"] == "ready"
@@ -71,6 +104,7 @@ def test_ws_endpoint_sends_ready_event_then_audio_reply(monkeypatch):
 
 def test_two_concurrent_sessions_have_independent_history(monkeypatch):
     client, fake_llm = _make_client(monkeypatch)
+    _sign_in(client)
     frame = np.zeros(config.FRAME, dtype=np.float32)
 
     with client.websocket_connect("/ws") as ws_a, client.websocket_connect("/ws") as ws_b:
@@ -87,12 +121,14 @@ def test_two_concurrent_sessions_have_independent_history(monkeypatch):
 
 def test_options_endpoint_lists_tts_voices_and_llm_models(monkeypatch):
     monkeypatch.setattr("pos.cli.server._default_llm_models", lambda base_url, fallback: ["model-a", "model-b"])
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
 
@@ -110,12 +146,14 @@ def test_options_endpoint_includes_provider_and_tools_for_connections_diagram(mo
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     monkeypatch.setattr("pos.cli.server._default_llm_models", lambda base_url, fallback: ["model-a"])
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
 
@@ -149,13 +187,15 @@ def test_create_app_eagerly_warms_default_tts_and_llm():
         llm_factory_calls.append(model)
         return FakeLlm()
 
+    session_store, user_store = _fresh_stores()
     create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=llm_factory,
         default_tts_engine="kokoro",
         default_llm_model="default-model",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
 
     assert FakeTts.instances_created - before_tts == 1
@@ -165,19 +205,22 @@ def test_create_app_eagerly_warms_default_tts_and_llm():
 def test_tts_engine_cache_reuses_instance_for_same_voice(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     fake_llm = FakeLlm(reply="hi there")
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: fake_llm,
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     # Snapshot *after* create_app() — it now eagerly warms the default
     # (engine, voice="") combo at startup, which is a different cache key
     # from voice="voice-a" below and shouldn't count toward this delta.
     before = FakeTts.instances_created
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?voice=voice-a") as ws1:
         ws1.receive_json()
@@ -189,15 +232,18 @@ def test_tts_engine_cache_reuses_instance_for_same_voice(monkeypatch):
 
 def test_ws_query_params_select_voice_and_llm_model(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?tts=kokoro&voice=voice-b&llm_model=custom-model") as ws:
         ready = ws.receive_json()
@@ -214,15 +260,18 @@ def test_ws_vad_query_params_are_passed_to_vad_factory(monkeypatch):
         captured.update(kwargs)
         return FakeVad(start_at=1, end_at=3)
 
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         vad_factory=spy_vad_factory,
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect(
         "/ws?vad_threshold=0.3&vad_min_silence_ms=800&vad_speech_pad_ms=100"
@@ -234,15 +283,18 @@ def test_ws_vad_query_params_are_passed_to_vad_factory(monkeypatch):
 
 def test_ws_rejects_out_of_range_vad_threshold(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?vad_threshold=1.5") as ws:
         msg = ws.receive_json()
@@ -252,15 +304,18 @@ def test_ws_rejects_out_of_range_vad_threshold(monkeypatch):
 
 def test_ws_rejects_non_numeric_vad_param(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?vad_threshold=not-a-number") as ws:
         msg = ws.receive_json()
@@ -270,15 +325,18 @@ def test_ws_rejects_non_numeric_vad_param(monkeypatch):
 
 def test_ws_rejects_negative_vad_min_silence_ms(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?vad_min_silence_ms=-100") as ws:
         msg = ws.receive_json()
@@ -287,15 +345,18 @@ def test_ws_rejects_negative_vad_min_silence_ms(monkeypatch):
 
 def test_ws_rejects_wake_word_mode_without_trigger_word(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?voice_input_mode=wake_word") as ws:
         msg = ws.receive_json()
@@ -305,15 +366,18 @@ def test_ws_rejects_wake_word_mode_without_trigger_word(monkeypatch):
 
 def test_ws_rejects_invalid_voice_input_mode(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?voice_input_mode=telepathy") as ws:
         msg = ws.receive_json()
@@ -323,15 +387,18 @@ def test_ws_rejects_invalid_voice_input_mode(monkeypatch):
 
 def test_ws_wake_word_mode_with_trigger_word_is_accepted(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("computer, hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?voice_input_mode=wake_word&trigger_word=computer") as ws:
         ready = ws.receive_json()
@@ -353,15 +420,18 @@ def test_ws_push_to_talk_mode_never_calls_vad_factory(monkeypatch):
         calls.append(kwargs)
         return FakeVad(start_at=1, end_at=3)
 
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=spy_vad_factory,
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?voice_input_mode=push_to_talk") as ws:
         ws.receive_json()  # ready
@@ -376,15 +446,18 @@ def test_ws_push_to_talk_mode_never_calls_vad_factory(monkeypatch):
 
 def test_ws_push_to_talk_produces_a_response_on_ptt_stop(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?voice_input_mode=push_to_talk") as ws:
         ws.receive_json()  # ready
@@ -403,15 +476,18 @@ def test_ws_push_to_talk_ignores_trigger_word(monkeypatch):
     # trigger_word only applies in wake_word mode -- push_to_talk should
     # respond to plain speech even if a trigger_word happens to be sent.
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?voice_input_mode=push_to_talk&trigger_word=computer") as ws:
         ws.receive_json()  # ready
@@ -428,15 +504,18 @@ def test_ws_push_to_talk_ignores_trigger_word(monkeypatch):
 
 def test_ws_text_mode_accepts_json_text_and_replies_with_bot_text(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?mode=text") as ws:
         ws.receive_json()  # ready
@@ -452,15 +531,18 @@ def test_ws_text_mode_accepts_json_text_and_replies_with_bot_text(monkeypatch):
 
 def test_ws_text_mode_never_sends_binary_audio(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?mode=text") as ws:
         ws.receive_json()  # ready
@@ -474,15 +556,18 @@ def test_ws_text_mode_never_sends_binary_audio(monkeypatch):
 
 def test_ws_rejects_invalid_mode(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?mode=carrier-pigeon") as ws:
         msg = ws.receive_json()
@@ -498,15 +583,18 @@ def test_ws_text_mode_never_calls_vad_factory(monkeypatch):
         calls.append(kwargs)
         return FakeVad(start_at=1, end_at=3)
 
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=spy_vad_factory,
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?mode=text") as ws:
         ws.receive_json()  # ready
@@ -520,18 +608,21 @@ def test_ws_text_mode_never_calls_vad_factory(monkeypatch):
 def test_ws_text_mode_never_constructs_a_real_tts_engine(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     before = FakeTts.instances_created
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm("hi there"),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     # create_app() eagerly warms the default (engine, voice="") combo at
     # startup regardless of mode -- snapshot after that, not before.
     before = FakeTts.instances_created
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?mode=text") as ws:
         ws.receive_json()  # ready
@@ -542,25 +633,7 @@ def test_ws_text_mode_never_constructs_a_real_tts_engine(monkeypatch):
     assert FakeTts.instances_created == before
 
 
-def test_session_keys_endpoint_returns_a_key_token(monkeypatch):
-    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    app = create_app(
-        stt=FakeStt("hello"),
-        tts_engines={"kokoro": FakeTts},
-        llm_factory=lambda model: FakeLlm(),
-        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
-        default_tts_engine="kokoro",
-        session_store=_fresh_store(),
-    )
-    client = TestClient(app)
-
-    resp = client.post("/session-keys", json={"openai_api_key": "sk-test"})
-
-    assert resp.status_code == 200
-    assert resp.json()["key_token"]
-
-
-def test_ws_key_token_is_applied_via_llm_env_factory(monkeypatch):
+def test_ws_credentials_are_loaded_via_llm_env_factory(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     captured = {}
 
@@ -569,6 +642,7 @@ def test_ws_key_token_is_applied_via_llm_env_factory(monkeypatch):
         captured["env"] = dict(env)
         return FakeLlm("hi there")
 
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -576,19 +650,21 @@ def test_ws_key_token_is_applied_via_llm_env_factory(monkeypatch):
         llm_env_factory=spy_llm_env_factory,
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    user_id = _sign_in(client)
+    user_store.save_credential(user_id, "local", {"OPENAI_API_KEY": "sk-override"})
 
-    token = client.post("/session-keys", json={"openai_api_key": "sk-override"}).json()["key_token"]
-    with client.websocket_connect(f"/ws?key_token={token}") as ws:
+    with client.websocket_connect("/ws") as ws:
         ws.receive_json()  # ready
 
     assert captured["model"] == "lfm2.5-230m"
     assert captured["env"]["OPENAI_API_KEY"] == "sk-override"
 
 
-def test_session_keys_maps_azure_and_tavily_fields(monkeypatch):
+def test_ws_selects_stored_credential_by_provider_query_param(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     captured = {}
 
@@ -596,6 +672,7 @@ def test_session_keys_maps_azure_and_tavily_fields(monkeypatch):
         captured["env"] = dict(env)
         return FakeLlm("hi there")
 
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -603,17 +680,19 @@ def test_session_keys_maps_azure_and_tavily_fields(monkeypatch):
         llm_env_factory=spy_llm_env_factory,
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    user_id = _sign_in(client)
+    user_store.save_credential(user_id, "azure", {
+        "AZURE_OPENAI_API_KEY": "az-key",
+        "AZURE_OPENAI_ENDPOINT": "https://example.openai.azure.com/",
+        "AZURE_OPENAI_DEPLOYMENT": "my-deployment",
+    })
+    user_store.save_credential(user_id, "tavily", {"TAVILY_API_KEY": "tvly-key"})
 
-    token = client.post("/session-keys", json={
-        "azure_api_key": "az-key",
-        "azure_endpoint": "https://example.openai.azure.com/",
-        "azure_deployment": "my-deployment",
-        "tavily_api_key": "tvly-key",
-    }).json()["key_token"]
-    with client.websocket_connect(f"/ws?key_token={token}") as ws:
+    with client.websocket_connect("/ws?provider=azure") as ws:
         ws.receive_json()  # ready
 
     assert captured["env"]["AZURE_OPENAI_API_KEY"] == "az-key"
@@ -622,118 +701,10 @@ def test_session_keys_maps_azure_and_tavily_fields(monkeypatch):
     assert captured["env"]["TAVILY_API_KEY"] == "tvly-key"
 
 
-def test_session_keys_maps_local_fields(monkeypatch):
-    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    captured = {}
-
-    def spy_llm_env_factory(model, env):
-        captured["env"] = dict(env)
-        return FakeLlm("hi there")
-
-    app = create_app(
-        stt=FakeStt("hello"),
-        tts_engines={"kokoro": FakeTts},
-        llm_factory=lambda model: FakeLlm(),
-        llm_env_factory=spy_llm_env_factory,
-        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
-        default_tts_engine="kokoro",
-        session_store=_fresh_store(),
-    )
-    client = TestClient(app)
-
-    token = client.post("/session-keys", json={
-        "local_api_key": "real-lm-studio-token",
-        "local_base_url": "http://192.168.1.50:1234/v1",
-    }).json()["key_token"]
-    with client.websocket_connect(f"/ws?key_token={token}") as ws:
-        ws.receive_json()  # ready
-
-    assert captured["env"]["LOCAL_API_KEY"] == "real-lm-studio-token"
-    assert captured["env"]["LOCAL_BASE_URL"] == "http://192.168.1.50:1234/v1"
-
-
-def test_session_keys_maps_anthropic_gemini_openrouter_bedrock_fields(monkeypatch):
-    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    captured = {}
-
-    def spy_llm_env_factory(model, env):
-        captured["env"] = dict(env)
-        return FakeLlm("hi there")
-
-    app = create_app(
-        stt=FakeStt("hello"),
-        tts_engines={"kokoro": FakeTts},
-        llm_factory=lambda model: FakeLlm(),
-        llm_env_factory=spy_llm_env_factory,
-        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
-        default_tts_engine="kokoro",
-        session_store=_fresh_store(),
-    )
-    client = TestClient(app)
-
-    token = client.post("/session-keys", json={
-        "anthropic_api_key": "sk-ant-test",
-        "gemini_api_key": "fake-google-key",
-        "openrouter_api_key": "sk-or-test",
-        "bedrock_access_key_id": "AKIAFAKE",
-        "bedrock_secret_access_key": "fakefakefake",
-        "bedrock_region": "eu-west-1",
-    }).json()["key_token"]
-    with client.websocket_connect(f"/ws?key_token={token}") as ws:
-        ws.receive_json()  # ready
-
-    assert captured["env"]["ANTHROPIC_API_KEY"] == "sk-ant-test"
-    assert captured["env"]["GOOGLE_API_KEY"] == "fake-google-key"
-    assert captured["env"]["OPENROUTER_API_KEY"] == "sk-or-test"
-    assert captured["env"]["AWS_ACCESS_KEY_ID"] == "AKIAFAKE"
-    assert captured["env"]["AWS_SECRET_ACCESS_KEY"] == "fakefakefake"
-    assert captured["env"]["AWS_REGION"] == "eu-west-1"
-
-
-def test_ws_key_token_is_single_use(monkeypatch):
-    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    app = create_app(
-        stt=FakeStt("hello"),
-        tts_engines={"kokoro": FakeTts},
-        llm_factory=lambda model: FakeLlm(),
-        llm_env_factory=lambda model, env: FakeLlm("hi there"),
-        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
-        default_tts_engine="kokoro",
-        session_store=_fresh_store(),
-    )
-    client = TestClient(app)
-
-    token = client.post("/session-keys", json={"openai_api_key": "sk-test"}).json()["key_token"]
-    with client.websocket_connect(f"/ws?key_token={token}") as ws:
-        ws.receive_json()  # ready
-
-    with client.websocket_connect(f"/ws?key_token={token}") as ws:
-        msg = ws.receive_json()
-        assert msg["event"] == "error"
-        assert "key_token" in msg["message"]
-
-
-def test_ws_unknown_key_token_gets_error(monkeypatch):
-    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    app = create_app(
-        stt=FakeStt("hello"),
-        tts_engines={"kokoro": FakeTts},
-        llm_factory=lambda model: FakeLlm(),
-        vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
-        default_tts_engine="kokoro",
-        session_store=_fresh_store(),
-    )
-    client = TestClient(app)
-
-    with client.websocket_connect("/ws?key_token=nonexistent-token") as ws:
-        msg = ws.receive_json()
-        assert msg["event"] == "error"
-        assert "key_token" in msg["message"]
-
-
-def test_ws_without_key_token_never_calls_llm_env_factory(monkeypatch):
+def test_ws_without_stored_credentials_never_calls_llm_env_factory(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     calls = []
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -741,9 +712,11 @@ def test_ws_without_key_token_never_calls_llm_env_factory(monkeypatch):
         llm_env_factory=lambda model, env: calls.append((model, env)) or FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws") as ws:
         ws.receive_json()  # ready
@@ -753,7 +726,7 @@ def test_ws_without_key_token_never_calls_llm_env_factory(monkeypatch):
 
 def test_ready_event_includes_session_id(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = _fresh_store()
+    store, users = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -761,8 +734,10 @@ def test_ready_event_includes_session_id(monkeypatch):
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
         session_store=store,
+        user_store=users,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws") as ws:
         ready = ws.receive_json()
@@ -773,10 +748,7 @@ def test_ready_event_includes_session_id(monkeypatch):
 
 def test_ws_resume_session_id_seeds_conversation_and_keeps_writing_to_it(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = _fresh_store()
-    store.create_session("s1", mode="text", tts_engine=None, llm_model="lfm2.5-230m")
-    store.add_turn("s1", "user", "what's your name")
-    store.add_turn("s1", "assistant", "Assistant.")
+    store, users = _fresh_stores()
     fake_llm = FakeLlm("hi there")
     app = create_app(
         stt=FakeStt("hello"),
@@ -785,8 +757,13 @@ def test_ws_resume_session_id_seeds_conversation_and_keeps_writing_to_it(monkeyp
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
         session_store=store,
+        user_store=users,
     )
     client = TestClient(app)
+    user_id = _sign_in(client)
+    store.create_session("s1", user_id, mode="text", tts_engine=None, llm_model="lfm2.5-230m")
+    store.add_turn("s1", "user", "what's your name")
+    store.add_turn("s1", "assistant", "Assistant.")
 
     with client.websocket_connect("/ws?mode=text&resume_session_id=s1") as ws:
         ready = ws.receive_json()
@@ -803,7 +780,7 @@ def test_ws_resume_session_id_seeds_conversation_and_keeps_writing_to_it(monkeyp
     assert fake_llm.calls[0][-1] == {"role": "user", "content": "hello again"}
 
     # and the new turns were appended to the SAME stored session, not a new one
-    result = store.get_session("s1")
+    result = store.get_session("s1", user_id)
     assert [t["text"] for t in result["turns"]] == [
         "what's your name", "Assistant.", "hello again", "hi there ",
     ]
@@ -811,10 +788,7 @@ def test_ws_resume_session_id_seeds_conversation_and_keeps_writing_to_it(monkeyp
 
 def test_ws_resuming_with_a_different_mode_updates_the_stored_mode(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = _fresh_store()
-    store.create_session("s1", mode="voice", tts_engine="kokoro", llm_model="lfm2.5-230m")
-    store.add_turn("s1", "user", "hello")
-    store.add_turn("s1", "assistant", "hi there")
+    store, users = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -822,8 +796,13 @@ def test_ws_resuming_with_a_different_mode_updates_the_stored_mode(monkeypatch):
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
         session_store=store,
+        user_store=users,
     )
     client = TestClient(app)
+    user_id = _sign_in(client)
+    store.create_session("s1", user_id, mode="voice", tts_engine="kokoro", llm_model="lfm2.5-230m")
+    store.add_turn("s1", "user", "hello")
+    store.add_turn("s1", "assistant", "hi there")
 
     with client.websocket_connect("/ws?mode=text&resume_session_id=s1") as ws:
         ws.receive_json()  # ready
@@ -831,14 +810,13 @@ def test_ws_resuming_with_a_different_mode_updates_the_stored_mode(monkeypatch):
         ws.receive_json()  # user_text
         ws.receive_json()  # bot_text
 
-    assert store.get_session("s1")["session"]["mode"] == "text"
-    assert store.list_sessions()[0]["mode"] == "text"
+    assert store.get_session("s1", user_id)["session"]["mode"] == "text"
+    assert store.list_sessions(user_id)[0]["mode"] == "text"
 
 
 def test_ws_resuming_with_the_same_mode_leaves_stored_mode_unchanged(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = _fresh_store()
-    store.create_session("s1", mode="text", tts_engine=None, llm_model="lfm2.5-230m")
+    store, users = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -846,8 +824,11 @@ def test_ws_resuming_with_the_same_mode_leaves_stored_mode_unchanged(monkeypatch
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
         session_store=store,
+        user_store=users,
     )
     client = TestClient(app)
+    user_id = _sign_in(client)
+    store.create_session("s1", user_id, mode="text", tts_engine=None, llm_model="lfm2.5-230m")
 
     with client.websocket_connect("/ws?mode=text&resume_session_id=s1") as ws:
         ws.receive_json()  # ready
@@ -855,20 +836,23 @@ def test_ws_resuming_with_the_same_mode_leaves_stored_mode_unchanged(monkeypatch
         ws.receive_json()  # user_text
         ws.receive_json()  # bot_text
 
-    assert store.get_session("s1")["session"]["mode"] == "text"
+    assert store.get_session("s1", user_id)["session"]["mode"] == "text"
 
 
 def test_ws_resume_unknown_session_id_gets_error(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws?resume_session_id=does-not-exist") as ws:
         msg = ws.receive_json()
@@ -878,7 +862,7 @@ def test_ws_resume_unknown_session_id_gets_error(monkeypatch):
 
 def test_completed_turn_is_persisted_to_session_store(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = _fresh_store()
+    store, users = _fresh_stores()
     fake_usage = {"input_tokens": 5, "output_tokens": 3}
     app = create_app(
         stt=FakeStt("hello"),
@@ -887,8 +871,10 @@ def test_completed_turn_is_persisted_to_session_store(monkeypatch):
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
         session_store=store,
+        user_store=users,
     )
     client = TestClient(app)
+    user_id = _sign_in(client)
 
     with client.websocket_connect("/ws") as ws:
         ready = ws.receive_json()
@@ -902,10 +888,10 @@ def test_completed_turn_is_persisted_to_session_store(monkeypatch):
         # below rather than assuming this call already implies the write.
 
         deadline = time.time() + 2.0
-        result = store.get_session(session_id)
+        result = store.get_session(session_id, user_id)
         while (not result or len(result["turns"]) < 2) and time.time() < deadline:
             time.sleep(0.02)
-            result = store.get_session(session_id)
+            result = store.get_session(session_id, user_id)
 
     assert result is not None
     assert result["turns"] == [
@@ -916,7 +902,7 @@ def test_completed_turn_is_persisted_to_session_store(monkeypatch):
 
 def test_get_sessions_lists_created_sessions(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = _fresh_store()
+    store, users = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -924,8 +910,10 @@ def test_get_sessions_lists_created_sessions(monkeypatch):
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
         session_store=store,
+        user_store=users,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws") as ws:
         ready = ws.receive_json()
@@ -939,7 +927,7 @@ def test_get_sessions_lists_created_sessions(monkeypatch):
 
 def test_get_session_by_id_returns_detail(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = _fresh_store()
+    store, users = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -947,8 +935,10 @@ def test_get_session_by_id_returns_detail(monkeypatch):
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
         session_store=store,
+        user_store=users,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     with client.websocket_connect("/ws") as ws:
         ready = ws.receive_json()
@@ -960,15 +950,17 @@ def test_get_session_by_id_returns_detail(monkeypatch):
 
 
 def test_get_session_by_unknown_id_returns_404(monkeypatch):
-    store = _fresh_store()
+    store, users = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         default_tts_engine="kokoro",
         session_store=store,
+        user_store=users,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     resp = client.get("/sessions/does-not-exist")
 
@@ -977,7 +969,7 @@ def test_get_session_by_unknown_id_returns_404(monkeypatch):
 
 def test_delete_session_removes_it(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = _fresh_store()
+    store, users = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
@@ -985,8 +977,10 @@ def test_delete_session_removes_it(monkeypatch):
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
         session_store=store,
+        user_store=users,
     )
     client = TestClient(app)
+    user_id = _sign_in(client)
 
     with client.websocket_connect("/ws") as ws:
         ready = ws.receive_json()
@@ -994,18 +988,21 @@ def test_delete_session_removes_it(monkeypatch):
     resp = client.delete(f"/sessions/{ready['session_id']}")
 
     assert resp.status_code == 200
-    assert store.get_session(ready["session_id"]) is None
+    assert store.get_session(ready["session_id"], user_id) is None
 
 
 def test_delete_session_unknown_id_returns_404():
+    session_store, user_store = _fresh_stores()
     app = create_app(
         stt=FakeStt("hello"),
         tts_engines={"kokoro": FakeTts},
         llm_factory=lambda model: FakeLlm(),
         default_tts_engine="kokoro",
-        session_store=_fresh_store(),
+        session_store=session_store,
+        user_store=user_store,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     resp = client.delete("/sessions/does-not-exist")
 
@@ -1014,7 +1011,7 @@ def test_delete_session_unknown_id_returns_404():
 
 def test_first_exchange_generates_a_session_title(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = _fresh_store()
+    store, users = _fresh_stores()
     fake_llm = FakeLlm("hi there", fake_title="Weekend trip planning")
     app = create_app(
         stt=FakeStt("hello"),
@@ -1023,8 +1020,10 @@ def test_first_exchange_generates_a_session_title(monkeypatch):
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
         session_store=store,
+        user_store=users,
     )
     client = TestClient(app)
+    user_id = _sign_in(client)
 
     with client.websocket_connect("/ws") as ws:
         ready = ws.receive_json()
@@ -1034,10 +1033,10 @@ def test_first_exchange_generates_a_session_title(monkeypatch):
         ws.receive_bytes()
 
         deadline = time.time() + 2.0
-        result = store.get_session(ready["session_id"])
+        result = store.get_session(ready["session_id"], user_id)
         while result["session"]["title"] is None and time.time() < deadline:
             time.sleep(0.02)
-            result = store.get_session(ready["session_id"])
+            result = store.get_session(ready["session_id"], user_id)
 
     assert result["session"]["title"] == "Weekend trip planning"
     assert fake_llm.title_calls == [("hello", "hi there ")]
@@ -1045,7 +1044,7 @@ def test_first_exchange_generates_a_session_title(monkeypatch):
 
 def test_title_generation_is_not_retriggered_on_later_turns(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = _fresh_store()
+    store, users = _fresh_stores()
     fake_llm = FakeLlm("hi there", fake_title="Weekend trip planning")
     app = create_app(
         stt=FakeStt("hello"),
@@ -1054,8 +1053,10 @@ def test_title_generation_is_not_retriggered_on_later_turns(monkeypatch):
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
         session_store=store,
+        user_store=users,
     )
     client = TestClient(app)
+    _sign_in(client)
 
     # Text mode, not voice: two turns sent as raw PCM frames back-to-back
     # raced against WebSocketAudioSink's real playback/barge-in timing --
@@ -1079,11 +1080,7 @@ def test_title_generation_is_not_retriggered_on_later_turns(monkeypatch):
 
 def test_resuming_a_session_does_not_regenerate_its_title(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    store = _fresh_store()
-    store.create_session("s1", mode="text", tts_engine=None, llm_model="lfm2.5-230m")
-    store.add_turn("s1", "user", "hi")
-    store.add_turn("s1", "assistant", "hello")
-    store.set_title("s1", "Original title")
+    store, users = _fresh_stores()
     fake_llm = FakeLlm("hi there", fake_title="Should not be used")
     app = create_app(
         stt=FakeStt("hello"),
@@ -1092,8 +1089,14 @@ def test_resuming_a_session_does_not_regenerate_its_title(monkeypatch):
         vad_factory=lambda **kw: FakeVad(start_at=1, end_at=3),
         default_tts_engine="kokoro",
         session_store=store,
+        user_store=users,
     )
     client = TestClient(app)
+    user_id = _sign_in(client)
+    store.create_session("s1", user_id, mode="text", tts_engine=None, llm_model="lfm2.5-230m")
+    store.add_turn("s1", "user", "hi")
+    store.add_turn("s1", "assistant", "hello")
+    store.set_title("s1", "Original title")
 
     with client.websocket_connect("/ws?mode=text&resume_session_id=s1") as ws:
         ws.receive_json()  # ready
@@ -1102,20 +1105,31 @@ def test_resuming_a_session_does_not_regenerate_its_title(monkeypatch):
         ws.receive_json()  # bot_text
 
     assert fake_llm.title_calls == []
-    assert store.get_session("s1")["session"]["title"] == "Original title"
+    assert store.get_session("s1", user_id)["session"]["title"] == "Original title"
 
 
-def test_index_page_is_served():
-    app = create_app(
-        stt=FakeStt("hello"),
-        tts_engines={"kokoro": FakeTts},
-        llm_factory=lambda model: FakeLlm(),
-        default_tts_engine="kokoro",
-        session_store=_fresh_store(),
-    )
-    client = TestClient(app)
+def test_sessions_endpoints_require_authentication(monkeypatch):
+    client, _ = _make_client(monkeypatch)
+    assert client.get("/sessions").status_code == 401
+    assert client.get("/sessions/anything").status_code == 401
+    assert client.delete("/sessions/anything").status_code == 401
 
-    resp = client.get("/")
 
-    assert resp.status_code == 200
-    assert "Voice Agent" in resp.text
+def test_websocket_requires_authentication(monkeypatch):
+    client, _ = _make_client(monkeypatch)
+    with client.websocket_connect("/ws") as ws:
+        message = ws.receive_json()
+    assert message["event"] == "error"
+    assert "not authenticated" in message["message"]
+
+
+def test_one_user_cannot_see_anothers_sessions(monkeypatch):
+    client, _ = _make_client(monkeypatch)
+    _sign_in(client, "a@test.com")
+    with client.websocket_connect("/ws?mode=text") as ws:
+        ws.receive_json()
+    assert len(client.get("/sessions").json()) == 1
+
+    client.post("/auth/logout")
+    _sign_in(client, "b@test.com")
+    assert client.get("/sessions").json() == []
