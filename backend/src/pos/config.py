@@ -57,3 +57,4 @@ HISTORY_TURNS = 3   # how many prior user/assistant turn-pairs to include as LLM
 DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://pos:pos@localhost:5432/pos"
 )   # Postgres DSN for session/turn history — see storage.py
+DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "10"))
