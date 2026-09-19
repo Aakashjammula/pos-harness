@@ -218,6 +218,13 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
     providerModels.listable
   );
 
+  // How full the model's context is: the latest reply's token total, against the model's own limit
+  // (from its listing, else what the server reported). Providers without a limit show just the count.
+  const lastUsage = [...session.lines].reverse().find((l) => l.usage)?.usage;
+  const contextUsed = lastUsage?.total_tokens ?? undefined;
+  const contextWindow =
+    providerModels.models.find((m) => m.id === llmModel)?.context_window ?? lastUsage?.context_window ?? undefined;
+
   const doConnect = useCallback(
     async (resumeSessionId: string | null, connectMode: SessionMode) => {
       await session.connect(
@@ -394,6 +401,8 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
           modelChipLabel={modelChipLabel}
           onSendText={handleSendText}
           onNewChat={handleNewChat}
+          contextUsed={contextUsed}
+          contextWindow={contextWindow}
           replying={session.replying}
         />
       )}

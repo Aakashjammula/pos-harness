@@ -76,7 +76,7 @@ export interface SessionDetail {
 
 export interface TranscriptLine {
   id: string;
-  who: "you" | "bot" | "system";
+  who: "you" | "bot" | "system" | "error";
   text: string;
   usage?: Usage;
   latency?: Latency;

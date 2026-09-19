@@ -3,6 +3,8 @@
 import { hasLlm } from "@/lib/llm";
 import { removeCredential, saveCredential, type ProviderModel } from "@/lib/credentials";
 import type { Tool } from "@/lib/tools";
+import { formatTokens } from "@/lib/format";
+import { useState } from "react";
 import type { ApiKeyFields, KeyProvider, OptionsResponse, Settings, SessionMode } from "@/lib/types";
 import { ConnectionsDiagram } from "./ConnectionsDiagram";
 
@@ -97,6 +99,7 @@ export function SettingsPanel({
   onCredentialsChanged,
 }: SettingsPanelProps) {
   const textMode = mode === "text";
+  const [showAll, setShowAll] = useState(false); // also list image/audio/music/agent models, hidden by default
   // In a key field: what is already saved (masked), else the usual example.
   const keyPlaceholder = (provider: string, example: string) =>
     configured.includes(provider)
@@ -172,11 +175,14 @@ export function SettingsPanel({
                       {configured.includes(settings.provider) ? "No models available" : "Save a key to load models"}
                     </option>
                   )}
-                  {providerModels.models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label === m.id ? m.id : `${m.label} (${m.id})`}
-                    </option>
-                  ))}
+                  {providerModels.models
+                    .filter((m) => showAll || m.chat !== false || m.id === llmModel)
+                    .map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label === m.id ? m.id : `${m.label} (${m.id})`}
+                        {m.context_window ? ` · ${formatTokens(m.context_window)} ctx` : ""}
+                      </option>
+                    ))}
                 </select>
               ) : (
                 <select
@@ -195,6 +201,13 @@ export function SettingsPanel({
                 </select>
               )}
             </Field>
+            {settings.provider && providerModels.listable && providerModels.models.some((m) => m.chat === false) && (
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-text-muted">
+                <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+                Show all models ({providerModels.models.filter((m) => m.chat === false).length} more: image, audio,
+                agents…)
+              </label>
+            )}
             {providerModels.error && (
               <p role="alert" className="m-0 text-xs text-red-500">
                 Couldn&apos;t load models: {providerModels.error}
