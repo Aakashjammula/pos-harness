@@ -11,7 +11,10 @@ Each provider has its own listing API (verified against the vendor docs):
   anthropic   GET https://api.anthropic.com/v1/models      paginated with after_id
   gemini      GET .../v1beta/models                         keep generateContent models only
   openrouter  GET https://openrouter.ai/api/v1/models      keep text-output + tool-capable
-  bedrock     boto3 list_foundation_models / inference profiles
+  bedrock     boto3 list_inference_profiles (paginated) + list_foundation_models.
+              Both calls and their parameters are confirmed against botocore's own
+              service model; the behaviour is covered with a stubbed client, not a
+              live AWS account.
   azure       not listable with an API key: deployment names are user-defined
 
 `env` uses the same variable names as the credential store (PROVIDER_FIELDS
@@ -188,9 +191,15 @@ def _list_bedrock(env: Mapping[str, str]) -> list[Model]:
         # Cross-region inference profiles (ids like "us.anthropic.claude-...") are
         # what recent models require and are not returned by list_foundation_models.
         try:
-            for p in client.list_inference_profiles(maxResults=1000).get("inferenceProfileSummaries", []):
-                profile_id = p["inferenceProfileId"]
-                models.append({"id": profile_id, "label": p.get("inferenceProfileName") or profile_id})
+            token: str | None = None
+            for _ in range(_MAX_PAGES):
+                page = client.list_inference_profiles(maxResults=1000, **({"nextToken": token} if token else {}))
+                for p in page.get("inferenceProfileSummaries", []):
+                    profile_id = p["inferenceProfileId"]
+                    models.append({"id": profile_id, "label": p.get("inferenceProfileName") or profile_id})
+                token = page.get("nextToken")
+                if not token:
+                    break
         except (AttributeError, ClientError):
             pass   # older boto3 / no permission: fall back to foundation models only
         seen = {m["id"] for m in models}
