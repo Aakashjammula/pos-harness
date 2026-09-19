@@ -78,6 +78,17 @@ class UserStore:
                 (user_id,),
             ).fetchone()
 
+    def get_password_hash(self, user_id: str) -> str | None:
+        with self._pool.connection() as conn:
+            row = conn.execute("SELECT password_hash FROM users WHERE id = %s", (user_id,)).fetchone()
+        return row["password_hash"] if row else None
+
+    def set_password_hash(self, user_id: str, password_hash: str) -> None:
+        with self._pool.connection() as conn:
+            conn.execute(
+                "UPDATE users SET password_hash = %s, updated_at = now() WHERE id = %s", (password_hash, user_id)
+            )
+
     def mark_email_verified(self, user_id: str) -> bool:
         """True if this changed anything (it was not verified before)."""
         with self._pool.connection() as conn:
