@@ -163,16 +163,17 @@ Three ways to run this, all sharing the same VAD/STT/LLM/TTS pipeline:
    `sounddevice` mic/speaker access. No network involved. This is the
    original mode and still the simplest for single-user local use.
 2. **FastAPI server + browser client** (`uv run pos-server`, then open
-   `http://localhost:8000/`) — the pipeline runs server-side; the
-   browser captures your mic and plays responses via a websocket at
-   `/ws`. Supports multiple simultaneous browser tabs/users, each with
-   independent conversation history.
+   `http://localhost:3000/` with the bundled frontend) — the pipeline runs
+   server-side. **Text chat** is a streamed HTTP request (`POST /chat/stream`,
+   server-sent events); **voice** is a websocket at `/ws`, where the browser
+   captures your mic and plays responses. Supports multiple simultaneous
+   browser tabs/users, each with independent conversation history.
 3. **FastAPI server + CLI client** (`uv run pos-server`, then in another
    terminal `uv run pos-client`) — same server, a Python relay client
    instead of a browser. Useful for scripting/headless use, or testing
    the server without a browser.
 
-Modes 2 and 3 share 100% of the server-side code — the only difference
+Modes 2 and 3 share the server-side voice code — the only difference
 is which relay client captures/plays your audio. Audio crosses the
 websocket as raw PCM16 mono frames (16kHz client→server, matching the
 TTS engine's own sample rate server→client) — no codec, matching what
@@ -188,6 +189,33 @@ headphones with any of the three run modes.
 `fastapi`, `uvicorn[standard]`, and `websockets` are dependencies added
 for server mode; `pytest` is a dev-only dependency (`uv run pytest` to
 run the test suite) — neither is needed just to run `pos-agent`.
+
+### HTTP / WebSocket API
+
+All routes except `/options`, `/auth/signup`, `/auth/login` and the magic-link
+routes need a signed-in user (the `pos_access` cookie). Interactive docs are at
+`/docs`.
+
+| Route | Purpose |
+|---|---|
+| `POST /auth/signup`, `/auth/login`, `/auth/logout`, `/auth/refresh`, `GET /auth/me` | Account and session. Access tokens last 15 minutes; the frontend refreshes on a 401 (`lib/apiFetch.ts`). |
+| `POST /auth/magic-link/request`, `/auth/magic-link/verify` | Email sign-in link. A passwordless signup whose email cannot be sent says so (`magic_link_sent: false` plus a `message`). |
+| `GET /credentials`, `PUT/DELETE /credentials/{provider}` | Saved, encrypted API credentials: the LLM providers and any tool that needs a key. Keys are never returned. |
+| `GET /credentials/{provider}/models` | The models that credential (the user's, else the server's) can actually use, asked of the provider itself. |
+| `GET /tools`, `PUT /tools/{id}` | This user's tools and their on/off switches. Enabling a tool that still needs its key is a 409. |
+| `GET /options` | TTS engines/voices and whether an LLM is configured server-wide. |
+| `GET /sessions`, `GET/DELETE /sessions/{id}` | Saved chats. |
+| `POST /chat/stream` | **Text chat** as server-sent events. Body `{message, session_id?, provider?, llm_model?}`. |
+| `WS /ws` | **Voice** only (binary PCM16 frames both ways plus JSON events). `mode=text` is refused. |
+
+`POST /chat/stream` follows the same event flow as Anthropic's streaming API.
+Events: `session {id}`, `token {text}` (many), `ping {}` (keepalive), `done
+{text, usage?, latency?}`, `title {title}`, `error {message}`. Problems found
+before streaming starts are plain HTTP statuses (401, 404 unknown session, 409
+no LLM configured, 422 empty message), because a status can't change once the
+stream has begun; later failures arrive as an `error` event. Closing the
+connection stops the model call. Voice and text run the same `LlmBase.stream()`
+through one helper, `pos.turn.run_turn`.
 
 ### Browser client: model/provider selection
 
@@ -279,27 +307,23 @@ Execution Loop" pattern, not `create_agent` — that owns its own
 conversation memory (`AgentState` + a checkpointer), which would
 duplicate the history `Agent` already tracks in `self.conversation`.
 
-Tools bound by default (`backend/src/pos/llm/tools.py`):
-- **`get_current_time`** — always on, no setup. A voice assistant with
-  no sense of the current date/time is asked about it constantly.
-- **web search** (via [Tavily](https://tavily.com/), free tier available)
-  — only enabled if `TAVILY_API_KEY` is set in the environment; skipped
-  (with a startup log line) otherwise, so search being unconfigured
-  doesn't stop the agent from starting.
+**Tools** live in their own package, `backend/src/pos/tools/`: one module per
+tool, each describing itself with a `ToolSpec` (id, label, description, the
+credential fields it needs, and a `build` function). The registry drives the
+credential forms, the `/tools` API, each user's on/off switches (stored per user
+in `user_tool_settings`) and what is bound to the LLM, so nothing else names a
+specific tool. Built in:
+- **`get_current_time`** — no setup. On unless the user turns it off.
+- **`web_search`** (via [Tavily](https://tavily.com/), free tier available) —
+  needs the user's own Tavily key. It stays off until the key is saved (in the
+  browser's **Tools** panel, or `TAVILY_API_KEY` on the server), and can then
+  be switched on or off.
 
-```
-# PowerShell
-$env:TAVILY_API_KEY = "tvly-..."
-uv run pos-agent
-
-# bash
-export TAVILY_API_KEY=tvly-...
-uv run pos-agent
-```
-
-Pass a custom `tools=[...]` list to `LangChainLlm(...)` to add more —
-any LangChain `BaseTool` (including a plain `@tool`-decorated function)
-works.
+To add a tool, create `pos/tools/<name>.py` that calls `register(ToolSpec(...))`
+(copy `web_search.py` for one that needs a key) and import it in
+`pos/tools/__init__.py`. Its key form appears in the Tools panel automatically.
+Pass a custom `tools=[...]` list to `LangChainLlm(...)` to bypass the registry —
+any LangChain `BaseTool` works.
 
 **Backend selection** (env vars, decided once per run — no in-session picker):
 
@@ -483,14 +507,14 @@ backend/src/pos/
                                   cli/local.py and cli/server.py both drive
   storage.py                     SessionStore — Postgres session/turn history (create/add_turn/
                                   set_title/delete_session/list_sessions/get_session)
-  null_engines.py                NullTts/NullVad — no-op stand-ins for text-mode sessions; kept
-                                  outside tts/ and vad/ on purpose, see the file's own docstring
+  turn.py                        run_turn() — one LLM turn (stream, time, usage), shared by voice and text
+  null_engines.py                NullVad — no-op VAD for push-to-talk; kept outside vad/ on purpose,
+                                  see the file's own docstring
   interfaces/
     vad.py, stt.py, tts.py, llm.py, audio_sink.py   abstract base classes (the swap contracts)
   audio/
     output.py                    LocalAudioSink(AudioSinkBase) — playback ring buffer, click-free underrun handling
     ws_sink.py                   WebSocketAudioSink(AudioSinkBase) — same contract, paced by a timer thread instead of a device callback
-    null_sink.py                 NullAudioSink(AudioSinkBase) — no-op, for text-mode sessions
   vad/silero.py                  SileroVad(VadBase)
   stt/onnx_asr_engine.py         OnnxAsrEngine(SttBase)
   tts/kokoro.py                  KokoroTts(TtsBase)
@@ -501,7 +525,9 @@ backend/src/pos/
                                   registry.py (dispatch), local.py/openai.py/azure.py (one
                                   self-registering provider each; add a new backend by adding
                                   one file here, no other file needs to change)
-  llm/tools.py                   get_current_time, web search (Tavily, needs TAVILY_API_KEY)
+  llm/content.py                 content_text() — text out of str-or-block-list message content
+  llm/model_listing.py           per-provider "which models can this key use" listers
+  tools/                         one module per tool + registry (see "Tools" above)
 tests/                           pytest suite (fakes.py holds shared no-hardware/no-network test doubles); run with `uv run pytest`
 ```
 
@@ -603,6 +629,9 @@ runs on the host, outside Compose; give the backend its URL with
 `LOCAL_BASE_URL` (from inside the container that is
 `http://host.docker.internal:1234/v1`), or let each user enter theirs in
 Settings.
+
+The backend runs as an unprivileged user (uid 1000, a typical host user), so
+files it writes into `./models` belong to you, not root.
 
 The Postgres port is published on `127.0.0.1` only, and backend tests
 refuse to run against any database not named `*_test` (default `pos_test`;
