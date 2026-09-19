@@ -19,22 +19,31 @@ MAGIC_LINK_TOKEN_TTL = timedelta(minutes=15)
 _ALGORITHM = "HS256"
 
 
-def create_access_token(user_id: str) -> str:
+def create_access_token(user_id: str, session_id: str | None = None) -> str:
+    """`session_id` binds the token to a server-side login session, which is
+    what makes logout and "sign out that device" take effect immediately."""
     now = datetime.now(UTC)
-    return jwt.encode(
-        {"sub": user_id, "iat": now, "exp": now + ACCESS_TOKEN_TTL},
-        config.JWT_SECRET,
-        algorithm=_ALGORITHM,
-    )
+    claims = {"sub": user_id, "iat": now, "exp": now + ACCESS_TOKEN_TTL}
+    if session_id:
+        claims["sid"] = session_id
+    return jwt.encode(claims, config.JWT_SECRET, algorithm=_ALGORITHM)
 
 
-def decode_access_token(token: str) -> str | None:
+def decode_access_claims(token: str) -> tuple[str, str | None] | None:
+    """(user id, session id or None) for a valid token, else None."""
     try:
         payload = jwt.decode(token, config.JWT_SECRET, algorithms=[_ALGORITHM])
     except jwt.PyJWTError:
         return None
-    subject = payload.get("sub")
-    return subject if isinstance(subject, str) else None
+    subject, sid = payload.get("sub"), payload.get("sid")
+    if not isinstance(subject, str):
+        return None
+    return subject, sid if isinstance(sid, str) else None
+
+
+def decode_access_token(token: str) -> str | None:
+    claims = decode_access_claims(token)
+    return claims[0] if claims else None
 
 
 def hash_refresh_token(raw: str) -> str:

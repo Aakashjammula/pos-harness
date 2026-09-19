@@ -83,7 +83,7 @@ from pydantic import BaseModel
 from pos import config
 from pos.agent import Agent
 from pos.audio.ws_sink import WebSocketAudioSink
-from pos.auth.deps import require_user_id, user_id_from_request
+from pos.auth.deps import Auth
 from pos.auth.routes import build_auth_router
 from pos.auth.store import UserStore
 from pos.db import create_pool, init_schema
@@ -206,6 +206,7 @@ def create_app(
         user_store = user_store or UserStore(pool)
     store = session_store
     users = user_store
+    auth = Auth(users)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -221,7 +222,7 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(build_auth_router(users))
+    app.include_router(build_auth_router(users, auth))
 
     # Warm the default STT model and TTS engine/voice ahead of the first
     # client, so nobody pays their construction cost (seconds to minutes on
@@ -324,24 +325,24 @@ def create_app(
         }
 
     @app.get("/sessions")
-    async def list_sessions(user_id: str = Depends(require_user_id)):
+    async def list_sessions(user_id: str = Depends(auth.require_user_id)):
         return store.list_sessions(user_id)
 
     @app.get("/sessions/{session_id}")
-    async def get_session(session_id: str, user_id: str = Depends(require_user_id)):
+    async def get_session(session_id: str, user_id: str = Depends(auth.require_user_id)):
         result = store.get_session(session_id, user_id)
         if result is None:
             raise HTTPException(status_code=404, detail="session not found")
         return result
 
     @app.delete("/sessions/{session_id}")
-    async def delete_session(session_id: str, user_id: str = Depends(require_user_id)):
+    async def delete_session(session_id: str, user_id: str = Depends(auth.require_user_id)):
         if not store.delete_session(session_id, user_id):
             raise HTTPException(status_code=404, detail="session not found")
         return {"deleted": True}
 
     @app.post("/chat/stream")
-    async def chat_stream(body: ChatBody, user_id: str = Depends(require_user_id)):
+    async def chat_stream(body: ChatBody, user_id: str = Depends(auth.require_user_id)):
         """Text chat as a server-sent event stream, over the same LlmBase.stream()
         that voice mode uses (see pos.turn.run_turn).
 
@@ -444,7 +445,7 @@ def create_app(
         await websocket.accept()
         loop = asyncio.get_running_loop()
 
-        user_id = user_id_from_request(websocket)
+        user_id = auth.user_id_from_request(websocket)
         if user_id is None:
             await websocket.send_json({"event": "error", "message": "not authenticated"})
             await websocket.close(code=1008)

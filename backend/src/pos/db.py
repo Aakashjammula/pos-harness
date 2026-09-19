@@ -85,6 +85,22 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
 
+-- One row per signed-in browser/device. The access token carries this id and every
+-- request checks it, so revoking a row signs that device out at once; the list is
+-- what the Settings page shows.
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_agent TEXT,
+    ip TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    revoked_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id) WHERE revoked_at IS NULL;
+ALTER TABLE refresh_tokens
+    ADD COLUMN IF NOT EXISTS auth_session_id UUID REFERENCES auth_sessions(id) ON DELETE CASCADE;
+
 CREATE TABLE IF NOT EXISTS magic_link_tokens (
     id BIGSERIAL PRIMARY KEY,
     email TEXT NOT NULL,

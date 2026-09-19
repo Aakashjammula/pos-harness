@@ -75,24 +75,97 @@ class UserStore:
                 "SELECT id::text, email FROM users WHERE id = %s", (user_id,)
             ).fetchone()
 
-    def store_refresh_token(self, user_id: str, token_hash: str, expires_at: datetime) -> None:
+    def store_refresh_token(
+        self, user_id: str, token_hash: str, expires_at: datetime, auth_session_id: str | None = None
+    ) -> None:
         with self._pool.connection() as conn:
             conn.execute(
-                "INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES (%s, %s, %s)",
-                (user_id, token_hash, expires_at),
+                "INSERT INTO refresh_tokens (user_id, token_hash, expires_at, auth_session_id) "
+                "VALUES (%s, %s, %s, %s)",
+                (user_id, token_hash, expires_at, auth_session_id),
             )
 
-    def consume_refresh_token(self, token_hash: str) -> str | None:
+    def consume_refresh_token_with_session(self, token_hash: str) -> tuple[str, str | None] | None:
         """Single-use: revokes the token as it's read, so replaying one is
-        always rejected."""
+        always rejected. Returns (user id, login session id or None for a token
+        issued before sessions existed)."""
         with self._pool.connection() as conn:
             row = conn.execute(
                 "UPDATE refresh_tokens SET revoked_at = now() "
                 "WHERE token_hash = %s AND revoked_at IS NULL AND expires_at > now() "
-                "RETURNING user_id::text",
+                "RETURNING user_id::text, auth_session_id::text",
                 (token_hash,),
             ).fetchone()
-        return row["user_id"] if row else None
+        return (row["user_id"], row["auth_session_id"]) if row else None
+
+    def consume_refresh_token(self, token_hash: str) -> str | None:
+        found = self.consume_refresh_token_with_session(token_hash)
+        return found[0] if found else None
+
+    # --- login sessions (one per signed-in browser/device) ---------------------------------
+
+    def create_auth_session(self, user_id: str, user_agent: str | None, ip: str | None) -> str:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "INSERT INTO auth_sessions (user_id, user_agent, ip) VALUES (%s, %s, %s) RETURNING id::text",
+                (user_id, (user_agent or "")[:300] or None, ip),
+            ).fetchone()
+        return row["id"]
+
+    def auth_session_active(self, session_id: str, user_id: str) -> bool:
+        try:
+            with self._pool.connection() as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM auth_sessions WHERE id = %s AND user_id = %s AND revoked_at IS NULL",
+                    (session_id, user_id),
+                ).fetchone()
+        except Exception:   # a malformed id is simply not an active session
+            return False
+        return row is not None
+
+    def touch_auth_session(self, session_id: str) -> None:
+        with self._pool.connection() as conn:
+            conn.execute("UPDATE auth_sessions SET last_seen_at = now() WHERE id = %s", (session_id,))
+
+    def list_auth_sessions(self, user_id: str) -> list[dict]:
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                "SELECT id::text, user_agent, ip, created_at, last_seen_at FROM auth_sessions "
+                "WHERE user_id = %s AND revoked_at IS NULL ORDER BY last_seen_at DESC",
+                (user_id,),
+            ).fetchall()
+        return list(rows)
+
+    def revoke_auth_session(self, user_id: str, session_id: str) -> bool:
+        """End one device's session. Its refresh tokens are DELETED, not marked
+        revoked: a revoked-but-present token is what replay detection reads as
+        theft, and that would sign the user's other devices out too."""
+        try:
+            with self._pool.connection() as conn:
+                cur = conn.execute(
+                    "UPDATE auth_sessions SET revoked_at = now() "
+                    "WHERE id = %s AND user_id = %s AND revoked_at IS NULL",
+                    (session_id, user_id),
+                )
+                if cur.rowcount == 0:
+                    return False
+                conn.execute("DELETE FROM refresh_tokens WHERE auth_session_id = %s", (session_id,))
+        except Exception:   # e.g. not a UUID
+            return False
+        return True
+
+    def revoke_all_auth_sessions(self, user_id: str, except_id: str | None = None) -> int:
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                "UPDATE auth_sessions SET revoked_at = now() "
+                "WHERE user_id = %s AND revoked_at IS NULL AND (%s::uuid IS NULL OR id <> %s::uuid) "
+                "RETURNING id::text",
+                (user_id, except_id, except_id),
+            ).fetchall()
+            ids = [r["id"] for r in rows]
+            if ids:
+                conn.execute("DELETE FROM refresh_tokens WHERE auth_session_id = ANY(%s::uuid[])", (ids,))
+        return len(ids)
 
     def user_for_revoked_token(self, token_hash: str) -> str | None:
         """Who owned a token that has already been revoked. A client
@@ -106,10 +179,16 @@ class UserStore:
         return row["user_id"] if row else None
 
     def revoke_all_refresh_tokens(self, user_id: str) -> None:
+        """Theft response: end every refresh token AND every login session, so
+        access tokens that were copied die with them."""
         with self._pool.connection() as conn:
             conn.execute(
                 "UPDATE refresh_tokens SET revoked_at = now() "
                 "WHERE user_id = %s AND revoked_at IS NULL",
+                (user_id,),
+            )
+            conn.execute(
+                "UPDATE auth_sessions SET revoked_at = now() WHERE user_id = %s AND revoked_at IS NULL",
                 (user_id,),
             )
 
