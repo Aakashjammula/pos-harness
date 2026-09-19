@@ -645,7 +645,7 @@ def test_ws_credentials_are_loaded_via_llm_env_factory(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     captured = {}
 
-    def spy_llm_env_factory(model, env):
+    def spy_llm_env_factory(model, env, enabled_tools):
         captured["model"] = model
         captured["env"] = dict(env)
         return FakeLlm("hi there")
@@ -676,7 +676,7 @@ def test_ws_selects_stored_credential_by_provider_query_param(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     captured = {}
 
-    def spy_llm_env_factory(model, env):
+    def spy_llm_env_factory(model, env, enabled_tools):
         captured["env"] = dict(env)
         return FakeLlm("hi there")
 
@@ -1282,3 +1282,72 @@ def test_ws_sends_no_model_override_and_records_the_resolved_model(monkeypatch):
 
     assert seen == [None]
     assert ready["llm_model"] == "resolved-model"
+
+
+def test_ws_binds_exactly_the_tools_the_user_enabled():
+    captured = {}
+
+    def spy(model, env, enabled_tools):
+        captured["enabled"] = list(enabled_tools)
+        return FakeLlm("hi")
+
+    session_store, user_store = _fresh_stores()
+    app = create_app(
+        stt=FakeStt("x"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda m: FakeLlm(),
+        llm_env_factory=spy,
+        vad_factory=lambda **kw: FakeVad(1, 3),
+        default_tts_engine="kokoro",
+        session_store=session_store,
+        user_store=user_store,
+    )
+    client = TestClient(app)
+    user_id = _sign_in(client)
+    user_store.save_credential(user_id, "tavily", {"TAVILY_API_KEY": "k"})
+    user_store.set_tool_enabled(user_id, "get_current_time", False)
+
+    with client.websocket_connect("/ws?mode=voice") as ws:
+        assert ws.receive_json()["event"] == "ready"
+
+    assert captured["enabled"] == ["web_search"]
+
+
+def test_a_user_with_no_credentials_or_tool_choices_shares_the_cached_llm():
+    calls = {"shared": 0, "private": 0}
+
+    def shared(model):
+        calls["shared"] += 1
+        return FakeLlm()
+
+    def private(model, env, enabled):
+        calls["private"] += 1
+        return FakeLlm()
+
+    session_store, user_store = _fresh_stores()
+    app = create_app(
+        stt=FakeStt("x"), tts_engines={"kokoro": FakeTts}, llm_factory=shared, llm_env_factory=private,
+        vad_factory=lambda **kw: FakeVad(1, 3), default_tts_engine="kokoro",
+        session_store=session_store, user_store=user_store,
+    )
+    client = TestClient(app)
+    _sign_in(client)
+
+    with client.websocket_connect("/ws?mode=voice") as ws:
+        ws.receive_json()
+
+    assert calls == {"shared": 1, "private": 0}
+
+
+def test_real_llm_env_factory_never_warms_up(monkeypatch):
+    built = []
+    monkeypatch.setattr("pos.llm.LangChainLlm", lambda **kw: built.append(kw) or FakeLlm())
+    client = _real_llm_app(monkeypatch)
+    _sign_in(client)
+    assert client.put("/credentials/local", json={"local_base_url": "http://h/v1"}).status_code == 200
+
+    with client.websocket_connect("/ws?mode=voice") as ws:
+        assert ws.receive_json()["event"] == "ready"
+
+    assert built and built[0]["warmup"] is False
+    assert built[0]["enabled_tools"] == ["get_current_time"]
