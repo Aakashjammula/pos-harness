@@ -15,8 +15,8 @@ from pydantic import BaseModel, EmailStr, Field
 from pos import config
 from pos.auth.deps import (
     REFRESH_COOKIE,
+    Auth,
     clear_auth_cookies,
-    require_user_id,
     set_auth_cookies,
 )
 from pos.auth.mailer import send_magic_link_email
@@ -88,16 +88,23 @@ class SignupBody(BaseModel):
     password: str | None = Field(default=None, min_length=8)
 
 
-def build_auth_router(users: UserStore) -> APIRouter:
+def build_auth_router(users: UserStore, auth: Auth | None = None) -> APIRouter:
     router = APIRouter()
+    auth = auth or Auth(users)
+    require_user_id = auth.require_user_id
 
-    def _issue(response: Response, user_id: str) -> None:
+    def _issue(request: Request, response: Response, user_id: str, session_id: str | None = None) -> None:
+        """Start (or, on refresh, continue) a login session and set its cookies."""
+        if session_id is None:
+            session_id = users.create_auth_session(
+                user_id, request.headers.get("user-agent"), request.client.host if request.client else None
+            )
         raw_refresh, refresh_hash = new_refresh_token()
-        users.store_refresh_token(user_id, refresh_hash, datetime.now(UTC) + REFRESH_TOKEN_TTL)
-        set_auth_cookies(response, create_access_token(user_id), raw_refresh)
+        users.store_refresh_token(user_id, refresh_hash, datetime.now(UTC) + REFRESH_TOKEN_TTL, session_id)
+        set_auth_cookies(response, create_access_token(user_id, session_id), raw_refresh)
 
     @router.post("/auth/signup")
-    async def signup(body: SignupBody, response: Response):
+    async def signup(body: SignupBody, request: Request, response: Response):
         try:
             user = users.create_user(
                 body.email,
@@ -127,11 +134,11 @@ def build_auth_router(users: UserStore) -> APIRouter:
                 )
             return result
 
-        _issue(response, user["id"])
+        _issue(request, response, user["id"])
         return {"id": user["id"], "email": user["email"], "magic_link_sent": False}
 
     @router.post("/auth/login")
-    async def login(body: Credentials, response: Response):
+    async def login(body: Credentials, request: Request, response: Response):
         user = users.get_user_by_email(body.email)
         # Same 401 for an unknown email, a magic-link-only account (no
         # password set), and a wrong password: distinguishing any of
@@ -142,7 +149,7 @@ def build_auth_router(users: UserStore) -> APIRouter:
             or not verify_password(body.password, user["password_hash"])
         ):
             raise HTTPException(status_code=401, detail="invalid email or password")
-        _issue(response, user["id"])
+        _issue(request, response, user["id"])
         return {"id": user["id"], "email": user["email"]}
 
     async def _send_magic_link(email: str) -> bool:
@@ -175,19 +182,28 @@ def build_auth_router(users: UserStore) -> APIRouter:
         return {"ok": True}
 
     @router.post("/auth/magic-link/verify")
-    async def verify_magic_link(body: MagicLinkVerify, response: Response):
+    async def verify_magic_link(body: MagicLinkVerify, request: Request, response: Response):
         email = users.consume_magic_link_token(hash_magic_link_token(body.token))
         if email is None:
             raise HTTPException(status_code=401, detail="invalid or expired link")
         user = users.get_or_create_user_by_email(email)
-        _issue(response, user["id"])
+        _issue(request, response, user["id"])
         return {"id": user["id"], "email": user["email"]}
 
     @router.post("/auth/logout")
     async def logout(request: Request, response: Response):
-        raw = request.cookies.get(REFRESH_COOKIE)
-        if raw:
-            users.consume_refresh_token(hash_refresh_token(raw))
+        """End this device's login session server-side, so a copied access
+        token stops working too -- not just the browser's cookies."""
+        user_id = auth.user_id_from_request(request)
+        session_id = auth.session_id_from_request(request)
+        if user_id and session_id:
+            users.revoke_auth_session(user_id, session_id)
+        else:
+            raw = request.cookies.get(REFRESH_COOKIE)
+            if raw:   # signed in only by a refresh cookie (access token expired): end that session
+                found = users.consume_refresh_token_with_session(hash_refresh_token(raw))
+                if found and found[1]:
+                    users.revoke_auth_session(found[0], found[1])
         clear_auth_cookies(response)
         return {"ok": True}
 
@@ -195,19 +211,61 @@ def build_auth_router(users: UserStore) -> APIRouter:
     async def refresh(request: Request, response: Response):
         raw = request.cookies.get(REFRESH_COOKIE)
         token_hash = hash_refresh_token(raw) if raw else None
-        user_id = users.consume_refresh_token(token_hash) if token_hash else None
-        if user_id is None:
-            # Presenting an already-revoked token means someone is replaying a
+        found = users.consume_refresh_token_with_session(token_hash) if token_hash else None
+        if found is None:
+            # Presenting an already-rotated token means someone is replaying a
             # stolen or stale one. Which of the two it is can't be told apart,
-            # so drop the whole family and make everyone sign in again.
+            # so drop the whole family and make everyone sign in again. (A token
+            # of a REVOKED session is deleted, not rotated, so it lands here as
+            # "unknown" and does not trigger this.)
             replayed_by = users.user_for_revoked_token(token_hash) if token_hash else None
             if replayed_by is not None:
                 users.revoke_all_refresh_tokens(replayed_by)
                 print(f"  refresh token replay detected for user {replayed_by} -- all tokens revoked")
             clear_auth_cookies(response)
             raise HTTPException(status_code=401, detail="invalid refresh token")
-        _issue(response, user_id)
+        user_id, session_id = found
+        if session_id is None:   # issued before login sessions existed: adopt it into one
+            _issue(request, response, user_id)
+            return {"ok": True}
+        if not users.auth_session_active(session_id, user_id):
+            clear_auth_cookies(response)
+            raise HTTPException(status_code=401, detail="session ended")
+        users.touch_auth_session(session_id)
+        _issue(request, response, user_id, session_id)
         return {"ok": True}
+
+    @router.get("/auth/sessions")
+    async def list_sessions(request: Request, user_id: str = Depends(require_user_id)):
+        """This user's signed-in devices. Only their own, never anyone else's."""
+        current = auth.session_id_from_request(request)
+        return {
+            "sessions": [
+                {
+                    "id": s["id"],
+                    "user_agent": s["user_agent"],
+                    "ip": s["ip"],
+                    "created_at": s["created_at"],
+                    "last_seen_at": s["last_seen_at"],
+                    "current": s["id"] == current,
+                }
+                for s in users.list_auth_sessions(user_id)
+            ]
+        }
+
+    @router.delete("/auth/sessions/{session_id}")
+    async def revoke_session(
+        session_id: str, request: Request, response: Response, user_id: str = Depends(require_user_id)
+    ):
+        if not users.revoke_auth_session(user_id, session_id):
+            raise HTTPException(status_code=404, detail="session not found")   # also for someone else's: no probing
+        if session_id == auth.session_id_from_request(request):
+            clear_auth_cookies(response)
+        return {"revoked": session_id}
+
+    @router.post("/auth/sessions/revoke-others")
+    async def revoke_other_sessions(request: Request, user_id: str = Depends(require_user_id)):
+        return {"revoked": users.revoke_all_auth_sessions(user_id, except_id=auth.session_id_from_request(request))}
 
     @router.get("/auth/me")
     async def me(user_id: str = Depends(require_user_id)):
