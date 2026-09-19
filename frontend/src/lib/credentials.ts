@@ -50,3 +50,24 @@ export async function saveTavilyKey(keys: ApiKeyFields): Promise<void> {
 export async function removeCredential(provider: string): Promise<void> {
   await fetch(`${API_URL}/credentials/${provider}`, { method: "DELETE", credentials: "include" });
 }
+
+export interface ProviderModel {
+  id: string;
+  label: string;
+}
+
+/** The models this user's saved credential can use, asked of the provider by
+ * the backend (the key never reaches the browser). Throws with the reason. */
+export async function fetchProviderModels(provider: string): Promise<ProviderModel[]> {
+  const res = await fetch(`${API_URL}/credentials/${provider}/models`, { credentials: "include" });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = (await res.json()).detail;
+    } catch {
+      // not JSON -- fall through to the generic message
+    }
+    throw new Error(detail || `Couldn't load models (HTTP ${res.status}).`);
+  }
+  return (await res.json()).models;
+}

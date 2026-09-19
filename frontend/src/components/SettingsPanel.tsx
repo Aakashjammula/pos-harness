@@ -1,7 +1,7 @@
 "use client";
 
 import { hasLlm } from "@/lib/llm";
-import { removeCredential, saveCredential, saveTavilyKey } from "@/lib/credentials";
+import { removeCredential, saveCredential, saveTavilyKey, type ProviderModel } from "@/lib/credentials";
 import type { ApiKeyFields, KeyProvider, OptionsResponse, Settings, SessionMode } from "@/lib/types";
 import { ConnectionsDiagram } from "./ConnectionsDiagram";
 
@@ -15,6 +15,8 @@ interface SettingsPanelProps {
   onBack: () => void;
   mode: SessionMode;
   configured: string[];
+  providerModels: { listable: boolean; models: ProviderModel[]; loading: boolean; error: string | null };
+  llmModel: string; // the model a session would use right now (derived, see lib/llm.ts)
   onCredentialsChanged: () => void;
 }
 
@@ -83,6 +85,8 @@ export function SettingsPanel({
   onBack,
   mode,
   configured,
+  providerModels,
+  llmModel,
   onCredentialsChanged,
 }: SettingsPanelProps) {
   const textMode = mode === "text";
@@ -140,21 +144,53 @@ export function SettingsPanel({
               </>
             )}
             <Field label="LLM model" htmlFor="llmModel">
-              <select
-                id="llmModel"
-                disabled={disabled}
-                className={selectClass}
-                value={settings.llmModel}
-                onChange={(e) => onSettingsChange({ llmModel: e.target.value })}
-              >
-                <option value="">Provider default</option>
-                {(options?.llm_models || []).map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
-              </select>
+              {settings.provider && providerModels.listable ? (
+                <select
+                  id="llmModel"
+                  disabled={disabled || providerModels.loading || providerModels.models.length === 0}
+                  className={selectClass}
+                  value={llmModel}
+                  onChange={(e) => onSettingsChange({ llmModel: e.target.value })}
+                >
+                  {providerModels.loading && <option value="">Loading models…</option>}
+                  {!providerModels.loading && providerModels.models.length === 0 && (
+                    <option value="">
+                      {configured.includes(settings.provider) ? "No models available" : "Save a key to load models"}
+                    </option>
+                  )}
+                  {providerModels.models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label === m.id ? m.id : `${m.label} (${m.id})`}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  id="llmModel"
+                  disabled={disabled}
+                  className={selectClass}
+                  value={settings.llmModel}
+                  onChange={(e) => onSettingsChange({ llmModel: e.target.value })}
+                >
+                  <option value="">Provider default</option>
+                  {(options?.llm_models || []).map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </select>
+              )}
             </Field>
+            {providerModels.error && (
+              <p role="alert" className="m-0 text-xs text-red-500">
+                Couldn&apos;t load models: {providerModels.error}
+              </p>
+            )}
+            {settings.provider === "azure" && (
+              <p className="m-0 text-xs text-text-faint">
+                Azure deployments can&apos;t be listed with a key — enter your deployment name below.
+              </p>
+            )}
             {options && !hasLlm(options, configured) && (
               <p className="m-0 text-xs text-text-faint">
                 No LLM configured yet. Add your server URL or an API key in the provider settings.

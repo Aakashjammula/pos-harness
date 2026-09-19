@@ -267,3 +267,49 @@ def test_login_rejects_password_for_a_magic_link_only_account():
 
     resp = client.post("/auth/login", json={"email": "new@test.com", "password": "anything123"})
     assert resp.status_code == 401
+
+
+def test_models_endpoint_lists_with_the_saved_credential_and_never_returns_it(monkeypatch):
+    seen = {}
+
+    def fake_list(provider, env):
+        seen.update(provider=provider, env=dict(env))
+        return [{"id": "gemini-a", "label": "Gemini A"}]
+
+    monkeypatch.setattr("pos.auth.routes.list_models", fake_list)
+    client = _client()
+    _signup(client, "a@test.com")
+    client.put("/credentials/gemini", json={"gemini_api_key": "g-secret"})
+
+    resp = client.get("/credentials/gemini/models")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"models": [{"id": "gemini-a", "label": "Gemini A"}]}
+    assert seen == {"provider": "gemini", "env": {"GOOGLE_API_KEY": "g-secret"}}
+    assert "g-secret" not in resp.text
+
+
+def test_models_endpoint_requires_auth_a_saved_credential_and_a_listable_provider():
+    client = _client()
+    assert client.get("/credentials/openai/models").status_code == 401
+
+    _signup(client, "a@test.com")
+    assert client.get("/credentials/openai/models").status_code == 404       # nothing saved yet
+    assert client.get("/credentials/tavily/models").status_code == 404       # not an LLM provider
+
+
+def test_models_endpoint_turns_provider_failures_into_502(monkeypatch):
+    from pos.llm.model_listing import ModelListError
+
+    def fake_list(provider, env):
+        raise ModelListError("the provider rejected this key (unauthorized)")
+
+    monkeypatch.setattr("pos.auth.routes.list_models", fake_list)
+    client = _client()
+    _signup(client, "a@test.com")
+    client.put("/credentials/openai", json={"openai_api_key": "sk-bad"})
+
+    resp = client.get("/credentials/openai/models")
+
+    assert resp.status_code == 502
+    assert "rejected this key" in resp.json()["detail"]

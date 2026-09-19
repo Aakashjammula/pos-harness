@@ -5,6 +5,7 @@ transport rather than account management."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -29,6 +30,7 @@ from pos.auth.tokens import (
     new_magic_link_token,
     new_refresh_token,
 )
+from pos.llm.model_listing import ModelListError, list_models, supported_providers
 
 MAGIC_LINK_REQUEST_COOLDOWN = timedelta(seconds=60)
 
@@ -215,6 +217,23 @@ def build_auth_router(users: UserStore) -> APIRouter:
             raise HTTPException(status_code=422, detail="no credential fields provided")
         users.save_credential(user_id, provider, payload)
         return {"saved": provider}
+
+    @router.get("/credentials/{provider}/models")
+    async def list_provider_models(provider: str, user_id: str = Depends(require_user_id)):
+        """The models this user's saved credential can actually use, asked of
+        the provider itself. The key stays server-side; only ids and labels
+        are returned."""
+        if provider not in supported_providers():
+            raise HTTPException(status_code=404, detail=f"{provider!r} has no models to list")
+        stored = users.get_credential(user_id, provider)
+        if stored is None:
+            raise HTTPException(status_code=404, detail="no stored credential for that provider")
+        loop = asyncio.get_running_loop()
+        try:
+            models = await loop.run_in_executor(None, list_models, provider, stored)
+        except ModelListError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from None
+        return {"models": models}
 
     @router.delete("/credentials/{provider}")
     async def delete_credential(provider: str, user_id: str = Depends(require_user_id)):

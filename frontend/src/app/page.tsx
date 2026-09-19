@@ -1,6 +1,7 @@
 "use client";
 
-import { hasLlm } from "@/lib/llm";
+import { effectiveModel, hasLlm } from "@/lib/llm";
+import { useProviderModels } from "@/hooks/useProviderModels";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deleteSession, fetchOptions, fetchSession, fetchSessions } from "@/lib/api";
 import { AuthGuard } from "@/components/AuthGuard";
@@ -32,6 +33,7 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
   const [sessionsError, setSessionsError] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [configured, setConfigured] = useState<string[]>([]);
+  const [credentialsVersion, setCredentialsVersion] = useState(0);
 
   // --- initial data: /options, mic list, session history ---
 
@@ -85,6 +87,7 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
   }, [refreshHistoryList]);
 
   const refreshConfigured = useCallback(async () => {
+    setCredentialsVersion((v) => v + 1); // a saved/removed key can change which models exist
     try {
       setConfigured(await fetchConfiguredProviders());
     } catch {
@@ -152,6 +155,14 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
 
   // --- connect / disconnect ---
 
+  const providerModels = useProviderModels(settings.provider, configured, credentialsVersion);
+  const llmModel = effectiveModel(
+    settings.provider,
+    settings.llmModel,
+    providerModels.models,
+    providerModels.listable
+  );
+
   const doConnect = useCallback(
     async (resumeSessionId: string | null, connectMode: SessionMode) => {
       await session.connect(
@@ -159,7 +170,7 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
           mode: connectMode,
           ttsEngine: settings.ttsEngine,
           ttsVoice: settings.ttsVoice,
-          llmModel: settings.llmModel,
+          llmModel,
           micDeviceId: settings.micDeviceId,
           voiceInputMode: settings.voiceInputMode,
           triggerWord: settings.triggerWord,
@@ -173,7 +184,7 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
       );
       refreshMics(); // refresh with real labels now that mic permission was (maybe) granted
     },
-    [settings, session, refreshMics]
+    [settings, llmModel, session, refreshMics]
   );
 
   const handleConnect = useCallback(() => {
@@ -246,7 +257,7 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
   const modelChipLabel = !options
     ? "Model: —"
     : hasLlm(options, configured)
-      ? `Model: ${settings.provider || options.provider.name || "provider"} · ${settings.llmModel || "default"}`
+      ? `Model: ${settings.provider || options.provider.name || "provider"} · ${llmModel || "default"}`
       : "No LLM configured";
   const fieldsDisabled = session.connected || session.state === "connecting";
 
@@ -270,6 +281,8 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
           onBack={closeSettings}
           mode={mode}
           configured={configured}
+          providerModels={providerModels}
+          llmModel={llmModel}
           onCredentialsChanged={refreshConfigured}
         />
       ) : (
