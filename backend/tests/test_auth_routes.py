@@ -55,9 +55,20 @@ def _client():
     return TestClient(app)
 
 
+def _signup(client, email: str, password: str | None = "pw-12345678"):
+    """A valid signup request. Signup requires a name and a unique username
+    as well as email; derive both from the email so two different emails in
+    one test never collide on username."""
+    local = "".join(c for c in email.split("@")[0] if c.isalnum())
+    body = {"name": "Test User", "username": f"user_{local}", "email": email}
+    if password is not None:
+        body["password"] = password
+    return client.post("/auth/signup", json=body)
+
+
 def test_signup_sets_cookies_and_returns_the_user():
     client = _client()
-    resp = client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"})
+    resp = _signup(client, "a@test.com", "pw-12345678")
 
     assert resp.status_code == 200
     assert resp.json()["email"] == "a@test.com"
@@ -67,27 +78,27 @@ def test_signup_sets_cookies_and_returns_the_user():
 
 def test_signup_never_returns_the_password_or_its_hash():
     client = _client()
-    body = client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"}).text
+    body = _signup(client, "a@test.com", "pw-12345678").text
     assert "pw-12345678" not in body
     assert "argon2" not in body
 
 
 def test_duplicate_signup_is_rejected():
     client = _client()
-    client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"})
-    resp = client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"})
+    _signup(client, "a@test.com", "pw-12345678")
+    resp = _signup(client, "a@test.com", "pw-12345678")
     assert resp.status_code == 409
 
 
 def test_short_password_is_rejected():
     client = _client()
-    resp = client.post("/auth/signup", json={"email": "a@test.com", "password": "short"})
+    resp = _signup(client, "a@test.com", "short")
     assert resp.status_code == 422
 
 
 def test_login_with_the_right_password_succeeds():
     client = _client()
-    client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"})
+    _signup(client, "a@test.com", "pw-12345678")
     client.cookies.clear()
 
     resp = client.post("/auth/login", json={"email": "a@test.com", "password": "pw-12345678"})
@@ -98,7 +109,7 @@ def test_login_with_the_right_password_succeeds():
 
 def test_login_with_the_wrong_password_fails():
     client = _client()
-    client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"})
+    _signup(client, "a@test.com", "pw-12345678")
     resp = client.post("/auth/login", json={"email": "a@test.com", "password": "wrong-password"})
     assert resp.status_code == 401
 
@@ -116,13 +127,13 @@ def test_me_requires_authentication():
 
 def test_me_returns_the_signed_in_user():
     client = _client()
-    client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"})
+    _signup(client, "a@test.com", "pw-12345678")
     assert client.get("/auth/me").json()["email"] == "a@test.com"
 
 
 def test_refresh_rotates_the_token_and_the_old_one_stops_working():
     client = _client()
-    client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"})
+    _signup(client, "a@test.com", "pw-12345678")
     first_refresh = client.cookies["pos_refresh"]
 
     assert client.post("/auth/refresh").status_code == 200
@@ -133,7 +144,7 @@ def test_refresh_rotates_the_token_and_the_old_one_stops_working():
 
 def test_replaying_an_old_refresh_token_kills_the_whole_family():
     client = _client()
-    client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"})
+    _signup(client, "a@test.com", "pw-12345678")
     stolen = client.cookies["pos_refresh"]
     client.post("/auth/refresh")
     live = client.cookies["pos_refresh"]
@@ -147,7 +158,7 @@ def test_replaying_an_old_refresh_token_kills_the_whole_family():
 
 def test_logout_clears_cookies_and_ends_the_session():
     client = _client()
-    client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"})
+    _signup(client, "a@test.com", "pw-12345678")
 
     assert client.post("/auth/logout").status_code == 200
 
@@ -156,7 +167,7 @@ def test_logout_clears_cookies_and_ends_the_session():
 
 def test_credentials_are_per_user_and_never_returned():
     client = _client()
-    client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"})
+    _signup(client, "a@test.com", "pw-12345678")
     client.put("/credentials/openai", json={"openai_api_key": "sk-secret"})
 
     listed = client.get("/credentials")
@@ -164,13 +175,13 @@ def test_credentials_are_per_user_and_never_returned():
     assert "sk-secret" not in listed.text
 
     client.post("/auth/logout")
-    client.post("/auth/signup", json={"email": "b@test.com", "password": "pw-12345678"})
+    _signup(client, "b@test.com", "pw-12345678")
     assert client.get("/credentials").json() == {"configured": []}
 
 
 def test_delete_credential():
     client = _client()
-    client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"})
+    _signup(client, "a@test.com", "pw-12345678")
     client.put("/credentials/openai", json={"openai_api_key": "sk-secret"})
 
     assert client.delete("/credentials/openai").status_code == 200
@@ -214,7 +225,7 @@ def test_magic_link_verify_creates_a_passwordless_account_and_signs_in():
 
 def test_magic_link_verify_signs_in_an_existing_account():
     client = _client()
-    signup = client.post("/auth/signup", json={"email": "a@test.com", "password": "pw-12345678"})
+    signup = _signup(client, "a@test.com", "pw-12345678")
     existing_id = signup.json()["id"]
     client.cookies.clear()
 
