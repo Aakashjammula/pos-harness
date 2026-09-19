@@ -69,6 +69,19 @@ CORS_ORIGINS = [
 
 ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "")
 
+def _flag(name: str, default: str = "false") -> bool:
+    return os.environ.get(name, default).lower() == "true"
+
+
+# Off unless the operator opts in: a user-supplied LLM server URL may point at a
+# private/loopback address only when this is set (see pos.net_policy) -- true for a
+# personal install with LM Studio on the same machine, false for a shared one.
+ALLOW_PRIVATE_LLM_URLS = _flag("ALLOW_PRIVATE_LLM_URLS")
+# Swagger UI / OpenAPI are development aids, not something to publish by default.
+ENABLE_API_DOCS = _flag("ENABLE_API_DOCS")
+# Log what users and the assistant say. Off by default: conversations are private.
+LOG_CONVERSATIONS = _flag("LOG_CONVERSATIONS")
+
 # Where the magic-link email points -- the frontend, not this backend, since
 # the browser needs to land on a page that calls back into /auth/magic-link/verify
 # with cookies attached (a direct link to the backend would cross origins).

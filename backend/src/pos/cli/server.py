@@ -696,9 +696,20 @@ def create_app(
 
 
 def run() -> None:
+    import sys
+
     import uvicorn
 
+    from pos.settings_check import check_settings
     from pos.stt import OnnxAsrEngine
+
+    errors, warnings = check_settings(os.environ)
+    for w in warnings:
+        print(f"  WARNING: {w}")
+    if errors:
+        for e in errors:
+            print(f"  CONFIG ERROR: {e}")
+        sys.exit(1)
 
     llm_base_url = os.environ.get("LOCAL_BASE_URL") or None   # no default: see create_app()
     # Nothing heavy loads before the port opens: the STT model and default
