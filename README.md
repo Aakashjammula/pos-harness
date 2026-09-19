@@ -193,12 +193,17 @@ run the test suite) — neither is needed just to run `pos-agent`.
 ### HTTP / WebSocket API
 
 All routes except `/options`, `/auth/signup`, `/auth/login` and the magic-link
-routes need a signed-in user (the `pos_access` cookie). Interactive docs are at
-`/docs`.
+routes need a signed-in user (the `pos_access` cookie). Interactive docs at `/docs`
+are **off by default**; set `ENABLE_API_DOCS=true` to turn them on.
 
 | Route | Purpose |
 |---|---|
-| `POST /auth/signup`, `/auth/login`, `/auth/logout`, `/auth/refresh`, `GET /auth/me` | Account and session. Access tokens last 15 minutes; the frontend refreshes on a 401 (`lib/apiFetch.ts`). |
+| `POST /auth/signup`, `/auth/login`, `/auth/logout`, `/auth/refresh` | Sign in and out. An access token is bound to a server-side login session and lasts 15 minutes; the frontend refreshes on a 401 (`lib/apiFetch.ts`). Logout ends the session immediately. |
+| `GET /auth/me`, `PATCH /auth/me` | Your profile (name, username, `email_verified`, `has_password`); edit name and username. |
+| `GET /auth/sessions`, `DELETE /auth/sessions/{id}`, `POST /auth/sessions/revoke-others` | The devices you are signed in on, and ending them. Only your own; anyone else's id is a 404. |
+| `PUT /auth/password` | Set or change your password (needs the current one if you have one). Signs out your other devices. |
+| `POST /auth/verify-email/request` | Mail yourself a link that verifies your address (open it in this browser). |
+| `GET /auth/export`, `POST /auth/account/delete` | Download your profile and chats; permanently delete the account (typed email, plus your password if you have one). |
 | `POST /auth/magic-link/request`, `/auth/magic-link/verify` | Email sign-in link. A passwordless signup whose email cannot be sent says so (`magic_link_sent: false` plus a `message`). |
 | `GET /credentials`, `PUT/DELETE /credentials/{provider}` | Saved, encrypted API credentials: the LLM providers and any tool that needs a key. Keys are never returned. |
 | `GET /credentials/{provider}/models` | The models that credential (the user's, else the server's) can actually use, asked of the provider itself. |
@@ -597,6 +602,46 @@ overlaps with LLM generation of the next one instead of blocking it.
   be dropped; raise `TRIGGER_LOOKAHEAD_WORDS` if that happens often in
   your own speech.
 
+## Security
+
+- **Sessions.** Signing in creates a server-side login session (one per browser/device);
+  the access token names it and every request checks it, so logout and "Sign out" on a
+  device take effect at once. Refresh tokens rotate, are stored hashed, and a replayed
+  one revokes every session. **Settings → Security** lists your devices.
+- **Cookies** are `HttpOnly`, `SameSite=Lax` and host-only. `Secure` follows
+  `COOKIE_SECURE`; startup refuses `https` origins without it and warns about plain http
+  on a non-local host. Set `COOKIE_SECURE=true` whenever you serve over https.
+- **Startup checks.** The server will not start with a `JWT_SECRET` under 32 characters or
+  an `ENCRYPTION_KEY` that is not 32 bytes of base64.
+- **Email ownership.** A password signup does not prove the address is yours, so proving
+  it later (by an emailed link opened somewhere other than the account's own signed-in
+  browser) hands an unverified account to whoever proved it and wipes the password,
+  sessions, saved keys, tool settings and chats set up beforehand. Verifying from the
+  browser you are signed in on just marks it verified. This closes account pre-hijacking.
+- **User-supplied URLs (SSRF).** The "local server" URL you save is fetched by the backend,
+  so `pos/net_policy.py` allows only http(s), checks every address the host resolves to,
+  always refuses link-local and cloud-metadata ranges, never follows redirects, and refuses
+  private/loopback addresses unless the operator sets `ALLOW_PRIVATE_LLM_URLS=true`
+  (the right setting for a personal install with LM Studio on the same machine; leave it
+  false on a shared server). An Azure endpoint must be public https. A URL you set yourself
+  in `LOCAL_BASE_URL` is trusted. *Limit:* a hostname can be re-pointed between the check
+  and the request (DNS rebinding); network-level egress rules are the complete answer.
+- **Browser hardening.** State-changing requests and WebSockets from an `Origin` that is not
+  in `CORS_ORIGINS` are refused; the API and the frontend send CSP, `nosniff`,
+  `X-Frame-Options: DENY`, a microphone-only Permissions-Policy and `no-referrer` (the
+  magic-link token is in the URL); account responses are `Cache-Control: no-store`.
+- **Privacy.** Credentials are AES-256-GCM encrypted and bound to their owner; rotate the
+  key by moving the old one to `ENCRYPTION_KEY_PREVIOUS`. What people and the assistant say
+  is not written to logs unless `LOG_CONVERSATIONS=true`. Validation errors never echo the
+  submitted values.
+- **Deliberately not done (decide later):** rate limiting / lockout, input-size and token
+  limits, and caps on concurrent sessions. There is nothing yet stopping repeated login
+  guesses or very large messages, so do not expose this to the internet as is. Signup also
+  still says when an email or username is taken (a usability trade-off).
+- **Known dependency issue:** `nltk` 3.10.3 has an advisory (CVE-2026-81726, path traversal in
+  model-artifact loaders) with no fixed release. The app only loads fixed, built-in model
+  names, so it does not appear reachable.
+
 ## Running with Docker Compose
 
 Copy `.env.example` to `.env` and fill in `JWT_SECRET` and `ENCRYPTION_KEY`
@@ -631,7 +676,13 @@ runs on the host, outside Compose; give the backend its URL with
 Settings.
 
 The backend runs as an unprivileged user (uid 1000, a typical host user), so
-files it writes into `./models` belong to you, not root.
+files it writes into `./models` belong to you, not root. The web (3000) and API (8000)
+ports publish on `127.0.0.1` only; set `BIND_ADDRESS=0.0.0.0` in `.env` to reach them
+from other devices (and then use https, `COOKIE_SECURE=true` and a real
+`POSTGRES_PASSWORD`).
+
+New switches, all off by default: `ALLOW_PRIVATE_LLM_URLS` (see Security),
+`ENABLE_API_DOCS`, `LOG_CONVERSATIONS`.
 
 The Postgres port is published on `127.0.0.1` only, and backend tests
 refuse to run against any database not named `*_test` (default `pos_test`;
