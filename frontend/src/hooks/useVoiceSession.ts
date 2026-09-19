@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { WS_URL } from "@/lib/config";
+import { streamChat } from "@/lib/chatStream";
 import { floatToPcm16, pcm16ToFloat, rms } from "@/lib/audio";
 import type {
   ConnState,
@@ -57,8 +58,15 @@ export function useVoiceSession() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [mode, setModeValue] = useState<SessionMode>("voice");
   const [activeVoiceInputMode, setActiveVoiceInputMode] = useState<VoiceInputMode>("vad");
+  const [replying, setReplying] = useState(false); // a text reply is streaming in
+  const [historyVersion, setHistoryVersion] = useState(0); // bumps when the server names/creates a chat
 
   const wsRef = useRef<WebSocket | null>(null);
+  // Text chat has no socket: each message is one streamed POST. These carry
+  // the chat's identity and the in-flight request between messages.
+  const textSessionIdRef = useRef<string | null>(null);
+  const textConfigRef = useRef<{ provider?: string; llmModel: string }>({ llmModel: "" });
+  const streamAbortRef = useRef<AbortController | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const playCtxRef = useRef<AudioContext | null>(null);
@@ -181,6 +189,9 @@ export function useVoiceSession() {
     (reason?: string) => {
       connectedRef.current = false;
       setConnected(false);
+      streamAbortRef.current?.abort();
+      streamAbortRef.current = null;
+      setReplying(false);
       pttHeldRef.current = false;
       micMutedRef.current = false;
       setMicMutedValue(false);
@@ -210,27 +221,20 @@ export function useVoiceSession() {
   const handleEvent = useCallback(
     (msg: Record<string, unknown>) => {
       if (msg.event === "ready") {
-        const textMode = modeRef.current === "text";
-        if (!textMode) {
-          outputSampleRateRef.current = msg.output_sample_rate as number;
-          const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-          playCtxRef.current = new Ctx({ sampleRate: outputSampleRateRef.current });
-          nextPlayTimeRef.current = 0;
-        }
+        outputSampleRateRef.current = msg.output_sample_rate as number;
+        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        playCtxRef.current = new Ctx({ sampleRate: outputSampleRateRef.current });
+        nextPlayTimeRef.current = 0;
         connectedRef.current = true;
         setConnected(true);
         setSessionId(msg.session_id as string);
-        if (textMode) {
-          setState("listening", "Type a message below");
-        } else {
-          setState(
-            "listening",
-            activeVoiceInputModeRef.current === "push_to_talk"
-              ? "Hold Space to talk"
-              : "Listening — just start talking"
-          );
-          startSpeakingWatchdog();
-        }
+        setState(
+          "listening",
+          activeVoiceInputModeRef.current === "push_to_talk"
+            ? "Hold Space to talk"
+            : "Listening — just start talking"
+        );
+        startSpeakingWatchdog();
       } else if (msg.event === "user_text") {
         addLine("you", msg.text as string);
       } else if (msg.event === "bot_text") {
@@ -246,36 +250,44 @@ export function useVoiceSession() {
 
   const connect = useCallback(
     async (config: ConnectConfig, resuming: boolean) => {
-      const textMode = config.mode === "text";
       modeRef.current = config.mode;
       setModeValue(config.mode);
 
-      if (!textMode) {
-        setState("connecting", "Opening the microphone…");
-        const audioConstraints: MediaTrackConstraints | boolean = config.micDeviceId
-          ? { deviceId: { exact: config.micDeviceId } }
-          : true;
-        try {
-          micStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-        } catch {
-          setState("error", "Microphone access was denied");
-          return;
-        }
-      } else {
-        setState("connecting", "Connecting…");
+      if (config.mode === "text") {
+        // Text chat needs no connection: each message is its own streamed
+        // request (see sendText). "Connecting" just means the chat is open.
+        textSessionIdRef.current = config.resumeSessionId;
+        textConfigRef.current = { provider: config.provider, llmModel: config.llmModel };
+        if (!resuming) resetTranscript();
+        connectedRef.current = true;
+        setConnected(true);
+        setSessionId(config.resumeSessionId);
+        setState("listening", "Type a message below");
+        return;
       }
 
-      activeVoiceInputModeRef.current = textMode ? "vad" : config.voiceInputMode;
+      setState("connecting", "Opening the microphone…");
+      const audioConstraints: MediaTrackConstraints | boolean = config.micDeviceId
+        ? { deviceId: { exact: config.micDeviceId } }
+        : true;
+      try {
+        micStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      } catch {
+        setState("error", "Microphone access was denied");
+        return;
+      }
+
+      activeVoiceInputModeRef.current = config.voiceInputMode;
       setActiveVoiceInputMode(activeVoiceInputModeRef.current);
       pttHeldRef.current = false;
 
       const params = new URLSearchParams();
-      params.set("mode", config.mode);
+      params.set("mode", "voice");
       params.set("tts", config.ttsEngine);
       if (config.ttsVoice) params.set("voice", config.ttsVoice);
       if (config.llmModel) params.set("llm_model", config.llmModel);   // unset: the provider picks its own default
       if (config.provider) params.set("provider", config.provider);
-      if (!textMode) params.set("voice_input_mode", activeVoiceInputModeRef.current);
+      params.set("voice_input_mode", activeVoiceInputModeRef.current);
       if (config.triggerWord.trim()) params.set("trigger_word", config.triggerWord.trim());
       if (config.vadThreshold.trim()) params.set("vad_threshold", config.vadThreshold.trim());
       if (config.vadMinSilenceMs.trim()) params.set("vad_min_silence_ms", config.vadMinSilenceMs.trim());
@@ -319,22 +331,20 @@ export function useVoiceSession() {
         }
       };
 
-      if (!textMode) {
-        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        const audioCtx = new Ctx({ sampleRate: 16000 });
-        audioCtxRef.current = audioCtx;
-        const source = audioCtx.createMediaStreamSource(micStreamRef.current!);
-        sourceRef.current = source;
-        const processor = audioCtx.createScriptProcessor(512, 1, 1);
-        processorRef.current = processor;
-        processor.onaudioprocess = (e: AudioProcessingEvent) => {
-          if (micMutedRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-          if (activeVoiceInputModeRef.current === "push_to_talk" && !pttHeldRef.current) return;
-          wsRef.current.send(floatToPcm16(e.inputBuffer.getChannelData(0)));
-        };
-        source.connect(processor);
-        processor.connect(audioCtx.destination);
-      }
+      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const audioCtx = new Ctx({ sampleRate: 16000 });
+      audioCtxRef.current = audioCtx;
+      const source = audioCtx.createMediaStreamSource(micStreamRef.current!);
+      sourceRef.current = source;
+      const processor = audioCtx.createScriptProcessor(512, 1, 1);
+      processorRef.current = processor;
+      processor.onaudioprocess = (e: AudioProcessingEvent) => {
+        if (micMutedRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+        if (activeVoiceInputModeRef.current === "push_to_talk" && !pttHeldRef.current) return;
+        wsRef.current.send(floatToPcm16(e.inputBuffer.getChannelData(0)));
+      };
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
     },
     [disconnect, handleEvent, noteIncomingAudio, resetTranscript, setState]
   );
@@ -351,11 +361,68 @@ export function useVoiceSession() {
 
   const toggleMute = useCallback(() => setMicMuted(!micMutedRef.current), [setMicMuted]);
 
-  const sendText = useCallback((text: string) => {
-    const value = text.trim();
-    if (!value || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({ text: value }));
+  // Replace one transcript line in place (the streaming bot reply).
+  const patchLine = useCallback((id: string, patch: (line: TranscriptLine) => TranscriptLine) => {
+    setLines((prev) => prev.map((l) => (l.id === id ? patch(l) : l)));
   }, []);
+
+  const sendText = useCallback(
+    (text: string) => {
+      const value = text.trim();
+      if (!value || !connectedRef.current || modeRef.current !== "text" || streamAbortRef.current) return;
+
+      addLine("you", value);
+      const botId = nextLineId();
+      setLines((prev) => [...prev, { id: botId, who: "bot", text: "" }]);
+      turnCountRef.current++;
+
+      const controller = new AbortController();
+      streamAbortRef.current = controller;
+      setReplying(true);
+      setState("listening", "Replying…");
+
+      streamChat(
+        {
+          message: value,
+          session_id: textSessionIdRef.current,
+          provider: textConfigRef.current.provider,
+          llm_model: textConfigRef.current.llmModel || undefined,
+        },
+        {
+          onSession: (id) => {
+            if (textSessionIdRef.current !== id) setHistoryVersion((v) => v + 1); // a new chat exists
+            textSessionIdRef.current = id;
+            setSessionId(id);
+          },
+          onToken: (piece) => patchLine(botId, (l) => ({ ...l, text: l.text + piece })),
+          onDone: (d) => {
+            const usage = d.usage as Usage | undefined;
+            const latency = d.latency as Latency | undefined;
+            patchLine(botId, (l) => ({ ...l, text: d.text, usage, latency }));
+            if (usage) updateSessionTotals(usage);
+          },
+          onTitle: () => setHistoryVersion((v) => v + 1),
+          onError: (message) => {
+            // Drop the empty bubble if nothing had arrived; keep partial text if it had.
+            setLines((prev) => prev.filter((l) => l.id !== botId || l.text !== ""));
+            addLine("system", message);
+          },
+        },
+        controller.signal
+      )
+        .catch((e: unknown) => {
+          if ((e as Error).name === "AbortError") return; // user disconnected mid-reply
+          setLines((prev) => prev.filter((l) => l.id !== botId || l.text !== ""));
+          addLine("system", `Connection problem: ${(e as Error).message}`);
+        })
+        .finally(() => {
+          if (streamAbortRef.current === controller) streamAbortRef.current = null;
+          setReplying(false);
+          if (connectedRef.current) setState("listening", "Type a message below");
+        });
+    },
+    [addLine, patchLine, setState, updateSessionTotals]
+  );
 
   const pttStart = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
@@ -388,6 +455,8 @@ export function useVoiceSession() {
     sessionId,
     mode,
     activeVoiceInputMode,
+    replying,
+    historyVersion,
     isPttActive: activeVoiceInputMode === "push_to_talk",
     connect,
     disconnect,

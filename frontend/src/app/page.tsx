@@ -142,6 +142,13 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
     prevConnected.current = session.connected;
   }, [session.connected, refreshHistoryList]);
 
+  // A streamed text chat is created, then titled, after its first reply; both
+  // arrive as events, so refresh the sidebar when the hook says so.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sets state only when the fetch completes
+    if (session.historyVersion > 0) refreshHistoryList().catch(() => {});
+  }, [session.historyVersion, refreshHistoryList]);
+
   const prevLineCount = useRef(0);
   useEffect(() => {
     if (session.lines.length > prevLineCount.current) {
@@ -328,6 +335,7 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
           onOpenTools={openTools}
           modelChipLabel={modelChipLabel}
           onSendText={session.sendText}
+          replying={session.replying}
         />
       )}
     </div>
