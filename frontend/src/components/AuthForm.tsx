@@ -72,7 +72,11 @@ export function AuthForm({ mode }: { mode: Mode }) {
         // A passwordless signup creates the account but no session --
         // the link in their inbox is what signs them in.
         if (result.magic_link_sent) setLinkSentTo(email);
-        else router.replace("/");
+        else if (!usingPassword) {
+          // No password and no email: the account exists but there is no session,
+          // so going to "/" would just bounce back here. Say what happened.
+          setError(result.message ?? "Your account was created, but the sign-in email couldn't be sent.");
+        } else router.replace("/");
       } else if (usingPassword) {
         await login(email, password);
         router.replace("/");

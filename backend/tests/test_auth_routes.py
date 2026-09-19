@@ -373,3 +373,49 @@ def test_tools_routes_require_auth():
     client = _client()
     assert client.get("/tools").status_code == 401
     assert client.put("/tools/web_search", json={"enabled": True}).status_code == 401
+
+
+def test_passwordless_signup_reports_when_the_email_could_not_be_sent(monkeypatch):
+    async def boom(email, link_url):
+        raise RuntimeError("smtp down")
+
+    monkeypatch.setattr("pos.auth.routes.send_magic_link_email", boom)
+    client = _client()
+
+    resp = _signup(client, "a@test.com", password=None)
+
+    assert resp.status_code == 200                      # the account really was created
+    body = resp.json()
+    assert body["magic_link_sent"] is False
+    assert "email" in body["message"].lower()
+    assert "pos_access" not in resp.cookies             # and it still must not sign anyone in
+
+
+def test_passwordless_signup_reports_success_when_the_email_is_sent():
+    client = _client()
+
+    body = _signup(client, "a@test.com", password=None).json()
+
+    assert body["magic_link_sent"] is True and "message" not in body
+
+
+def test_a_throttled_repeat_request_still_counts_as_sent():
+    client = _client()
+    client.post("/auth/magic-link/request", json={"email": "a@test.com"})    # a link is already outstanding
+
+    body = _signup(client, "a@test.com", password=None).json()
+
+    assert body["magic_link_sent"] is True                                    # the user does have a link coming
+
+
+def test_signup_with_a_password_is_unaffected_by_mail_problems(monkeypatch):
+    async def boom(email, link_url):
+        raise RuntimeError("smtp down")
+
+    monkeypatch.setattr("pos.auth.routes.send_magic_link_email", boom)
+    client = _client()
+
+    resp = _signup(client, "a@test.com")                # has a password: no email involved
+
+    assert resp.json()["magic_link_sent"] is False and "message" not in resp.json()
+    assert "pos_access" in resp.cookies
