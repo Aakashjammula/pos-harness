@@ -75,9 +75,10 @@ from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 
 import requests
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from pos import config
@@ -87,7 +88,7 @@ from pos.auth.deps import Auth
 from pos.auth.routes import build_auth_router
 from pos.auth.store import UserStore
 from pos.db import create_pool, init_schema
-from pos.http_security import OriginCheckMiddleware
+from pos.http_security import OriginCheckMiddleware, SecurityHeadersMiddleware
 from pos.interfaces import LlmBase, SttBase, TtsBase, VadBase
 from pos.llm.providers import is_configured, resolve_provider
 from pos.null_engines import NullVad
@@ -215,7 +216,23 @@ def create_app(
             threading.Thread(target=_warm_in_background, name="model-warmup", daemon=True).start()
         yield
 
-    app = FastAPI(lifespan=lifespan)
+    docs = config.ENABLE_API_DOCS   # Swagger UI and the schema are development aids: off unless asked for
+    app = FastAPI(
+        lifespan=lifespan,
+        docs_url="/docs" if docs else None,
+        redoc_url="/redoc" if docs else None,
+        openapi_url="/openapi.json" if docs else None,
+    )
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error(_request: Request, exc: RequestValidationError):
+        # FastAPI's default body echoes every rejected value back (`input`), which would
+        # send a mistyped password straight into logs and proxies. Say where and why only.
+        return JSONResponse(
+            status_code=422,
+            content={"detail": [{"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]} for e in exc.errors()]},
+        )
+
     app.add_middleware(OriginCheckMiddleware, allowed_origins=config.CORS_ORIGINS)
     app.add_middleware(
         CORSMiddleware,
@@ -224,6 +241,7 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(SecurityHeadersMiddleware, hsts=config.COOKIE_SECURE)
     app.include_router(build_auth_router(users, auth))
 
     # Warm the default STT model and TTS engine/voice ahead of the first

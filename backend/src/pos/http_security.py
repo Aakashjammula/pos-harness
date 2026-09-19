@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
@@ -58,3 +58,48 @@ class OriginCheckMiddleware:
             return
         await self.app(scope, receive, send)
 
+
+
+# Account data must never sit in a browser or proxy cache (or reappear via the back button).
+_NO_STORE_PREFIXES = ("/auth", "/credentials", "/tools", "/sessions")
+# Swagger UI / ReDoc load their scripts from a CDN, so a strict CSP would break them.
+_DOCS_PATHS = ("/docs", "/redoc")
+
+
+class SecurityHeadersMiddleware:
+    """Baseline response headers on every reply, errors and framework-generated ones
+    included. This is an API that returns JSON and event streams, never pages, so the CSP
+    is 'default-src none' and nothing may frame it."""
+
+    def __init__(self, app: ASGIApp, *, hsts: bool = False):
+        self.app = app
+        self.hsts = hsts
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                present = {k.lower() for k, _ in headers}
+
+                def add(name: bytes, value: str) -> None:
+                    if name not in present:          # never override what a route chose on purpose
+                        headers.append((name, value.encode("latin-1")))
+
+                add(b"x-content-type-options", "nosniff")
+                add(b"referrer-policy", "no-referrer")
+                add(b"x-frame-options", "DENY")
+                if not path.startswith(_DOCS_PATHS):
+                    add(b"content-security-policy", "default-src 'none'; frame-ancestors 'none'")
+                if path.startswith(_NO_STORE_PREFIXES):
+                    add(b"cache-control", "no-store")
+                if self.hsts:
+                    add(b"strict-transport-security", "max-age=31536000; includeSubDomains")
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
