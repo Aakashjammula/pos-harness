@@ -1,11 +1,14 @@
 import type { OptionsResponse } from "./types";
 
+/** The credential providers that can answer a chat. Anything else in the saved
+ * list (a tool's key, e.g. Tavily) is not an LLM. */
+export const LLM_PROVIDERS = ["local", "openai", "azure", "anthropic", "gemini", "bedrock", "openrouter"];
+
 /** True once something can answer: the operator set a server-level provider,
- * or this user saved credentials for any provider except Tavily (web search,
- * which is a tool, not an LLM). */
+ * or this user saved credentials for an LLM provider. */
 export function hasLlm(options: OptionsResponse | null, configured: string[]): boolean {
   if (!options) return false;
-  return options.llm_configured || configured.some((p) => p !== "tavily");
+  return options.llm_configured || configured.some((p) => LLM_PROVIDERS.includes(p));
 }
 
 /** The model a session will ask for. With a provider selected the choice must

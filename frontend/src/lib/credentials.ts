@@ -17,7 +17,6 @@ const PROVIDER_PAYLOAD: Record<string, (k: ApiKeyFields) => Record<string, strin
     bedrock_region: k.bedrockRegion,
   }),
   openrouter: (k) => ({ openrouter_api_key: k.openrouterApiKey }),
-  tavily: (k) => ({ tavily_api_key: k.tavilyApiKey }),
 };
 
 export async function fetchConfiguredProviders(): Promise<string[]> {
@@ -34,16 +33,6 @@ export async function saveCredential(provider: Exclude<KeyProvider, "">, keys: A
     body: JSON.stringify(PROVIDER_PAYLOAD[provider](keys)),
   });
   if (res.status === 422) throw new Error("Fill in at least one field before saving.");
-  if (!res.ok) throw new Error("Couldn't save. Try again.");
-}
-
-export async function saveTavilyKey(keys: ApiKeyFields): Promise<void> {
-  const res = await fetch(`${API_URL}/credentials/tavily`, {
-    method: "PUT",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tavily_api_key: keys.tavilyApiKey }),
-  });
   if (!res.ok) throw new Error("Couldn't save. Try again.");
 }
 

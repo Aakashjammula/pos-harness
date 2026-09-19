@@ -1,5 +1,6 @@
 "use client";
 
+import type { Tool } from "@/lib/tools";
 import type { OptionsResponse } from "@/lib/types";
 
 // The original static/index.html lazy-loaded React Flow from a CDN (unpkg)
@@ -13,9 +14,11 @@ import type { OptionsResponse } from "@/lib/types";
 export function ConnectionsDiagram({
   options,
   llmConfigured,
+  tools,
 }: {
   options: OptionsResponse | null;
   llmConfigured: boolean;
+  tools: Tool[];
 }) {
   if (!options) {
     return <div className="mt-2.5 text-[12.5px] text-text-faint">Loading…</div>;
@@ -34,15 +37,15 @@ export function ConnectionsDiagram({
           {providerLabel}
         </div>
         <div className="flex flex-wrap justify-center gap-4">
-          {options.tools.map((t) => (
-            <div key={t.name} className="flex flex-col items-center gap-1.5">
-              <span className={`h-6 w-px ${t.enabled ? "bg-text-faint" : "bg-border"}`} />
+          {tools.map((t) => (
+            <div key={t.id} className="flex flex-col items-center gap-1.5">
+              <span className={`h-6 w-px ${t.active ? "bg-text-faint" : "bg-border"}`} />
               <div
                 className={`rounded-[10px] border border-border px-[22px] py-3.5 text-center text-[15px] font-semibold ${
-                  t.enabled ? "bg-surface-sunken text-text" : "bg-surface-sunken text-text opacity-50"
+                  t.active ? "bg-surface-sunken text-text" : "bg-surface-sunken text-text opacity-50"
                 }`}
               >
-                {t.enabled ? t.label : `${t.label} (disabled)`}
+                {t.active ? t.label : `${t.label} (off)`}
               </div>
             </div>
           ))}

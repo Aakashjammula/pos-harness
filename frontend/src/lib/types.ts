@@ -95,7 +95,6 @@ export interface ApiKeyFields {
   bedrockSecretAccessKey: string;
   bedrockRegion: string;
   openrouterApiKey: string;
-  tavilyApiKey: string;
 }
 
 export const EMPTY_KEY_FIELDS: ApiKeyFields = {
@@ -111,7 +110,6 @@ export const EMPTY_KEY_FIELDS: ApiKeyFields = {
   bedrockSecretAccessKey: "",
   bedrockRegion: "",
   openrouterApiKey: "",
-  tavilyApiKey: "",
 };
 
 export interface Settings {

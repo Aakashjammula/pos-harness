@@ -1,7 +1,8 @@
 "use client";
 
 import { hasLlm } from "@/lib/llm";
-import { removeCredential, saveCredential, saveTavilyKey, type ProviderModel } from "@/lib/credentials";
+import { removeCredential, saveCredential, type ProviderModel } from "@/lib/credentials";
+import type { Tool } from "@/lib/tools";
 import type { ApiKeyFields, KeyProvider, OptionsResponse, Settings, SessionMode } from "@/lib/types";
 import { ConnectionsDiagram } from "./ConnectionsDiagram";
 
@@ -17,6 +18,7 @@ interface SettingsPanelProps {
   configured: string[];
   providerModels: { listable: boolean; models: ProviderModel[]; loading: boolean; error: string | null };
   llmModel: string; // the model a session would use right now (derived, see lib/llm.ts)
+  tools: Tool[];
   onCredentialsChanged: () => void;
 }
 
@@ -87,6 +89,7 @@ export function SettingsPanel({
   configured,
   providerModels,
   llmModel,
+  tools,
   onCredentialsChanged,
 }: SettingsPanelProps) {
   const textMode = mode === "text";
@@ -566,37 +569,12 @@ export function SettingsPanel({
               />
             </div>
           )}
-          <div className="grid content-start gap-2.5">
-            <h3 className="m-0 text-[11px] font-semibold tracking-wide text-text-faint">Web search</h3>
-            <Field label="Tavily API key" htmlFor="tavilyApiKey">
-              <input
-                id="tavilyApiKey"
-                type="password"
-                autoComplete="off"
-                placeholder="tvly-…"
-                className={selectClass}
-                value={settings.keys.tavilyApiKey}
-                onChange={(e) => onKeysChange({ tavilyApiKey: e.target.value })}
-              />
-            </Field>
-            <SaveRemoveRow
-              configured={configured.includes("tavily")}
-              onSave={async () => {
-                await saveTavilyKey(settings.keys);
-                onCredentialsChanged();
-              }}
-              onRemove={async () => {
-                await removeCredential("tavily");
-                onCredentialsChanged();
-              }}
-            />
-          </div>
         </div>
 
         <div className="mt-7 mb-1 text-[11px] font-semibold tracking-wide text-text-faint uppercase">
           Connections
         </div>
-        <ConnectionsDiagram options={options} llmConfigured={hasLlm(options, configured)} />
+        <ConnectionsDiagram options={options} llmConfigured={hasLlm(options, configured)} tools={tools} />
       </div>
     </div>
   );
