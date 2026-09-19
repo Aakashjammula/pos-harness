@@ -1,5 +1,6 @@
 "use client";
 
+import { hasLlm } from "@/lib/llm";
 import { removeCredential, saveCredential, saveTavilyKey } from "@/lib/credentials";
 import type { ApiKeyFields, KeyProvider, OptionsResponse, Settings, SessionMode } from "@/lib/types";
 import { ConnectionsDiagram } from "./ConnectionsDiagram";
@@ -153,7 +154,7 @@ export function SettingsPanel({
                 ))}
               </select>
             </Field>
-            {options && !options.llm_configured && !configured.some((p) => p !== "tavily") && (
+            {options && !hasLlm(options, configured) && (
               <p className="m-0 text-xs text-text-faint">
                 No LLM configured yet. Add your server URL or an API key in the provider settings.
               </p>
@@ -558,7 +559,7 @@ export function SettingsPanel({
         <div className="mt-7 mb-1 text-[11px] font-semibold tracking-wide text-text-faint uppercase">
           Connections
         </div>
-        <ConnectionsDiagram options={options} />
+        <ConnectionsDiagram options={options} llmConfigured={hasLlm(options, configured)} />
       </div>
     </div>
   );

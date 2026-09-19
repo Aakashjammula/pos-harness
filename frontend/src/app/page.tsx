@@ -1,5 +1,6 @@
 "use client";
 
+import { hasLlm } from "@/lib/llm";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deleteSession, fetchOptions, fetchSession, fetchSessions } from "@/lib/api";
 import { AuthGuard } from "@/components/AuthGuard";
@@ -242,7 +243,11 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
     };
   }, [session, mode]);
 
-  const modelChipLabel = options ? `Model: ${options.provider.name} · ${settings.llmModel}` : "Model: —";
+  const modelChipLabel = !options
+    ? "Model: —"
+    : hasLlm(options, configured)
+      ? `Model: ${options.provider.name} · ${settings.llmModel}`
+      : "No LLM configured";
   const fieldsDisabled = session.connected || session.state === "connecting";
 
   return (
