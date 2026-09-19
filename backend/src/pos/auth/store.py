@@ -65,15 +65,42 @@ class UserStore:
     def get_user_by_email(self, email: str) -> dict | None:
         with self._pool.connection() as conn:
             return conn.execute(
-                "SELECT id::text, email, password_hash FROM users WHERE email = %s",
+                "SELECT id::text, email, password_hash, email_verified_at FROM users WHERE email = %s",
                 (email.lower(),),
             ).fetchone()
 
     def get_user_by_id(self, user_id: str) -> dict | None:
         with self._pool.connection() as conn:
             return conn.execute(
-                "SELECT id::text, email FROM users WHERE id = %s", (user_id,)
+                "SELECT id::text, email, name, username, created_at, "
+                "(email_verified_at IS NOT NULL) AS email_verified, (password_hash IS NOT NULL) AS has_password "
+                "FROM users WHERE id = %s",
+                (user_id,),
             ).fetchone()
+
+    def mark_email_verified(self, user_id: str) -> bool:
+        """True if this changed anything (it was not verified before)."""
+        with self._pool.connection() as conn:
+            cur = conn.execute(
+                "UPDATE users SET email_verified_at = now(), updated_at = now() "
+                "WHERE id = %s AND email_verified_at IS NULL",
+                (user_id,),
+            )
+        return cur.rowcount > 0
+
+    def reset_unverified_account(self, user_id: str) -> None:
+        """Hand an account whose address was never proven to the person who has
+        now proven it. Whoever created it (possibly someone who signed up with
+        the victim's address in advance) keeps nothing: password, login
+        sessions, saved credentials (which could point the victim's chats at a
+        server the squatter controls), tool choices and chats are all removed."""
+        with self._pool.connection() as conn:
+            conn.execute("UPDATE users SET password_hash = NULL, updated_at = now() WHERE id = %s", (user_id,))
+            conn.execute("DELETE FROM refresh_tokens WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM auth_sessions WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM api_credentials WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM user_tool_settings WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM sessions WHERE user_id = %s", (user_id,))
 
     def store_refresh_token(
         self, user_id: str, token_hash: str, expires_at: datetime, auth_session_id: str | None = None

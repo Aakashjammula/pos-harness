@@ -187,8 +187,30 @@ def build_auth_router(users: UserStore, auth: Auth | None = None) -> APIRouter:
         if email is None:
             raise HTTPException(status_code=401, detail="invalid or expired link")
         user = users.get_or_create_user_by_email(email)
+        record = users.get_user_by_id(user["id"])
+        if not record["email_verified"]:
+            # Proving the address for the first time. If this browser is already
+            # signed in as this very account, its holder is just verifying it. Anyone
+            # else proving it may be the real owner meeting an account somebody
+            # created for their address in advance (pre-hijacking): they get a
+            # clean account and the creator keeps nothing.
+            holder = auth.user_id_from_request(request) == user["id"]
+            if not holder:
+                users.reset_unverified_account(user["id"])
+            users.mark_email_verified(user["id"])
+            if holder:
+                return {"id": user["id"], "email": user["email"]}
         _issue(request, response, user["id"])
         return {"id": user["id"], "email": user["email"]}
+
+    @router.post("/auth/verify-email/request")
+    async def request_email_verification(user_id: str = Depends(require_user_id)):
+        """Mail this account's address a link; opening it in this browser marks the
+        address verified without touching anything else."""
+        user = users.get_user_by_id(user_id)
+        if user["email_verified"]:
+            return {"sent": False, "already_verified": True}
+        return {"sent": await _send_magic_link(user["email"])}
 
     @router.post("/auth/logout")
     async def logout(request: Request, response: Response):
