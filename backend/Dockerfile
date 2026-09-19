@@ -19,6 +19,16 @@ RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Run as an unprivileged user. uid 1000 matches a typical host user, so model
+# files written into the bind-mounted ./models belong to you, not to root (which
+# would make them undeletable without sudo). The mount targets are created up
+# front so Docker doesn't create them as root.
+RUN useradd --create-home --uid 1000 app \
+    && mkdir -p /home/app/.cache/huggingface /home/app/nltk_data \
+    && chown -R app:app /app /home/app
+USER app
+ENV HOME=/home/app
+
 EXPOSE 8000
 
 CMD ["pos-server"]
