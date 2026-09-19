@@ -73,9 +73,11 @@ import traceback
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 import requests
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -343,6 +345,23 @@ def create_app(
             "llm_configured": llm_configured,
             "tools": tool_status(),
         }
+
+    @app.get("/auth/export")
+    async def export_account(user_id: str = Depends(auth.require_user_id)):
+        """Everything the app holds about this user: profile and chats. Never the
+        password hash, sessions or saved credentials."""
+        user = users.get_user_by_id(user_id)
+        sessions = []
+        for summary in store.list_sessions(user_id):
+            detail = store.get_session(summary["id"], user_id)
+            if detail:
+                sessions.append({**detail["session"], "turns": detail["turns"]})
+        payload = jsonable_encoder({
+            "exported_at": datetime.now(UTC),
+            "user": {k: user[k] for k in ("id", "email", "name", "username", "created_at", "email_verified")},
+            "sessions": sessions,
+        })
+        return JSONResponse(payload, headers={"Content-Disposition": 'attachment; filename="pos-export.json"'})
 
     @app.get("/sessions")
     async def list_sessions(user_id: str = Depends(auth.require_user_id)):

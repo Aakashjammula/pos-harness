@@ -77,6 +77,19 @@ class Credentials(BaseModel):
     password: str = Field(min_length=8)
 
 
+class ProfileUpdate(BaseModel):
+    """Same rules as signup. The email is deliberately not editable here: changing the
+    address an account is tied to must be proven, and that flow does not exist yet."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    username: str | None = Field(default=None, min_length=3, max_length=32, pattern=r"^[a-zA-Z0-9_-]+$")
+
+
+class AccountDelete(BaseModel):
+    confirm_email: str
+    password: str | None = None
+
+
 class PasswordChange(BaseModel):
     """`current_password` is required when the account already has a password;
     an account that signs in only by email link may set its first without one."""
@@ -212,6 +225,32 @@ def build_auth_router(users: UserStore, auth: Auth | None = None) -> APIRouter:
                 return {"id": user["id"], "email": user["email"]}
         _issue(request, response, user["id"])
         return {"id": user["id"], "email": user["email"]}
+
+    @router.patch("/auth/me")
+    async def update_profile(body: ProfileUpdate, user_id: str = Depends(require_user_id)):
+        changes = body.model_dump(exclude_none=True)
+        if changes:
+            if "name" in changes:
+                changes["name"] = changes["name"].strip()
+            try:
+                users.update_profile(user_id, **changes)
+            except UsernameTaken as e:
+                raise HTTPException(status_code=409, detail="username already taken") from e
+        return users.get_user_by_id(user_id)
+
+    @router.post("/auth/account/delete")
+    async def delete_account(body: AccountDelete, response: Response, user_id: str = Depends(require_user_id)):
+        """Permanent. Needs the email typed out (so a stray click cannot do it) and, when
+        the account has a password, that password (so a borrowed session cannot do it)."""
+        user = users.get_user_by_id(user_id)
+        if body.confirm_email.strip().lower() != user["email"]:
+            raise HTTPException(status_code=400, detail="the email you typed does not match this account")
+        current = users.get_password_hash(user_id)
+        if current is not None and (not body.password or not verify_password(body.password, current)):
+            raise HTTPException(status_code=401, detail="password is incorrect")
+        users.delete_user(user_id)
+        clear_auth_cookies(response)
+        return {"deleted": True}
 
     @router.put("/auth/password")
     async def change_password(body: PasswordChange, request: Request, user_id: str = Depends(require_user_id)):

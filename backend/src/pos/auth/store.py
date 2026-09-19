@@ -79,6 +79,29 @@ class UserStore:
                 (user_id,),
             ).fetchone()
 
+    def update_profile(self, user_id: str, name: str | None = None, username: str | None = None) -> None:
+        """Change the display name and/or username. UsernameTaken if another account has it."""
+        try:
+            with self._pool.connection() as conn:
+                conn.execute(
+                    "UPDATE users SET name = COALESCE(%s, name), username = COALESCE(%s, username), "
+                    "updated_at = now() WHERE id = %s",
+                    (name, username, user_id),
+                )
+        except psycopg.errors.UniqueViolation as e:
+            if e.diag.constraint_name == "users_username_lower_key":
+                raise UsernameTaken(username or "") from e
+            raise
+
+    def delete_user(self, user_id: str) -> None:
+        """Remove the account and everything that belongs to it (every dependent table
+        cascades from users), plus any pending sign-in links for its address."""
+        with self._pool.connection() as conn:
+            row = conn.execute("SELECT email FROM users WHERE id = %s", (user_id,)).fetchone()
+            conn.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            if row:
+                conn.execute("DELETE FROM magic_link_tokens WHERE email = %s", (row["email"],))
+
     def get_password_hash(self, user_id: str) -> str | None:
         with self._pool.connection() as conn:
             row = conn.execute("SELECT password_hash FROM users WHERE id = %s", (user_id,)).fetchone()
