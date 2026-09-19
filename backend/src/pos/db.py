@@ -85,6 +85,11 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
 
+-- NULL until the person proves they control the address (by opening a link mailed
+-- to it). An account whose address was never proven may have been created by
+-- someone else, so proving it later resets the account (see UserStore.reset_unverified_account).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+
 -- One row per signed-in browser/device. The access token carries this id and every
 -- request checks it, so revoking a row signs that device out at once; the list is
 -- what the Settings page shows.
