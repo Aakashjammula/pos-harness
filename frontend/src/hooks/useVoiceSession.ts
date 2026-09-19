@@ -57,7 +57,7 @@ export function useVoiceSession() {
   const [lineCountLabel, setLineCountLabel] = useState("");
   const [micMuted, setMicMutedValue] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [mode, setModeValue] = useState<SessionMode>("voice");
+  const [mode, setModeValue] = useState<SessionMode>("text");
   const [activeVoiceInputMode, setActiveVoiceInputMode] = useState<VoiceInputMode>("vad");
   const [replying, setReplying] = useState(false); // a text reply is streaming in
   const [historyVersion, setHistoryVersion] = useState(0); // bumps when the server names/creates a chat
@@ -66,7 +66,6 @@ export function useVoiceSession() {
   // Text chat has no socket: each message is one streamed POST. These carry
   // the chat's identity and the in-flight request between messages.
   const textSessionIdRef = useRef<string | null>(null);
-  const textConfigRef = useRef<{ provider?: string; llmModel: string }>({ llmModel: "" });
   const streamAbortRef = useRef<AbortController | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -93,7 +92,7 @@ export function useVoiceSession() {
   // handlers -- those can fire before a setState from connect() has
   // flushed to a re-render, so the closured `mode` state value isn't
   // safe to rely on there.
-  const modeRef = useRef<SessionMode>("voice");
+  const modeRef = useRef<SessionMode>("text");
 
   const setState = useCallback((next: ConnState, label: string) => {
     currentStateRef.current = next;
@@ -251,21 +250,10 @@ export function useVoiceSession() {
 
   const connect = useCallback(
     async (config: ConnectConfig, resuming: boolean) => {
-      modeRef.current = config.mode;
-      setModeValue(config.mode);
-
-      if (config.mode === "text") {
-        // Text chat needs no connection: each message is its own streamed
-        // request (see sendText). "Connecting" just means the chat is open.
-        textSessionIdRef.current = config.resumeSessionId;
-        textConfigRef.current = { provider: config.provider, llmModel: config.llmModel };
-        if (!resuming) resetTranscript();
-        connectedRef.current = true;
-        setConnected(true);
-        setSessionId(config.resumeSessionId);
-        setState("listening", "Type a message below");
-        return;
-      }
+      // Voice only. Text chat never connects: each message is one streamed request (sendText).
+      modeRef.current = "voice";
+      setModeValue("voice");
+      streamAbortRef.current?.abort();
 
       // A WebSocket can't be retried after the fact, so make sure the access token
       // is fresh first: any authenticated call refreshes it if it has expired.
@@ -371,10 +359,27 @@ export function useVoiceSession() {
     setLines((prev) => prev.map((l) => (l.id === id ? patch(l) : l)));
   }, []);
 
+  /** Start (or continue) a text chat. There is nothing to connect to: this only sets which
+   * chat new messages belong to. `clear` empties the transcript for a fresh chat. */
+  const startTextChat = useCallback(
+    (resumeSessionId: string | null, clear: boolean) => {
+      streamAbortRef.current?.abort();
+      streamAbortRef.current = null;
+      setReplying(false);
+      modeRef.current = "text";
+      setModeValue("text");
+      textSessionIdRef.current = resumeSessionId;
+      if (clear) resetTranscript();
+      setSessionId(resumeSessionId);
+      setState("idle", "Type a message below");
+    },
+    [resetTranscript, setState]
+  );
+
   const sendText = useCallback(
-    (text: string) => {
+    (text: string, config: { provider?: string; llmModel: string }) => {
       const value = text.trim();
-      if (!value || !connectedRef.current || modeRef.current !== "text" || streamAbortRef.current) return;
+      if (!value || modeRef.current !== "text" || streamAbortRef.current) return;
 
       addLine("you", value);
       const botId = nextLineId();
@@ -384,14 +389,13 @@ export function useVoiceSession() {
       const controller = new AbortController();
       streamAbortRef.current = controller;
       setReplying(true);
-      setState("listening", "Replying…");
 
       streamChat(
         {
           message: value,
           session_id: textSessionIdRef.current,
-          provider: textConfigRef.current.provider,
-          llm_model: textConfigRef.current.llmModel || undefined,
+          provider: config.provider,
+          llm_model: config.llmModel || undefined,
         },
         {
           onSession: (id) => {
@@ -423,10 +427,9 @@ export function useVoiceSession() {
         .finally(() => {
           if (streamAbortRef.current === controller) streamAbortRef.current = null;
           setReplying(false);
-          if (connectedRef.current) setState("listening", "Type a message below");
         });
     },
-    [addLine, patchLine, setState, updateSessionTotals]
+    [addLine, patchLine, updateSessionTotals]
   );
 
   const pttStart = useCallback(() => {
@@ -466,6 +469,7 @@ export function useVoiceSession() {
     connect,
     disconnect,
     toggleMute,
+    startTextChat,
     sendText,
     pttStart,
     pttStop,
