@@ -10,12 +10,18 @@ import type { OptionsResponse } from "@/lib/types";
 // module singleton assumptions). This renders the same information --
 // provider + which tools are wired/enabled -- as a static flex diagram
 // instead of pulling in a graph library for one read-only diagram.
-export function ConnectionsDiagram({ options }: { options: OptionsResponse | null }) {
+export function ConnectionsDiagram({
+  options,
+  llmConfigured,
+}: {
+  options: OptionsResponse | null;
+  llmConfigured: boolean;
+}) {
   if (!options) {
     return <div className="mt-2.5 text-[12.5px] text-text-faint">Loading…</div>;
   }
 
-  const providerLabel = `${options.provider.name} · ${options.provider.model}`;
+  const providerLabel = llmConfigured ? `${options.provider.name} · ${options.provider.model}` : "No LLM configured";
 
   return (
     <div className="grid content-start gap-2.5">
