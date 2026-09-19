@@ -52,7 +52,10 @@ def _fresh_stores() -> tuple[SessionStore, UserStore]:
 
 
 def _sign_in(client, email="a@test.com") -> str:
-    resp = client.post("/auth/signup", json={"email": email, "password": "pw-12345678"})
+    resp = client.post(
+        "/auth/signup",
+        json={"name": "Test User", "username": "user_" + "".join(c for c in email.split("@")[0] if c.isalnum()), "email": email, "password": "pw-12345678"},
+    )
     assert resp.status_code == 200
     return resp.json()["id"]
 
@@ -182,7 +185,7 @@ def test_default_llm_models_falls_back_when_lm_studio_unreachable(monkeypatch):
     assert _default_llm_models("http://localhost:1234/v1", "fallback-model") == ["fallback-model"]
 
 
-def test_create_app_eagerly_warms_default_tts_and_llm():
+def test_create_app_warms_default_tts_but_never_the_llm():
     before_tts = FakeTts.instances_created
     llm_factory_calls = []
 
@@ -202,7 +205,7 @@ def test_create_app_eagerly_warms_default_tts_and_llm():
     )
 
     assert FakeTts.instances_created - before_tts == 1
-    assert llm_factory_calls == ["default-model"]
+    assert llm_factory_calls == []   # no endpoint assumed: LLM is built on first connection
 
 
 def test_tts_engine_cache_reuses_instance_for_same_voice(monkeypatch):
@@ -1136,3 +1139,108 @@ def test_one_user_cannot_see_anothers_sessions(monkeypatch):
     client.post("/auth/logout")
     _sign_in(client, "b@test.com")
     assert client.get("/sessions").json() == []
+
+
+def test_default_llm_models_makes_no_request_without_a_base_url(monkeypatch):
+    class _NoRequests:
+        def get(self, *a, **kw):
+            raise AssertionError("must not contact any server when no URL is configured")
+
+    monkeypatch.setattr("pos.cli.server.requests", _NoRequests())
+
+    assert _default_llm_models(None, "fallback-model") == ["fallback-model"]
+
+
+_PROVIDER_ENV = (
+    "LOCAL_BASE_URL", "OPENAI_API_KEY", "AZURE_OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY", "AWS_ACCESS_KEY_ID", "OPENROUTER_API_KEY",
+)
+
+
+def _real_llm_app(monkeypatch):
+    """create_app with the real (env-driven) LLM path and no provider env."""
+    for name in _PROVIDER_ENV:
+        monkeypatch.delenv(name, raising=False)
+    session_store, user_store = _fresh_stores()
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        default_tts_engine="kokoro",
+        session_store=session_store,
+        user_store=user_store,
+    )
+    return TestClient(app)
+
+
+def test_real_llm_path_is_never_built_at_startup_or_without_config(monkeypatch):
+    built = []
+    monkeypatch.setattr("pos.llm.LangChainLlm", lambda **kw: built.append(kw))
+    client = _real_llm_app(monkeypatch)
+    _sign_in(client)
+
+    assert client.get("/options").json()["llm_configured"] is False
+    with client.websocket_connect("/ws?mode=text") as ws:
+        msg = ws.receive_json()
+
+    assert msg["event"] == "error"
+    assert "no LLM configured" in msg["message"]
+    assert built == []
+
+
+def test_ws_builds_llm_once_user_saves_a_local_url(monkeypatch):
+    built = []
+
+    class _Llm(FakeLlm):
+        def __init__(self, **kw):
+            super().__init__()
+            built.append(kw)
+
+    monkeypatch.setattr("pos.llm.LangChainLlm", _Llm)
+    client = _real_llm_app(monkeypatch)
+    _sign_in(client)
+    resp = client.put("/credentials/local", json={"local_base_url": "http://my-host:1234/v1"})
+    assert resp.status_code == 200
+
+    with client.websocket_connect("/ws?mode=text") as ws:
+        assert ws.receive_json()["event"] == "ready"
+
+    assert len(built) == 1
+    assert built[0]["env"]["LOCAL_BASE_URL"] == "http://my-host:1234/v1"
+
+
+def test_background_warmup_serves_text_and_auth_before_models_load_and_gates_voice(monkeypatch):
+    import threading
+
+    gate = threading.Event()
+
+    class _SlowTts(FakeTts):
+        def __init__(self, *a, **kw):
+            gate.wait(5)
+            super().__init__(*a, **kw)
+
+    session_store, user_store = _fresh_stores()
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": _SlowTts},
+        llm_factory=lambda model: FakeLlm(),
+        default_tts_engine="kokoro",
+        session_store=session_store,
+        user_store=user_store,
+        warm_in_background=True,
+    )
+    with TestClient(app) as client:   # context manager runs lifespan -> starts the warm-up thread
+        _sign_in(client)                                    # auth works while TTS is still loading
+        with client.websocket_connect("/ws?mode=text") as ws:
+            assert ws.receive_json()["event"] == "ready"    # text mode needs no models
+        with client.websocket_connect("/ws?mode=voice") as ws:
+            msg = ws.receive_json()
+        assert msg["event"] == "error" and "still loading" in msg["message"]
+
+        gate.set()
+        for _ in range(100):
+            time.sleep(0.05)
+            with client.websocket_connect("/ws?mode=voice") as ws:
+                if ws.receive_json()["event"] == "ready":
+                    break
+        else:
+            raise AssertionError("voice mode never became ready after warm-up finished")

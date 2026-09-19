@@ -31,6 +31,7 @@ export interface OptionsResponse {
   llm_models: string[];
   defaults: { tts_engine: string; llm_model: string };
   provider: { name: string; model: string };
+  llm_configured: boolean;
   tools: ToolStatus[];
 }
 

@@ -31,3 +31,8 @@ wheels/
 
 # Local env overrides
 .env
+
+# Downloaded model files (HF cache + nltk), mounted into the backend container
+/models/
+# Supertonic TTS assets (own nested git+LFS repo)
+/assets/
