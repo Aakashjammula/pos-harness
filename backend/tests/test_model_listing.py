@@ -22,7 +22,7 @@ def http(monkeypatch):
 
     def fake_get(url, headers=None, params=None, timeout=None, **kw):
         calls.append({"url": url, "headers": headers or {}, "params": params or {}})
-        return queue[url].pop(0)
+        return queue[url].pop(0) if queue.get(url) else _Resp({}, 404)
 
     monkeypatch.setattr("pos.llm.model_listing.requests.get", fake_get)
     return type("H", (), {"calls": calls, "queue": queue})
@@ -253,3 +253,90 @@ def test_bedrock_needs_all_three_credential_fields(missing):
 
     with pytest.raises(ModelListError, match="saved for this provider"):
         list_models("bedrock", env)
+
+
+# --- only models that answer with text (multimodal INPUT is fine) ------------------------------------------
+
+from pos.llm.model_listing import _is_chat_model  # noqa: E402
+
+
+@pytest.mark.parametrize("model_id", [
+    "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gpt-4o", "gpt-4o-mini", "o3", "gpt-5",
+    "claude-sonnet-4-5", "llama3.1:8b", "qwen2.5-vl-7b-instruct", "gemma-3-27b-it", "gpt-4-vision-preview",
+    "mistral-small-3.2", "deepseek-r1", "openrouter/auto",
+])
+def test_real_chat_models_are_kept_including_vision_ones(model_id):
+    assert _is_chat_model(model_id) is True
+
+
+@pytest.mark.parametrize("model_id", [
+    "gemini-2.5-flash-preview-tts", "gemini-2.5-flash-image", "gemini-2.0-flash-preview-image-generation",
+    "imagen-4.0-generate-001", "veo-3.0-generate-preview", "gemini-live-2.5-flash-preview",
+    "gemini-2.5-flash-native-audio-preview", "aqa", "text-embedding-004", "text-embedding-3-small",
+    "nomic-embed-text", "bge-reranker-v2", "whisper-1", "tts-1", "gpt-4o-mini-tts", "dall-e-3", "gpt-image-1",
+    "gpt-4o-transcribe", "gpt-4o-realtime-preview", "gpt-4o-audio-preview", "omni-moderation-latest",
+    "davinci-002", "sora-2",
+])
+def test_tts_image_video_audio_embedding_and_moderation_models_are_dropped(model_id):
+    assert _is_chat_model(model_id) is False
+
+
+def test_gemini_drops_speech_and_image_models_even_though_they_support_generate_content(http):
+    def model(name):
+        return {"name": f"models/{name}", "supportedGenerationMethods": ["generateContent"]}
+
+    http.queue["https://generativelanguage.googleapis.com/v1beta/models"] = [_Resp({"models": [
+        model("gemini-2.5-flash"), model("gemini-2.5-flash-preview-tts"), model("gemini-2.5-flash-image"),
+        model("gemini-live-2.5-flash-preview"), model("gemini-2.5-pro"),
+    ]})]
+
+    assert [m["id"] for m in list_models("gemini", {"GOOGLE_API_KEY": "k"})] == ["gemini-2.5-flash", "gemini-2.5-pro"]
+
+
+def test_openai_drops_non_chat_models(http):
+    http.queue["https://api.openai.com/v1/models"] = [_Resp({"data": [
+        {"id": "gpt-4o", "created": 5}, {"id": "gpt-image-1", "created": 9}, {"id": "tts-1", "created": 8},
+        {"id": "text-embedding-3-large", "created": 7}, {"id": "omni-moderation-latest", "created": 6},
+        {"id": "gpt-4o-mini", "created": 4},
+    ]})]
+
+    assert [m["id"] for m in list_models("openai", {"OPENAI_API_KEY": "k"})] == ["gpt-4o", "gpt-4o-mini"]
+
+
+def test_openrouter_keeps_only_models_that_answer_in_text_but_allows_image_input(http):
+    def entry(model_id, inputs, outputs):
+        return {"id": model_id, "architecture": {"input_modalities": inputs, "output_modalities": outputs},
+                "supported_parameters": ["tools"]}
+
+    http.queue["https://openrouter.ai/api/v1/models"] = [_Resp({"data": [
+        entry("a/text", ["text"], ["text"]),
+        entry("b/vision", ["text", "image"], ["text"]),          # multimodal input: fine
+        entry("c/paints", ["text"], ["image"]),
+        entry("d/paints-and-talks", ["text"], ["text", "image"]),
+        entry("e/speaks", ["text"], ["text", "audio"]),
+        entry("f/embeds", ["text"], ["embeddings"]),
+    ]})]
+
+    assert [m["id"] for m in list_models("openrouter", {"OPENROUTER_API_KEY": "k"})] == ["a/text", "b/vision"]
+
+
+def test_lm_studio_models_are_filtered_by_the_type_it_reports(http):
+    http.queue["http://my-host:1234/api/v0/models"] = [_Resp({"data": [
+        {"id": "qwen2.5-7b", "type": "llm"}, {"id": "qwen2.5-vl-7b", "type": "vlm"},
+        {"id": "text-embedding-nomic-embed-text-v1.5", "type": "embeddings"},
+    ]})]
+
+    models = list_models("local", {"LOCAL_BASE_URL": "http://my-host:1234/v1"})
+
+    assert [m["id"] for m in models] == ["qwen2.5-7b", "qwen2.5-vl-7b"]
+
+
+def test_other_openai_compatible_servers_fall_back_to_the_name_filter(http):
+    """Ollama and friends have no /api/v0/models: judge by name."""
+    http.queue["http://my-host:11434/v1/models"] = [_Resp({"data": [
+        {"id": "llama3.1:8b"}, {"id": "nomic-embed-text:latest"}, {"id": "qwen2.5-vl:7b"},
+    ]})]
+
+    models = list_models("local", {"LOCAL_BASE_URL": "http://my-host:11434/v1"})
+
+    assert [m["id"] for m in models] == ["llama3.1:8b", "qwen2.5-vl:7b"]

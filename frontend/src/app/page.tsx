@@ -210,29 +210,42 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
     [settings, llmModel, session, refreshMics]
   );
 
+  // Switching to voice carries the current chat along: connecting resumes it.
+  const resumeOnConnect = useRef<string | null>(null);
+
   const handleConnect = useCallback(() => {
-    doConnect(null, mode);
-  }, [doConnect, mode]);
+    const resume = resumeOnConnect.current;
+    resumeOnConnect.current = null;
+    doConnect(resume, "voice");
+  }, [doConnect]);
 
   const handleDisconnect = useCallback(() => {
     session.disconnect();
   }, [session]);
 
-  // Switching Voice/Text mid-session resumes the SAME session under the
-  // new mode -- a quick disconnect+reconnect, not an in-place switch.
+  // Text needs no connection, so switching modes only changes what the panel offers. The chat
+  // (its session id and transcript) carries over; voice still needs a Connect for the microphone.
   const handleModeChange = useCallback(
     (next: SessionMode) => {
       if (next === mode) return;
-      if (session.connected) {
-        const sessionId = session.sessionId;
-        session.disconnect();
-        setMode(next);
-        doConnect(sessionId, next);
-      } else {
-        setMode(next);
-      }
+      const sessionId = session.sessionId;
+      if (session.connected) session.disconnect();
+      setMode(next);
+      if (next === "text") session.startTextChat(sessionId, false);
+      else resumeOnConnect.current = sessionId;
     },
-    [mode, session, doConnect]
+    [mode, session]
+  );
+
+  const handleNewChat = useCallback(() => {
+    if (session.connected) session.disconnect();
+    resumeOnConnect.current = null;
+    session.startTextChat(null, true);
+  }, [session]);
+
+  const handleSendText = useCallback(
+    (text: string) => session.sendText(text, { provider: settings.provider || undefined, llmModel }),
+    [session, settings.provider, llmModel]
   );
 
   const continueSession = useCallback(
@@ -241,7 +254,8 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
       if (session.connected) session.disconnect();
       setMode(detail.session.mode);
       session.loadHistory(detail.turns);
-      await doConnect(id, detail.session.mode);
+      if (detail.session.mode === "text") session.startTextChat(id, false);
+      else await doConnect(id, "voice");
     },
     [session, doConnect]
   );
@@ -345,7 +359,8 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
           onOpenSettings={() => openSettings("model")}
           onOpenTools={() => openSettings("tools")}
           modelChipLabel={modelChipLabel}
-          onSendText={session.sendText}
+          onSendText={handleSendText}
+          onNewChat={handleNewChat}
           replying={session.replying}
         />
       )}

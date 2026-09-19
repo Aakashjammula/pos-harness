@@ -25,6 +25,7 @@ exception text.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 
 import requests
@@ -76,13 +77,25 @@ def _need(env: Mapping[str, str], name: str, what: str) -> str:
 
 # --- OpenAI-compatible -------------------------------------------------------
 
-# /v1/models returns every model the key can see. These substrings mark ones a
-# chat session can't use; anything else is kept (better to show a stray model
-# than to hide a new chat model whose name we don't know yet).
-_OPENAI_NON_CHAT = (
-    "embedding", "whisper", "tts", "dall-e", "moderation", "transcribe",
-    "realtime", "audio", "image", "davinci", "babbage", "sora", "computer-use",
+# A provider's model list mixes in models that cannot hold a conversation: speech synthesis and
+# transcription, image and video generation, embeddings, rerankers, moderation, realtime/live
+# audio. This app talks to a model in text (multimodal INPUT such as images is fine), so only
+# models that answer in text are offered. The providers that describe capabilities in their API
+# (LM Studio, OpenRouter) are judged by that; the rest by name, which is what this is for.
+# Longer stems match anywhere; short ones only as whole words ("tts" must not match "settings").
+_NOT_CHAT_STEMS = (
+    "embed", "whisper", "transcri", "speech", "image", "dall-e", "moderation", "rerank", "realtime",
+    "audio", "davinci", "babbage",
 )
+_NOT_CHAT_WORDS = ("tts", "live", "veo", "sora", "aqa")
+_NOT_CHAT = re.compile(
+    "(" + "|".join(_NOT_CHAT_STEMS) + r")|(?:^|[-_/.:])(?:" + "|".join(_NOT_CHAT_WORDS) + r")(?:$|[-_/.:])",
+    re.IGNORECASE,
+)
+
+
+def _is_chat_model(model_id: str) -> bool:
+    return not _NOT_CHAT.search(model_id)
 
 
 def _list_local(env: Mapping[str, str]) -> list[Model]:
@@ -92,15 +105,23 @@ def _list_local(env: Mapping[str, str]) -> list[Model]:
     except UnsafeUrl as e:
         raise ModelListError(f"that server URL is not allowed: {e}") from None
     key = env.get("LOCAL_API_KEY") or "lm-studio"
-    data = _get_json(f"{base}/models", headers={"Authorization": f"Bearer {key}"})
-    return [{"id": m["id"], "label": m["id"]} for m in data.get("data", []) if m.get("id")]
+    headers = {"Authorization": f"Bearer {key}"}
+    # LM Studio labels each model llm / vlm / embeddings: exact, so use it when it is there.
+    try:
+        typed = _get_json(f"{base.removesuffix('/v1')}/api/v0/models", headers=headers).get("data", [])
+    except ModelListError:
+        typed = []                                          # not LM Studio: fall through to the name filter
+    if any("type" in m for m in typed):
+        return [{"id": m["id"], "label": m["id"]} for m in typed if m.get("id") and m.get("type") in ("llm", "vlm")]
+    data = _get_json(f"{base}/models", headers=headers)
+    return [{"id": m["id"], "label": m["id"]} for m in data.get("data", []) if m.get("id") and _is_chat_model(m["id"])]
 
 
 def _list_openai(env: Mapping[str, str]) -> list[Model]:
     key = _need(env, "OPENAI_API_KEY", "API key")
     data = _get_json("https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {key}"})
     rows = [m for m in data.get("data", []) if m.get("id")]
-    rows = [m for m in rows if not any(bad in m["id"] for bad in _OPENAI_NON_CHAT)]
+    rows = [m for m in rows if _is_chat_model(m["id"])]
     rows.sort(key=lambda m: m.get("created", 0), reverse=True)   # newest first
     return [{"id": m["id"], "label": m["id"]} for m in rows]
 
@@ -150,7 +171,8 @@ def _list_gemini(env: Mapping[str, str]) -> list[Model]:
             if "generateContent" not in m.get("supportedGenerationMethods", []):
                 continue   # embeddings, AQA, etc.
             model_id = m.get("name", "").removeprefix("models/")
-            if model_id:
+            # Speech, image and live-audio models support generateContent too.
+            if model_id and _is_chat_model(model_id):
                 models.append({"id": model_id, "label": m.get("displayName") or model_id})
         token = data.get("nextPageToken")
         if not token:
@@ -169,7 +191,7 @@ def _list_openrouter(env: Mapping[str, str]) -> list[Model]:
         if not m.get("id"):
             continue
         outputs = (m.get("architecture") or {}).get("output_modalities") or ["text"]
-        if "text" not in outputs:
+        if set(outputs) != {"text"}:    # answers in text only: drops image/audio/embedding generators
             continue
         # This app binds tools to the model, so a model that can't call them
         # would fail on the first turn. Only filter when the field is present.

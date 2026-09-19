@@ -24,6 +24,7 @@ interface ChatPanelProps {
   modelChipLabel: string;
   onSendText: (text: string) => void;
   replying: boolean; // a text reply is still streaming in
+  onNewChat: () => void;
 }
 
 export function ChatPanel({
@@ -45,6 +46,7 @@ export function ChatPanel({
   modelChipLabel,
   onSendText,
   replying,
+  onNewChat,
 }: ChatPanelProps) {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const [textValue, setTextValue] = useState("");
@@ -104,13 +106,17 @@ export function ChatPanel({
             Text
           </button>
         </div>
-        <div className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[12.5px] font-medium text-text-muted">
-          <span className={`h-[7px] w-[7px] shrink-0 rounded-full transition-colors ${led}`} />
-          <span>{stateText}</span>
-          {lineCountLabel && (
-            <span className="font-mono text-[11px] text-text-faint before:content-['·_']">{lineCountLabel}</span>
-          )}
-        </div>
+        {(!textMode || lineCountLabel) && (
+          <div className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[12.5px] font-medium text-text-muted">
+            {!textMode && <span className={`h-[7px] w-[7px] shrink-0 rounded-full transition-colors ${led}`} />}
+            {!textMode && <span>{stateText}</span>}
+            {lineCountLabel && (
+              <span className={`font-mono text-[11px] text-text-faint ${textMode ? "" : "before:content-['·_']"}`}>
+                {lineCountLabel}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* transcript */}
@@ -119,7 +125,7 @@ export function ChatPanel({
           <div className="py-6 pb-3">
             {lines.length === 0 && (
               <div className="pt-[20vh] text-center text-sm text-text-faint">
-                Ask something, or say it out loud once you connect.
+                {textMode ? "Ask something." : "Say something out loud once you connect."}
               </div>
             )}
             {lines.map((line) => {
@@ -188,7 +194,17 @@ export function ChatPanel({
           >
             Tools
           </button>
+          {textMode && (
+            <button
+              type="button"
+              onClick={onNewChat}
+              className="rounded-full border border-border bg-surface-sunken px-3.5 py-1 text-xs font-medium text-text-muted transition-colors hover:border-text-muted hover:text-text"
+            >
+              New chat
+            </button>
+          )}
         </div>
+        {!textMode && (
         <div className="mx-auto flex max-w-[720px] items-center gap-3">
           <div className={`flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full transition-colors ${tileClass}`}>
             <StateIcon state={state} className={`h-[18px] w-[18px] ${state === "speaking" ? "tile-pulse animate-[tile-pulse_1s_ease-in-out_infinite]" : ""}`} />
@@ -232,7 +248,8 @@ export function ChatPanel({
             </button>
           </div>
         </div>
-        {textMode && connected && (
+        )}
+        {textMode && (
           <div className="mx-auto mt-3 flex max-w-[720px] items-center gap-2 rounded-[26px] bg-surface-sunken py-1.5 pr-1.5 pl-4.5">
             <input
               type="text"
