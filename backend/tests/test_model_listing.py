@@ -149,3 +149,107 @@ def test_gemini_reports_its_400_for_an_invalid_key_as_a_rejected_key(http):
 
     with pytest.raises(ModelListError, match="rejected this key"):
         list_models("gemini", {"GOOGLE_API_KEY": "bad"})
+
+
+# --- Bedrock: a stubbed boto3 client (no AWS account is involved) -----------------------------------------
+
+
+class _Bedrock:
+    """Just the two calls the lister makes, answering from canned pages."""
+
+    def __init__(self, profile_pages=(), models=(), profile_error=None, models_error=None):
+        self.profile_pages, self.models = list(profile_pages), list(models)
+        self.profile_error, self.models_error = profile_error, models_error
+        self.profile_calls, self.model_calls = [], []
+
+    def list_inference_profiles(self, **kwargs):
+        self.profile_calls.append(kwargs)
+        if self.profile_error:
+            raise self.profile_error
+        return self.profile_pages.pop(0)
+
+    def list_foundation_models(self, **kwargs):
+        self.model_calls.append(kwargs)
+        if self.models_error:
+            raise self.models_error
+        return {"modelSummaries": self.models}
+
+
+_BEDROCK_ENV = {"AWS_REGION": "us-east-1", "AWS_ACCESS_KEY_ID": "AKIA-x", "AWS_SECRET_ACCESS_KEY": "s3cret"}
+
+
+def _client_error(code):
+    from botocore.exceptions import ClientError
+
+    return ClientError({"Error": {"Code": code, "Message": "nope"}}, "Op")
+
+
+def _use_bedrock(monkeypatch, stub):
+    seen = {}
+
+    def fake_client(service, **kwargs):
+        seen.update(service=service, **kwargs)
+        return stub
+
+    monkeypatch.setattr("boto3.client", fake_client)
+    return seen
+
+
+def test_bedrock_lists_profiles_first_then_on_demand_models_without_duplicates(monkeypatch):
+    stub = _Bedrock(
+        profile_pages=[{"inferenceProfileSummaries": [
+            {"inferenceProfileId": "us.anthropic.claude-x", "inferenceProfileName": "Claude X"},
+        ]}],
+        models=[
+            {"modelId": "us.anthropic.claude-x", "modelName": "dup", "inferenceTypesSupported": ["ON_DEMAND"]},
+            {"modelId": "amazon.titan", "modelName": "Titan", "inferenceTypesSupported": ["ON_DEMAND"]},
+            {"modelId": "provisioned-only", "modelName": "P", "inferenceTypesSupported": ["PROVISIONED"]},
+        ],
+    )
+    seen = _use_bedrock(monkeypatch, stub)
+
+    models = list_models("bedrock", _BEDROCK_ENV)
+
+    assert models == [{"id": "us.anthropic.claude-x", "label": "Claude X"}, {"id": "amazon.titan", "label": "Titan"}]
+    assert stub.model_calls == [{"byOutputModality": "TEXT"}]
+    assert seen["service"] == "bedrock" and seen["region_name"] == "us-east-1"
+
+
+def test_bedrock_follows_inference_profile_pagination(monkeypatch):
+    stub = _Bedrock(profile_pages=[
+        {"inferenceProfileSummaries": [{"inferenceProfileId": "p1"}], "nextToken": "t2"},
+        {"inferenceProfileSummaries": [{"inferenceProfileId": "p2"}]},
+    ])
+    _use_bedrock(monkeypatch, stub)
+
+    assert [m["id"] for m in list_models("bedrock", _BEDROCK_ENV)] == ["p1", "p2"]
+    assert stub.profile_calls == [{"maxResults": 1000}, {"maxResults": 1000, "nextToken": "t2"}]
+
+
+def test_bedrock_falls_back_to_foundation_models_when_profiles_are_not_permitted(monkeypatch):
+    stub = _Bedrock(
+        profile_error=_client_error("AccessDeniedException"),
+        models=[{"modelId": "amazon.titan", "modelName": "Titan", "inferenceTypesSupported": ["ON_DEMAND"]}],
+    )
+    _use_bedrock(monkeypatch, stub)
+
+    assert [m["id"] for m in list_models("bedrock", _BEDROCK_ENV)] == ["amazon.titan"]
+
+
+def test_bedrock_reports_an_aws_rejection_without_leaking_credentials(monkeypatch):
+    _use_bedrock(monkeypatch, _Bedrock(profile_error=_client_error("UnrecognizedClientException"),
+                                       models_error=_client_error("UnrecognizedClientException")))
+
+    with pytest.raises(ModelListError) as info:
+        list_models("bedrock", _BEDROCK_ENV)
+
+    assert "UnrecognizedClientException" in str(info.value)
+    assert "s3cret" not in str(info.value) and "AKIA-x" not in str(info.value)
+
+
+@pytest.mark.parametrize("missing", ["AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"])
+def test_bedrock_needs_all_three_credential_fields(missing):
+    env = {k: v for k, v in _BEDROCK_ENV.items() if k != missing}
+
+    with pytest.raises(ModelListError, match="saved for this provider"):
+        list_models("bedrock", env)
