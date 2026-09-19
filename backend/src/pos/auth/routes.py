@@ -6,6 +6,7 @@ transport rather than account management."""
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -31,6 +32,8 @@ from pos.auth.tokens import (
     new_refresh_token,
 )
 from pos.llm.model_listing import ModelListError, list_models, supported_providers
+from pos.tools import all_tools, get_tool
+from pos.tools import credential_fields as tool_credential_fields
 
 MAGIC_LINK_REQUEST_COOLDOWN = timedelta(seconds=60)
 
@@ -45,7 +48,7 @@ class MagicLinkVerify(BaseModel):
 # Which request fields belong to which provider, and what environment
 # variable each one becomes. Mirrors the mapping cli/server.py used for
 # the old per-connection key_token flow.
-PROVIDER_FIELDS: dict[str, dict[str, str]] = {
+_LLM_PROVIDER_FIELDS: dict[str, dict[str, str]] = {
     "local": {"local_api_key": "LOCAL_API_KEY", "local_base_url": "LOCAL_BASE_URL"},
     "openai": {"openai_api_key": "OPENAI_API_KEY"},
     "azure": {
@@ -61,8 +64,11 @@ PROVIDER_FIELDS: dict[str, dict[str, str]] = {
         "bedrock_region": "AWS_REGION",
     },
     "openrouter": {"openrouter_api_key": "OPENROUTER_API_KEY"},
-    "tavily": {"tavily_api_key": "TAVILY_API_KEY"},
 }
+
+# Tools that need a key (Tavily, ...) declare their own fields in pos.tools, so a
+# new tool's credential form works here without editing this file.
+PROVIDER_FIELDS: dict[str, dict[str, str]] = {**_LLM_PROVIDER_FIELDS, **tool_credential_fields()}
 
 
 class Credentials(BaseModel):
@@ -234,6 +240,44 @@ def build_auth_router(users: UserStore) -> APIRouter:
         except ModelListError as e:
             raise HTTPException(status_code=502, detail=str(e)) from None
         return {"models": models}
+
+    def _tool_env(user_id: str, spec) -> dict[str, str]:
+        creds = users.get_credential(user_id, spec.credential_provider) if spec.credential_provider else None
+        return {**os.environ, **(creds or {})}
+
+    @router.get("/tools")
+    async def list_tools(user_id: str = Depends(require_user_id)):
+        """Every tool with this user's state: whether its key is present
+        (`configured`, from their saved key or the server's), their own switch
+        (`enabled`), and whether it will actually be bound (`active`)."""
+        settings = users.get_tool_settings(user_id)
+        out = []
+        for spec in all_tools():
+            configured = spec.available(_tool_env(user_id, spec))
+            wanted = settings.get(spec.id, spec.default_enabled)
+            out.append({
+                "id": spec.id,
+                "label": spec.label,
+                "description": spec.description,
+                "requires_key": spec.requires_key,
+                "credential_provider": spec.credential_provider,
+                "credential_fields": list(spec.credential_fields),
+                "configured": configured,
+                "enabled": wanted,
+                "active": wanted and configured,
+            })
+        return {"tools": out}
+
+    @router.put("/tools/{tool_id}")
+    async def set_tool(tool_id: str, body: dict, user_id: str = Depends(require_user_id)):
+        spec = get_tool(tool_id)
+        if spec is None:
+            raise HTTPException(status_code=404, detail=f"unknown tool {tool_id!r}")
+        enabled = bool(body.get("enabled"))
+        if enabled and not spec.available(_tool_env(user_id, spec)):
+            raise HTTPException(status_code=409, detail="add its API key first")
+        users.set_tool_enabled(user_id, tool_id, enabled)
+        return {"id": tool_id, "enabled": enabled}
 
     @router.delete("/credentials/{provider}")
     async def delete_credential(provider: str, user_id: str = Depends(require_user_id)):

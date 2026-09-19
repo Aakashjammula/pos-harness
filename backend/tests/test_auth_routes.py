@@ -313,3 +313,63 @@ def test_models_endpoint_turns_provider_failures_into_502(monkeypatch):
 
     assert resp.status_code == 502
     assert "rejected this key" in resp.json()["detail"]
+
+
+def test_tools_list_reports_key_requirement_and_configured_state(monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    client = _client()
+    _signup(client, "a@test.com")
+
+    tools = {t["id"]: t for t in client.get("/tools").json()["tools"]}
+
+    assert tools["get_current_time"]["requires_key"] is False
+    assert tools["get_current_time"]["active"] is True
+    ws = tools["web_search"]
+    assert ws["requires_key"] is True and ws["credential_provider"] == "tavily"
+    assert ws["credential_fields"] == ["tavily_api_key"]
+    assert ws["configured"] is False and ws["active"] is False
+
+    client.put("/credentials/tavily", json={"tavily_api_key": "tvly-x"})
+    ws = {t["id"]: t for t in client.get("/tools").json()["tools"]}["web_search"]
+    assert ws["configured"] is True and ws["active"] is True
+
+
+def test_a_tool_can_be_switched_off_and_on_per_user():
+    client = _client()
+    _signup(client, "a@test.com")
+
+    assert client.put("/tools/get_current_time", json={"enabled": False}).json() == {
+        "id": "get_current_time", "enabled": False,
+    }
+    assert {t["id"]: t for t in client.get("/tools").json()["tools"]}["get_current_time"]["active"] is False
+
+    client.put("/tools/get_current_time", json={"enabled": True})
+    assert {t["id"]: t for t in client.get("/tools").json()["tools"]}["get_current_time"]["active"] is True
+
+
+def test_enabling_a_key_tool_without_its_key_is_refused_and_unknown_tools_404(monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    client = _client()
+    _signup(client, "a@test.com")
+
+    assert client.put("/tools/web_search", json={"enabled": True}).status_code == 409
+    assert client.put("/tools/nope", json={"enabled": True}).status_code == 404
+    assert client.put("/tools/web_search", json={"enabled": False}).status_code == 200   # disabling always ok
+
+
+def test_one_users_tool_switches_do_not_affect_another():
+    client = _client()
+    _signup(client, "a@test.com")
+    client.put("/tools/get_current_time", json={"enabled": False})
+    client.post("/auth/logout")
+
+    _signup(client, "b@test.com")
+    tools = {t["id"]: t for t in client.get("/tools").json()["tools"]}
+
+    assert tools["get_current_time"]["active"] is True
+
+
+def test_tools_routes_require_auth():
+    client = _client()
+    assert client.get("/tools").status_code == 401
+    assert client.put("/tools/web_search", json={"enabled": True}).status_code == 401
