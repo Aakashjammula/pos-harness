@@ -2,8 +2,8 @@
 Python CLI relay client for server.py — captures mic audio locally via
 sounddevice and streams it to the FastAPI /ws endpoint over a
 websocket; plays back whatever audio the server sends in return. No
-pipeline logic lives here — this is the CLI equivalent of
-static/index.html, both are dumb relays to the same server.
+pipeline logic lives here — this is the CLI equivalent of the
+web frontend, both are dumb relays to the same server.
 
 Usage:
     uv run server.py            # in one terminal
