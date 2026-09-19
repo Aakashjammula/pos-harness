@@ -172,7 +172,12 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
 
   // --- connect / disconnect ---
 
-  const providerModels = useProviderModels(settings.provider, configured, credentialsVersion);
+  const providerModels = useProviderModels(
+    settings.provider,
+    configured,
+    credentialsVersion,
+    options?.provider.name ?? ""
+  );
   const toolsState = useTools(toolsVersion);
   const onToolsChanged = useCallback(() => {
     setToolsVersion((v) => v + 1);
