@@ -79,27 +79,36 @@ def test_resolve_input_device_raises_on_no_match(monkeypatch):
 
 
 def test_mute_toggle_listener_toggles_on_each_input_line(monkeypatch):
-    class _FakeInput:
-        def __init__(self, n):
-            self.n = n
+    # Each input() call blocks until the test releases one "Enter" press, so
+    # the test observes the state after every toggle instead of racing a
+    # listener thread that would otherwise consume both lines instantly.
+    lines = threading.Semaphore(0)
+    handled = threading.Semaphore(0)
 
-        def __call__(self):
-            if self.n <= 0:
-                raise EOFError
-            self.n -= 1
-            return ""
+    def _fake_input():
+        handled.release()          # the previous line has been fully handled
+        lines.acquire()
+        if _closed.is_set():
+            raise EOFError
+        return ""
 
-    monkeypatch.setattr("builtins.input", _FakeInput(2))
+    _closed = threading.Event()
+    monkeypatch.setattr("builtins.input", _fake_input)
 
     muted = threading.Event()
     start_mute_toggle_listener(muted)
 
-    deadline = time.time() + 2.0
-    while not muted.is_set() and time.time() < deadline:
-        time.sleep(0.02)
+    def press_enter():
+        assert handled.acquire(timeout=2.0)   # listener is waiting at input()
+        lines.release()
+
+    press_enter()
+    assert handled.acquire(timeout=2.0)       # toggle done, back at input()
     assert muted.is_set()
 
-    deadline = time.time() + 2.0
-    while muted.is_set() and time.time() < deadline:
-        time.sleep(0.02)
+    lines.release()
+    assert handled.acquire(timeout=2.0)
     assert not muted.is_set()
+
+    _closed.set()
+    lines.release()                            # let the daemon thread exit
