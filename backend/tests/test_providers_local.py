@@ -44,7 +44,7 @@ def test_resolve_asks_the_server_for_a_model_when_none_is_named(monkeypatch):
     response.raise_for_status.return_value = None
     seen = {}
 
-    def fake_get(url, headers, timeout):
+    def fake_get(url, headers, timeout, **kw):
         seen["url"] = url
         return response
 
@@ -57,7 +57,7 @@ def test_resolve_asks_the_server_for_a_model_when_none_is_named(monkeypatch):
 
 
 def test_resolve_raises_when_no_model_is_named_or_served(monkeypatch):
-    def boom(url, headers, timeout):
+    def boom(url, headers, timeout, **kw):
         raise ConnectionError("down")
 
     monkeypatch.setattr("pos.llm.providers.local.requests.get", boom)
@@ -113,7 +113,7 @@ def test_context_window_queries_lm_studio_v0_models_endpoint(monkeypatch):
     mock_response.raise_for_status.return_value = None
     captured_url = {}
 
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, **kw):
         captured_url["url"] = url
         return mock_response
 
@@ -132,7 +132,7 @@ def test_context_window_prefers_loaded_context_length_over_max_context_length(mo
         "data": [{"id": "lfm2.5-230m", "max_context_length": 128000, "loaded_context_length": 8192}],
     }
     mock_response.raise_for_status.return_value = None
-    monkeypatch.setattr("pos.llm.providers.local.requests.get", lambda url, timeout: mock_response)
+    monkeypatch.setattr("pos.llm.providers.local.requests.get", lambda url, timeout, **kw: mock_response)
 
     assert LocalProvider().context_window_for(_local_provider(model="lfm2.5-230m")) == 8192
 
@@ -144,7 +144,7 @@ def test_context_window_falls_back_to_max_context_length_when_not_loaded(monkeyp
         "data": [{"id": "lfm2.5-230m", "state": "not-loaded", "max_context_length": 128000}],
     }
     mock_response.raise_for_status.return_value = None
-    monkeypatch.setattr("pos.llm.providers.local.requests.get", lambda url, timeout: mock_response)
+    monkeypatch.setattr("pos.llm.providers.local.requests.get", lambda url, timeout, **kw: mock_response)
 
     assert LocalProvider().context_window_for(_local_provider(model="lfm2.5-230m")) == 128000
 
@@ -153,13 +153,13 @@ def test_context_window_returns_none_when_model_not_found_in_response(monkeypatc
     mock_response = MagicMock()
     mock_response.json.return_value = {"object": "list", "data": [{"id": "other-model", "max_context_length": 4096}]}
     mock_response.raise_for_status.return_value = None
-    monkeypatch.setattr("pos.llm.providers.local.requests.get", lambda url, timeout: mock_response)
+    monkeypatch.setattr("pos.llm.providers.local.requests.get", lambda url, timeout, **kw: mock_response)
 
     assert LocalProvider().context_window_for(_local_provider(model="not-listed")) is None
 
 
 def test_context_window_returns_none_on_request_failure(monkeypatch):
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, **kw):
         raise ConnectionError("LM Studio not running")
 
     monkeypatch.setattr("pos.llm.providers.local.requests.get", fake_get)

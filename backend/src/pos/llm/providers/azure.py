@@ -7,6 +7,8 @@ import os
 
 from langchain_openai import AzureChatOpenAI
 
+from pos.net_policy import UnsafeUrl, check_user_url
+
 from .base import LlmProviderBase, ProviderConfig
 from .registry import register
 
@@ -28,6 +30,10 @@ class AzureProvider(LlmProviderBase):
             raise RuntimeError(
                 "AZURE_OPENAI_ENDPOINT is required when AZURE_OPENAI_API_KEY is set"
             )
+        try:   # Azure endpoints are public https hosts; anything else is not Azure
+            check_user_url("AZURE_OPENAI_ENDPOINT", endpoint, https_only=True, allow_private=False)
+        except UnsafeUrl as e:
+            raise RuntimeError(f"AZURE_OPENAI_ENDPOINT is not allowed: {e}") from None
         deployment = model_override or env.get("AZURE_OPENAI_DEPLOYMENT")
         if not deployment:
             raise RuntimeError(

@@ -120,7 +120,7 @@ def _default_llm_models(base_url: str | None, fallback: str | None) -> list[str]
     if not base_url:
         return fallback_list
     try:
-        resp = requests.get(f"{base_url}/models", timeout=3)
+        resp = requests.get(f"{base_url}/models", timeout=3, allow_redirects=False)
         resp.raise_for_status()
         ids = [m["id"] for m in resp.json().get("data", [])]
         return ids or fallback_list

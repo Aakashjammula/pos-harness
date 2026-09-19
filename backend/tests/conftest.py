@@ -26,3 +26,13 @@ if not _db_name.endswith("_test"):
         f"refusing to run: TEST_DATABASE_URL points at database {_db_name!r}, and these tests "
         "TRUNCATE tables. Use a database whose name ends in '_test' (default: pos_test)."
     )
+
+
+@pytest.fixture(autouse=True)
+def _network_policy_defaults(monkeypatch):
+    """Tests use made-up hostnames ("llm.test"); resolve them all to a public address and
+    allow private literals. Tests of the policy itself pass their own resolver and flags."""
+    from pos import config
+
+    monkeypatch.setattr("pos.net_policy._resolve", lambda host, port: ["93.184.216.34"])
+    monkeypatch.setattr(config, "ALLOW_PRIVATE_LLM_URLS", True)
