@@ -9,9 +9,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import psycopg
+from cryptography.exceptions import InvalidTag
 from psycopg_pool import ConnectionPool
 
-from pos.auth.crypto import decrypt_payload, encrypt_payload
+from pos.auth.crypto import decrypt_payload_ex, encrypt_payload
 
 
 class EmailTaken(Exception):
@@ -262,8 +263,12 @@ class UserStore:
             ).fetchone()
         return row is not None
 
+    @staticmethod
+    def _aad(user_id: str, provider: str) -> bytes:
+        return f"{user_id}:{provider}".encode()
+
     def save_credential(self, user_id: str, provider: str, payload: dict) -> None:
-        ciphertext, nonce = encrypt_payload(payload)
+        ciphertext, nonce = encrypt_payload(payload, self._aad(user_id, provider))
         with self._pool.connection() as conn:
             conn.execute(
                 "INSERT INTO api_credentials (user_id, provider, encrypted_payload, nonce) "
@@ -283,7 +288,19 @@ class UserStore:
             ).fetchone()
         if row is None:
             return None
-        return decrypt_payload(bytes(row["encrypted_payload"]), bytes(row["nonce"]))
+        try:
+            payload, needs_upgrade = decrypt_payload_ex(
+                bytes(row["encrypted_payload"]), bytes(row["nonce"]), self._aad(user_id, provider)
+            )
+        except InvalidTag:
+            # Copied from another slot, corrupted, or the key is gone. Treat it as not
+            # saved (the person is asked to enter it again) rather than failing every
+            # request for that user. Nothing secret goes in the log line.
+            print(f"  credential for user {user_id} / {provider} could not be decrypted -- treating it as unset")
+            return None
+        if needs_upgrade:   # written before owner binding, or under a retired key: re-encrypt now
+            self.save_credential(user_id, provider, payload)
+        return payload
 
     def list_credential_providers(self, user_id: str) -> list[str]:
         with self._pool.connection() as conn:

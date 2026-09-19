@@ -27,6 +27,14 @@ def check_settings(env: Mapping[str, str]) -> tuple[list[str], list[str]]:
     if len(key) != 32:
         errors.append("ENCRYPTION_KEY must be base64 for exactly 32 bytes (openssl rand -base64 32)")
 
+    for previous in (k.strip() for k in env.get("ENCRYPTION_KEY_PREVIOUS", "").split(",") if k.strip()):
+        try:
+            ok = len(base64.b64decode(previous, validate=True)) == 32
+        except (binascii.Error, ValueError):
+            ok = False
+        if not ok:
+            errors.append("ENCRYPTION_KEY_PREVIOUS has an entry that is not base64 for exactly 32 bytes")
+
     secure = env.get("COOKIE_SECURE", "false").lower() == "true"
     origins = [o.strip() for o in env.get("CORS_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
     for origin in origins:
