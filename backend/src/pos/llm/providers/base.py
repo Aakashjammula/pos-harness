@@ -57,3 +57,8 @@ class LlmProviderBase(ABC):
     @abstractmethod
     def context_window_for(self, provider: ProviderConfig) -> int | None:
         """Max context window in tokens, or None if unknown."""
+
+    def call_kwargs(self, provider: ProviderConfig) -> dict:
+        """Extra keyword arguments for every generation call to this provider. Default none: an
+        unknown parameter would be sent to the API and rejected."""
+        return {}

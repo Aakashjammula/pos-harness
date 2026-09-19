@@ -340,3 +340,97 @@ def test_other_openai_compatible_servers_fall_back_to_the_name_filter(http):
     models = list_models("local", {"LOCAL_BASE_URL": "http://my-host:11434/v1"})
 
     assert [m["id"] for m in models] == ["llama3.1:8b", "qwen2.5-vl:7b"]
+
+
+# --- Gemini: the API has no output-modality field, so families are curated and the rest is opt-in --------
+
+# The ids Gemini actually returned for one key (screenshot), split by what a person means by "chat".
+_GEMINI_CHAT = [
+    "gemini-2.5-flash", "gemini-2.5-pro", "gemma-4-26b-a4b-it", "gemma-4-31b-it", "gemini-flash-latest",
+    "gemini-flash-lite-latest", "gemini-pro-latest", "gemini-2.5-flash-lite", "gemini-3-flash-preview",
+    "gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview", "gemini-3.1-flash-lite", "gemini-3.5-flash",
+    "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash",
+]
+_GEMINI_NOT_CHAT = [
+    "nano-banana-pro-preview", "lyria-3-clip-preview", "lyria-3-pro-preview", "lyria-3.5",
+    "gemini-robotics-er-2-preview", "gemini-2.5-computer-use-preview-10-2025", "antigravity-preview-05-2026",
+    "deep-research-max-preview-04-2026", "deep-research-pro-preview-12-2025", "gemini-3.1-pro-preview-customtools",
+    "gemini-omni-flash-preview", "gemini-omni-1.1-flash", "gemini-2.5-flash-preview-tts",
+    "gemini-2.5-flash-image", "gemini-live-2.5-flash-preview", "imagen-4.0-generate-001", "veo-3.0-generate-preview",
+]
+
+
+def _gemini_models(ids):
+    return [{"name": f"models/{i}", "supportedGenerationMethods": ["generateContent"]} for i in ids]
+
+
+def test_gemini_default_list_is_the_curated_chat_families(http):
+    url = "https://generativelanguage.googleapis.com/v1beta/models"
+    http.queue[url] = [_Resp({"models": _gemini_models(_GEMINI_CHAT + _GEMINI_NOT_CHAT)})]
+
+    models = list_models("gemini", {"GOOGLE_API_KEY": "k"})
+
+    assert sorted(m["id"] for m in models) == sorted(_GEMINI_CHAT)
+
+
+def test_show_all_returns_everything_with_a_chat_flag_so_nothing_is_unreachable(http):
+    url = "https://generativelanguage.googleapis.com/v1beta/models"
+    http.queue[url] = [_Resp({"models": _gemini_models(_GEMINI_CHAT + _GEMINI_NOT_CHAT)})]
+
+    models = list_models("gemini", {"GOOGLE_API_KEY": "k"}, include_all=True)
+
+    assert len(models) == len(_GEMINI_CHAT) + len(_GEMINI_NOT_CHAT)
+    assert {m["id"] for m in models if m["chat"]} == set(_GEMINI_CHAT)
+    assert {m["id"] for m in models if not m["chat"]} == set(_GEMINI_NOT_CHAT)
+
+
+def test_every_provider_can_return_the_full_list_with_flags(http):
+    http.queue["https://api.openai.com/v1/models"] = [_Resp({"data": [{"id": "gpt-4o"}, {"id": "tts-1"}]})]
+
+    models = list_models("openai", {"OPENAI_API_KEY": "k"}, include_all=True)
+
+    assert {m["id"]: m["chat"] for m in models} == {"gpt-4o": True, "tts-1": False}
+
+
+# --- context window sizes: only where the provider actually says ------------------------------------------
+
+def test_context_windows_come_from_each_providers_own_field(http):
+    http.queue["https://generativelanguage.googleapis.com/v1beta/models"] = [_Resp({"models": [
+        {"name": "models/gemini-3.6-flash", "supportedGenerationMethods": ["generateContent"],
+         "inputTokenLimit": 1048576, "outputTokenLimit": 65536},
+    ]})]
+    http.queue["https://api.anthropic.com/v1/models"] = [_Resp({"data": [
+        {"id": "claude-sonnet-4-5", "max_input_tokens": 200000}, {"id": "claude-unknown", "max_input_tokens": 0},
+    ], "has_more": False})]
+    http.queue["https://openrouter.ai/api/v1/models"] = [_Resp({"data": [
+        {"id": "a/b", "context_length": 128000, "architecture": {"output_modalities": ["text"]}},
+    ]})]
+    http.queue["http://my-host:1234/api/v0/models"] = [_Resp({"data": [
+        {"id": "qwen", "type": "llm", "max_context_length": 131072, "loaded_context_length": 8192},
+        {"id": "llama", "type": "llm", "max_context_length": 32768},
+    ]})]
+
+    windows = {
+        "gemini": {m["id"]: m.get("context_window")
+                   for m in list_models("gemini", {"GOOGLE_API_KEY": "k"}, include_all=True)},
+        "anthropic": {m["id"]: m.get("context_window")
+                      for m in list_models("anthropic", {"ANTHROPIC_API_KEY": "k"}, include_all=True)},
+        "openrouter": {m["id"]: m.get("context_window")
+                       for m in list_models("openrouter", {"OPENROUTER_API_KEY": "k"}, include_all=True)},
+        "local": {m["id"]: m.get("context_window")
+                  for m in list_models("local", {"LOCAL_BASE_URL": "http://my-host:1234/v1"}, include_all=True)},
+    }
+
+    assert windows["gemini"] == {"gemini-3.6-flash": 1048576}
+    assert windows["anthropic"] == {"claude-sonnet-4-5": 200000, "claude-unknown": None}      # 0 means unknown
+    assert windows["openrouter"] == {"a/b": 128000}
+    assert windows["local"] == {"qwen": 8192, "llama": 32768}       # what is loaded now beats the theoretical max
+
+
+def test_openai_has_no_context_window_because_the_api_does_not_expose_one(http):
+    """OpenAI's /models has no such field; guessing from a hardcoded table would go stale."""
+    http.queue["https://api.openai.com/v1/models"] = [_Resp({"data": [{"id": "gpt-4o", "created": 1}]})]
+
+    (model,) = list_models("openai", {"OPENAI_API_KEY": "k"}, include_all=True)
+
+    assert model["id"] == "gpt-4o" and "context_window" not in model

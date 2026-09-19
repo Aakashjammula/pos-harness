@@ -417,7 +417,10 @@ def create_app(
         if new_session:
             store.create_session(session_id, user_id, mode="text", tts_engine=None, llm_model=used_model)
         store.add_turn(session_id, "user", text)
-        messages = history[-config.HISTORY_TURNS * 2 :] + [{"role": "user", "content": text}]
+        # Text chat reads back a whole conversation and wants long answers: its own profile and history
+        # length, not the short spoken ones voice uses. (Fakes and other LlmBase classes have no profile.)
+        text_llm = llm.with_style("text") if hasattr(llm, "with_style") else llm
+        messages = history[-config.TEXT_HISTORY_MESSAGES :] + [{"role": "user", "content": text}]
 
         async def events():
             cancel = threading.Event()
@@ -432,7 +435,7 @@ def create_app(
 
             def work() -> None:
                 try:
-                    push(("stats", run_turn(llm, messages, cancel, on_piece)))
+                    push(("stats", run_turn(text_llm, messages, cancel, on_piece)))
                 except Exception as e:  # noqa: BLE001 -- reported to the client as an error event
                     print(f"  chat stream error: {e}")
                     push(("error", {"message": str(e)[:300] or type(e).__name__}))

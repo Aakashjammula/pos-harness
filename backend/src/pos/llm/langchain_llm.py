@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import threading
 import time
 from collections.abc import Iterable, Iterator, Mapping
@@ -10,7 +11,18 @@ from langchain_core.tools import BaseTool
 from ..interfaces.llm import LlmBase
 from ..tools import build_tools
 from .content import content_text
-from .providers import build_model, context_window_for, estimate_cost, resolve_provider
+from .providers import build_model, call_kwargs, context_window_for, estimate_cost, resolve_provider
+
+# Text chat is read, not spoken, so it does not want the voice limits (120 tokens, "one or two short
+# sentences, no lists"), which cut answers off halfway.
+TEXT_SYSTEM_PROMPT = (
+    "You are a helpful assistant. Answer clearly and completely, as long as the question needs. "
+    "Use plain text; a short list or a fenced code block is fine when it helps, but no markdown headings. "
+    "Use a tool when you need current information (today's date/time, or facts you're not sure of) "
+    "instead of guessing."
+)
+TEXT_MAX_TOKENS = 4096
+TEXT_TIMEOUT = 120
 
 
 class LangChainLlm(LlmBase):
@@ -54,9 +66,26 @@ class LangChainLlm(LlmBase):
             self.provider, max_tokens=max_tokens, temperature=0.7, timeout=timeout, stream_usage=True
         )
         self._runnable = self._model.bind_tools(self.tools) if self.tools else self._model
+        self._call_kwargs = call_kwargs(self.provider)
+        self._temperature = 0.7
 
         if warmup:
             self._warmup(warmup_attempts, warmup_backoff_base)
+
+    def with_style(self, style: str) -> LangChainLlm:
+        """A copy tuned for `style`: "text" lifts the voice limits (see TEXT_*); anything else is
+        this same instance. Cheap -- building a chat model makes no network call -- and the original
+        is untouched, so a cached, shared voice instance is never modified."""
+        if style != "text":
+            return self
+        clone = copy.copy(self)
+        clone.system_prompt = TEXT_SYSTEM_PROMPT
+        clone._model = build_model(
+            self.provider, max_tokens=TEXT_MAX_TOKENS, temperature=self._temperature,
+            timeout=TEXT_TIMEOUT, stream_usage=True,
+        )
+        clone._runnable = clone._model.bind_tools(self.tools) if self.tools else clone._model
+        return clone
 
     def _warmup(self, attempts: int, backoff_base: float) -> None:
         """A few quick retries (short bounded backoff, not a long block —
@@ -71,7 +100,7 @@ class LangChainLlm(LlmBase):
         for attempt in range(attempts):
             t0 = time.perf_counter()
             try:
-                self._model.invoke([HumanMessage("hi")], max_tokens=1)
+                self._model.invoke([HumanMessage("hi")], max_tokens=1, **self._call_kwargs)
                 retried = f" (attempt {attempt + 1}/{attempts})" if attempt else ""
                 print(f"  llm warm-up: {time.perf_counter() - t0:.2f}s{retried}")
                 if self._context_window is None:
@@ -99,7 +128,7 @@ class LangChainLlm(LlmBase):
                     "chat title. Sentence case, no punctuation, no quotes, no emoji."
                 ),
                 HumanMessage(f"User: {first_user_message}\nAssistant: {first_bot_message}"),
-            ], max_tokens=16)
+            ], max_tokens=16, **self._call_kwargs)
             title = content_text(response.content).strip().strip('"').strip("'")
             return title or None
         except Exception:
@@ -121,7 +150,7 @@ class LangChainLlm(LlmBase):
                 return
 
             accumulated = None
-            for chunk in self._runnable.stream(full):
+            for chunk in self._runnable.stream(full, **self._call_kwargs):
                 if cancel.is_set():
                     return
                 accumulated = chunk if accumulated is None else accumulated + chunk

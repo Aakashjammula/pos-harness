@@ -154,6 +154,8 @@ def test_block_list_content_streams_as_text():
     llm.system_prompt, llm.max_tool_rounds, llm.tools, llm._tools_by_name = "s", 3, [], {}
     llm._runnable, llm._context_window = Runnable(), None
     llm.provider = type("P", (), {"name": "gemini", "model": "m"})()
+    llm._call_kwargs = {}
+    llm.with_style = lambda style: llm             # this test is about content blocks, not the text profile
     client = _client(llm)
 
     with client.stream("POST", "/chat/stream", json={"message": "hi"}) as resp:
@@ -212,3 +214,43 @@ def test_continuing_a_titled_session_does_not_regenerate_its_title():
     assert "title" not in names and llm.title_calls == []
     assert store.get_session("s1", user_id)["session"]["title"] == "Original title"
     assert llm.calls[0][0] == {"role": "user", "content": "hi"}          # the stored history was sent
+
+
+def test_text_chat_uses_the_text_profile_and_remembers_far_more_than_voice_does():
+    class StyledLlm(FakeLlm):
+        styles = []
+
+        def with_style(self, style):
+            StyledLlm.styles.append(style)
+            return self
+
+    llm = StyledLlm(reply="ok")
+    client, store, user_id = _client_with_store(llm)
+    store.create_session("long", user_id, mode="text", tts_engine=None, llm_model="m")
+    for i in range(20):                                    # 20 exchanges = 40 messages already stored
+        store.add_turn("long", "user", f"question {i}")
+        store.add_turn("long", "assistant", f"answer {i}")
+
+    with client.stream("POST", "/chat/stream", json={"message": "and now?", "session_id": "long"}) as resp:
+        list(resp.iter_lines())
+
+    assert StyledLlm.styles == ["text"]
+    sent = llm.calls[-1]
+    assert len(sent) == 41                                 # all 40 stored messages + the new one (voice keeps only 6)
+    assert sent[0] == {"role": "user", "content": "question 0"} and sent[-1]["content"] == "and now?"
+
+
+def test_text_chat_history_is_capped_so_a_very_long_chat_still_fits():
+    from pos import config as cfg
+
+    llm = FakeLlm(reply="ok")
+    client, store, user_id = _client_with_store(llm)
+    store.create_session("huge", user_id, mode="text", tts_engine=None, llm_model="m")
+    for i in range(cfg.TEXT_HISTORY_MESSAGES + 30):
+        store.add_turn("huge", "user" if i % 2 == 0 else "assistant", f"m{i}")
+
+    with client.stream("POST", "/chat/stream", json={"message": "next", "session_id": "huge"}) as resp:
+        list(resp.iter_lines())
+
+    assert len(llm.calls[-1]) == cfg.TEXT_HISTORY_MESSAGES + 1
+    assert llm.calls[-1][-1]["content"] == "next"
