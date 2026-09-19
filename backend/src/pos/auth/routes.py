@@ -432,7 +432,7 @@ def build_auth_router(users: UserStore, auth: Auth | None = None) -> APIRouter:
         env = {**os.environ, **(stored or {})}   # the user's own key wins over the server's
         loop = asyncio.get_running_loop()
         try:
-            models = await loop.run_in_executor(None, list_models, provider, env)
+            models = await loop.run_in_executor(None, lambda: list_models(provider, env, include_all=True))
         except ModelListError as e:
             raise HTTPException(status_code=502, detail=str(e)) from None
         return {"models": models}

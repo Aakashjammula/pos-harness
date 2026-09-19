@@ -45,3 +45,9 @@ class GeminiProvider(LlmProviderBase):
         if env_val is not None:
             return int(env_val)
         return None
+
+    def call_kwargs(self, provider: ProviderConfig) -> dict:
+        # The Gemini client retries EVERY API error, a 404 for a retired model included, up to 6 times
+        # with exponential back-off capped at 60s: about a minute of silence before the error shows.
+        # It reads this from the call (the constructor's max_retries is not used), and 1 means one attempt.
+        return {"max_retries": 1}

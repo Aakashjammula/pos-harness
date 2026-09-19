@@ -13,13 +13,22 @@ from .gemini import GeminiProvider
 from .local import LocalProvider
 from .openai import OpenAIProvider
 from .openrouter import OpenRouterProvider
-from .registry import build_model, context_window_for, estimate_cost, is_configured, price_for, resolve_provider
+from .registry import (
+    build_model,
+    call_kwargs,
+    context_window_for,
+    estimate_cost,
+    is_configured,
+    price_for,
+    resolve_provider,
+)
 
 __all__ = [
     "ProviderConfig",
     "resolve_provider",
     "is_configured",
     "build_model",
+    "call_kwargs",
     "price_for",
     "context_window_for",
     "estimate_cost",

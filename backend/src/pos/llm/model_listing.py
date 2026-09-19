@@ -41,7 +41,18 @@ class ModelListError(Exception):
     contains a credential."""
 
 
-Model = dict[str, str]   # {"id": ..., "label": ...}
+# {"id", "label", "chat"} plus "context_window" (input tokens) when the provider says. "chat": answers in
+# text, so worth offering by default. Where the API has no context field (OpenAI's does not) the key is left
+# out rather than guessed from a table that would go stale.
+Model = dict
+
+
+def _with_window(model: Model, *candidates) -> Model:
+    """Add context_window from the first candidate that is a positive integer."""
+    for value in candidates:
+        if isinstance(value, int) and value > 0:
+            return {**model, "context_window": value}
+    return model
 
 
 def _get_json(
@@ -98,6 +109,24 @@ def _is_chat_model(model_id: str) -> bool:
     return not _NOT_CHAT.search(model_id)
 
 
+# Gemini's models.list has NO field for what a model outputs and no filter (checked against the API
+# reference), and it returns image, music, robotics, agent and speech models beside the chat ones -- all
+# with generateContent. So this is a heuristic, and the list is curated by family: Gemini and Gemma,
+# minus variants whose name marks a special purpose. Whatever it hides is still one click away
+# ("show all models"), so a wrong guess is an inconvenience, never a block.
+_GEMINI_FAMILY = re.compile(r"^(gemini|gemma)-")
+_GEMINI_SPECIAL_PURPOSE = {
+    "image", "imagen", "tts", "live", "audio", "native", "embed", "embedding", "veo",
+    "robotics", "computer", "customtools", "omni",
+}
+
+
+def _is_gemini_chat(model_id: str) -> bool:
+    if not _GEMINI_FAMILY.match(model_id):
+        return False
+    return not (set(re.split(r"[-._]", model_id.lower())) & _GEMINI_SPECIAL_PURPOSE)
+
+
 def _list_local(env: Mapping[str, str]) -> list[Model]:
     base = _need(env, "LOCAL_BASE_URL", "server URL").rstrip("/")
     try:
@@ -112,18 +141,26 @@ def _list_local(env: Mapping[str, str]) -> list[Model]:
     except ModelListError:
         typed = []                                          # not LM Studio: fall through to the name filter
     if any("type" in m for m in typed):
-        return [{"id": m["id"], "label": m["id"]} for m in typed if m.get("id") and m.get("type") in ("llm", "vlm")]
+        return [   # what is loaded right now beats the model's theoretical maximum
+            _with_window(
+                {"id": m["id"], "label": m["id"], "chat": m.get("type") in ("llm", "vlm")},
+                m.get("loaded_context_length"), m.get("max_context_length"),
+            )
+            for m in typed
+            if m.get("id")
+        ]
     data = _get_json(f"{base}/models", headers=headers)
-    return [{"id": m["id"], "label": m["id"]} for m in data.get("data", []) if m.get("id") and _is_chat_model(m["id"])]
+    return [
+        {"id": m["id"], "label": m["id"], "chat": _is_chat_model(m["id"])} for m in data.get("data", []) if m.get("id")
+    ]
 
 
 def _list_openai(env: Mapping[str, str]) -> list[Model]:
     key = _need(env, "OPENAI_API_KEY", "API key")
     data = _get_json("https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {key}"})
     rows = [m for m in data.get("data", []) if m.get("id")]
-    rows = [m for m in rows if _is_chat_model(m["id"])]
     rows.sort(key=lambda m: m.get("created", 0), reverse=True)   # newest first
-    return [{"id": m["id"], "label": m["id"]} for m in rows]
+    return [{"id": m["id"], "label": m["id"], "chat": _is_chat_model(m["id"])} for m in rows]
 
 
 # --- Anthropic ---------------------------------------------------------------
@@ -140,7 +177,10 @@ def _list_anthropic(env: Mapping[str, str]) -> list[Model]:
             params["after_id"] = after
         data = _get_json("https://api.anthropic.com/v1/models", headers=headers, params=params)
         models += [
-            {"id": m["id"], "label": m.get("display_name") or m["id"]} for m in data.get("data", []) if m.get("id")
+            _with_window({"id": m["id"], "label": m.get("display_name") or m["id"], "chat": True},
+                         m.get("max_input_tokens"))
+            for m in data.get("data", [])
+            if m.get("id")
         ]
         if not data.get("has_more") or not data.get("last_id"):
             break
@@ -171,9 +211,11 @@ def _list_gemini(env: Mapping[str, str]) -> list[Model]:
             if "generateContent" not in m.get("supportedGenerationMethods", []):
                 continue   # embeddings, AQA, etc.
             model_id = m.get("name", "").removeprefix("models/")
-            # Speech, image and live-audio models support generateContent too.
-            if model_id and _is_chat_model(model_id):
-                models.append({"id": model_id, "label": m.get("displayName") or model_id})
+            if model_id:   # speech, image, music and agent models support generateContent too: see _is_gemini_chat
+                models.append(_with_window(
+                    {"id": model_id, "label": m.get("displayName") or model_id, "chat": _is_gemini_chat(model_id)},
+                    m.get("inputTokenLimit"),
+                ))
         token = data.get("nextPageToken")
         if not token:
             break
@@ -190,15 +232,14 @@ def _list_openrouter(env: Mapping[str, str]) -> list[Model]:
     for m in data.get("data", []):
         if not m.get("id"):
             continue
+        # OpenRouter describes what a model outputs and which parameters it supports, so use that:
+        # chat = answers in text only (image input is fine) and, because this app binds tools,
+        # can call them (only judged when the field is present).
         outputs = (m.get("architecture") or {}).get("output_modalities") or ["text"]
-        if set(outputs) != {"text"}:    # answers in text only: drops image/audio/embedding generators
-            continue
-        # This app binds tools to the model, so a model that can't call them
-        # would fail on the first turn. Only filter when the field is present.
         params = m.get("supported_parameters")
-        if params is not None and "tools" not in params:
-            continue
-        models.append({"id": m["id"], "label": m.get("name") or m["id"]})
+        chat = set(outputs) == {"text"} and (params is None or "tools" in params)
+        models.append(_with_window({"id": m["id"], "label": m.get("name") or m["id"], "chat": chat},
+                                   m.get("context_length")))
     return models
 
 
@@ -226,7 +267,9 @@ def _list_bedrock(env: Mapping[str, str]) -> list[Model]:
                 page = client.list_inference_profiles(maxResults=1000, **({"nextToken": token} if token else {}))
                 for p in page.get("inferenceProfileSummaries", []):
                     profile_id = p["inferenceProfileId"]
-                    models.append({"id": profile_id, "label": p.get("inferenceProfileName") or profile_id})
+                    models.append(
+                        {"id": profile_id, "label": p.get("inferenceProfileName") or profile_id, "chat": True}
+                    )
                 token = page.get("nextToken")
                 if not token:
                     break
@@ -235,7 +278,7 @@ def _list_bedrock(env: Mapping[str, str]) -> list[Model]:
         seen = {m["id"] for m in models}
         for m in client.list_foundation_models(byOutputModality="TEXT").get("modelSummaries", []):
             if m["modelId"] not in seen and "ON_DEMAND" in m.get("inferenceTypesSupported", []):
-                models.append({"id": m["modelId"], "label": m.get("modelName") or m["modelId"]})
+                models.append({"id": m["modelId"], "label": m.get("modelName") or m["modelId"], "chat": True})
     except ClientError as e:
         code = e.response.get("Error", {}).get("Code", "error")
         raise ModelListError(f"AWS rejected the request ({code})") from None
@@ -266,10 +309,14 @@ def supported_providers() -> list[str]:
     return sorted(_LISTERS)
 
 
-def list_models(provider: str, env: Mapping[str, str]) -> list[Model]:
-    """The models `env`'s credentials can use with `provider`. Blocking (uses
-    `requests`/boto3) -- call it off the event loop."""
+def list_models(provider: str, env: Mapping[str, str], include_all: bool = False) -> list[Model]:
+    """The models `env`'s credentials can use with `provider`. By default only those that answer in
+    text ({"id", "label"}); with include_all every model comes back with a "chat" flag, so the UI can
+    offer the rest on request. Blocking (uses `requests`/boto3) -- call it off the event loop."""
     lister = _LISTERS.get(provider)
     if lister is None:
         raise ModelListError(f"{provider!r} has no models to list")
-    return lister(env)
+    models = lister(env)
+    if include_all:
+        return models
+    return [{"id": m["id"], "label": m["label"]} for m in models if m["chat"]]

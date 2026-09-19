@@ -49,6 +49,10 @@ SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 VERBOSE_TIMING = True
 REALTIME_LOG = True               # per-stage trigger log: VAD / STT / LLM / TTS
 
+# Text chat keeps far more history than voice: it is a conversation you read back, not one you speak
+# (voice keeps HISTORY_TURNS below). Capped so a very long chat still fits a model's context window.
+TEXT_HISTORY_MESSAGES = 60
+
 HISTORY_TURNS = 3   # how many prior user/assistant turn-pairs to include as LLM
                      # context. Previously owned by the LLM class itself;
                      # moved to Agent since the LLM engine is now stateless and

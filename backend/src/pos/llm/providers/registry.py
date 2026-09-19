@@ -62,3 +62,7 @@ def estimate_cost(provider: ProviderConfig, input_tokens: int, output_tokens: in
         return None
     input_price, output_price = prices
     return (input_tokens / 1000) * input_price + (output_tokens / 1000) * output_price
+
+
+def call_kwargs(provider: ProviderConfig) -> dict:
+    return _REGISTRY[provider.name].call_kwargs(provider)

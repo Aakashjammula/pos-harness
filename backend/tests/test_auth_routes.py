@@ -273,7 +273,7 @@ def test_login_rejects_password_for_a_magic_link_only_account():
 def test_models_endpoint_lists_with_the_saved_credential_and_never_returns_it(monkeypatch):
     seen = {}
 
-    def fake_list(provider, env):
+    def fake_list(provider, env, **kw):
         seen.update(provider=provider, env=dict(env))
         return [{"id": "gemini-a", "label": "Gemini A"}]
 
@@ -304,7 +304,7 @@ def test_models_endpoint_requires_auth_a_saved_credential_and_a_listable_provide
 def test_models_endpoint_turns_provider_failures_into_502(monkeypatch):
     from pos.llm.model_listing import ModelListError
 
-    def fake_list(provider, env):
+    def fake_list(provider, env, **kw):
         raise ModelListError("the provider rejected this key (unauthorized)")
 
     monkeypatch.setattr("pos.auth.routes.list_models", fake_list)
@@ -428,7 +428,7 @@ def test_models_endpoint_uses_a_key_set_on_the_server_when_the_user_saved_none(m
     monkeypatch.setenv("OPENAI_API_KEY", "sk-server")
     seen = {}
 
-    def fake_list(provider, env):
+    def fake_list(provider, env, **kw):
         seen["key"] = env.get("OPENAI_API_KEY")
         return [{"id": "m", "label": "m"}]
 
@@ -447,7 +447,7 @@ def test_a_users_own_key_wins_over_the_servers_for_listing(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-server")
     seen = {}
     monkeypatch.setattr(
-        "pos.auth.routes.list_models", lambda provider, env: seen.update(key=env.get("OPENAI_API_KEY")) or []
+        "pos.auth.routes.list_models", lambda provider, env, **kw: seen.update(key=env.get("OPENAI_API_KEY")) or []
     )
     client = _client()
     _signup(client, "a@test.com")
@@ -516,3 +516,22 @@ def test_a_short_secret_gets_no_hint_at_all():
     client.put("/credentials/openai", json={"openai_api_key": "short-key-1"})   # 11 characters
 
     assert client.get("/credentials").json()["hints"] == {}
+
+
+def test_the_models_endpoint_returns_every_model_with_a_chat_flag(monkeypatch):
+    seen = {}
+
+    def fake_list(provider, env, include_all=False):
+        seen["include_all"] = include_all
+        return [{"id": "gemini-2.5-flash", "label": "Flash", "chat": True},
+                {"id": "lyria-3", "label": "Lyria", "chat": False}]
+
+    monkeypatch.setattr("pos.auth.routes.list_models", fake_list)
+    client = _client()
+    _signup(client, "a@test.com")
+    client.put("/credentials/gemini", json={"gemini_api_key": "g-secret-key-123456"})
+
+    body = client.get("/credentials/gemini/models").json()
+
+    assert seen["include_all"] is True                     # the UI decides what to show, so it gets it all
+    assert [(m["id"], m["chat"]) for m in body["models"]] == [("gemini-2.5-flash", True), ("lyria-3", False)]

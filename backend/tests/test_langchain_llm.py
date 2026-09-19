@@ -436,3 +436,49 @@ def test_generate_title_handles_block_list_content(monkeypatch):
     llm._model.invoke.return_value = AIMessageChunk(content=[{"type": "text", "text": '"Trip planning"'}])
 
     assert llm.generate_title("a", "b") == "Trip planning"
+
+
+# --- provider call options, and the text-chat profile ----------------------------------------------------
+
+def test_gemini_calls_disable_the_sdk_retry_loop_but_other_providers_get_no_extra_options(monkeypatch):
+    """The Gemini client retries EVERY API error (a 404 included) up to 6 times with back-off up to
+    60s -- about a minute of silence before an error. Per-call max_retries=1 makes it fail at once.
+    Other providers would reject an unknown parameter, so they get nothing extra."""
+    seen = {}
+
+    class Runnable:
+        def stream(self, messages, **kwargs):
+            seen.update(kwargs)
+            return iter([AIMessageChunk(content="ok")])
+
+    for provider_name, expected in (("gemini", {"max_retries": 1}), ("openai", {})):
+        seen.clear()
+        monkeypatch.setenv("GOOGLE_API_KEY" if provider_name == "gemini" else "OPENAI_API_KEY", "k")
+        llm = _make_llm(monkeypatch, Runnable(), tools=[])
+        llm.provider.name = provider_name
+        llm._call_kwargs = __import__("pos.llm.providers", fromlist=["call_kwargs"]).call_kwargs(llm.provider)
+
+        list(llm.stream([{"role": "user", "content": "hi"}], threading.Event()))
+
+        assert seen == expected
+
+
+def test_text_style_lifts_the_voice_limits_without_touching_the_original(monkeypatch):
+    built = []
+
+    def fake_build_model(provider, **kw):
+        built.append(kw)
+        model = MagicMock()
+        model.bind_tools.return_value = _FakeRunnable([])
+        return model
+
+    monkeypatch.setattr("pos.llm.langchain_llm.build_model", fake_build_model)
+    voice = LangChainLlm(tools=[], warmup=False)
+
+    text = voice.with_style("text")
+
+    assert built[0]["max_tokens"] == 120 and "one or two short sentences" in voice.system_prompt
+    assert built[-1]["max_tokens"] == 4096 and built[-1]["timeout"] == 120           # room for a real answer
+    assert "short sentences" not in text.system_prompt and "spoken aloud" not in text.system_prompt
+    assert voice.system_prompt != text.system_prompt and voice is not text
+    assert voice.with_style("voice") is voice                                        # voice is the default: unchanged
