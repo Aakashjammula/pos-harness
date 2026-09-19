@@ -8,6 +8,19 @@ import numpy as np
 from ..interfaces.tts import TtsBase
 
 
+def _ensure_nltk_tagger() -> None:
+    """ttstokenizer only fetches the legacy `averaged_perceptron_tagger`,
+    but NLTK >= 3.9 looks for `averaged_perceptron_tagger_eng`; without it
+    every synthesis call raises LookupError (surfacing as an empty
+    "warm-up failed"). Fetch it once if missing -- a no-op afterwards."""
+    import nltk
+
+    try:
+        nltk.data.find("taggers/averaged_perceptron_tagger_eng")
+    except LookupError:
+        nltk.download("averaged_perceptron_tagger_eng", quiet=True)
+
+
 class KokoroTts(TtsBase):
     """
     Two things dominate Kokoro's realtime behaviour:
@@ -37,6 +50,8 @@ class KokoroTts(TtsBase):
         import onnxruntime
         from huggingface_hub import hf_hub_download
         from ttstokenizer import IPATokenizer
+
+        _ensure_nltk_tagger()
 
         self.sample_rate = sample_rate
         self.speed = speed
