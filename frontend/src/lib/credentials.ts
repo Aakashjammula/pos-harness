@@ -51,7 +51,8 @@ export async function fetchProviderModels(provider: string): Promise<ProviderMod
   if (!res.ok) {
     let detail = "";
     try {
-      detail = (await res.json()).detail;
+      const body = (await res.json()).detail;
+      if (typeof body === "string") detail = body; // a validation error carries a list, not text
     } catch {
       // not JSON -- fall through to the generic message
     }

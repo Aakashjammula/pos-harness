@@ -1,5 +1,10 @@
 import { AuthForm } from "@/components/AuthForm";
+import { GuestGuard } from "@/components/GuestGuard";
 
 export default function SignupPage() {
-  return <AuthForm mode="signup" />;
+  return (
+    <GuestGuard>
+      <AuthForm mode="signup" />
+    </GuestGuard>
+  );
 }
