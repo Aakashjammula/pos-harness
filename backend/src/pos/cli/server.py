@@ -98,9 +98,9 @@ from pos.auth.store import UserStore
 from pos.db import create_pool, init_schema
 from pos.interfaces import LlmBase, SttBase, TtsBase, VadBase
 from pos.llm.providers import is_configured, resolve_provider
-from pos.tools import tool_status
 from pos.null_engines import NullTts, NullVad
 from pos.storage import SessionStore
+from pos.tools import all_tools, resolve_enabled, tool_status
 from pos.utils import pcm16_to_float32
 from pos.vad import SileroVad
 
@@ -158,7 +158,7 @@ def create_app(
     stt: SttBase,
     tts_engines: dict[str, type[TtsBase]] | None = None,
     llm_factory: Callable[[str | None], LlmBase] | None = None,
-    llm_env_factory: Callable[[str | None, Mapping[str, str]], LlmBase] | None = None,
+    llm_env_factory: Callable[[str | None, Mapping[str, str], list[str]], LlmBase] | None = None,
     vad_factory: Callable[..., VadBase] = _default_vad_factory,
     default_tts_engine: str = "kokoro",
     default_llm_model: str | None = None,   # no model is assumed: each provider uses its own default
@@ -184,11 +184,15 @@ def create_app(
         if llm_factory is None:
             llm_factory = lambda model: LangChainLlm(model=model)  # noqa: E731
         if llm_env_factory is None:
-            # Used only for a connection with stored per-user credentials --
-            # deliberately bypasses the shared _llm_cache below, since two
-            # sessions sharing a model name must never share one session's
-            # personal key.
-            llm_env_factory = lambda model, env: LangChainLlm(model=model, env=env)  # noqa: E731
+            # Used only for a connection with stored per-user credentials or
+            # tool choices -- deliberately bypasses the shared _llm_cache below,
+            # since two sessions sharing a model name must never share one
+            # session's personal key. No warm-up: for a cloud provider it is a
+            # paid call that once delayed a connect by 89s, and it only ever
+            # helped a local model that was still loading.
+            llm_env_factory = lambda model, env, enabled: LangChainLlm(  # noqa: E731
+                model=model, env=env, enabled_tools=enabled, warmup=False
+            )
 
     if session_store is None or user_store is None:
         pool = create_pool()
@@ -269,6 +273,28 @@ def create_app(
         embedding) bring their own backend, so they are always configured."""
         return True if not uses_real_llm else is_configured(env)
 
+    class _NoLlmConfigured(Exception):
+        pass
+
+    async def _resolve_user_llm(user_id: str, provider: str, model: str | None) -> LlmBase:
+        """The LLM for one user's connection, with their credentials and tool
+        choices applied. Anything user-specific gets a private instance;
+        otherwise the shared, warmed one for that model is reused."""
+        loop = asyncio.get_running_loop()
+        stored = users.get_credential(user_id, provider)
+        overrides = dict(stored or {})
+        for spec in all_tools():   # each key-requiring tool's own saved key
+            if spec.credential_provider:
+                overrides.update(users.get_credential(user_id, spec.credential_provider) or {})
+        if not _llm_configured({**os.environ, **overrides}):
+            raise _NoLlmConfigured
+        tool_settings = users.get_tool_settings(user_id)
+        if overrides or tool_settings:
+            merged = {**os.environ, **overrides}
+            enabled = resolve_enabled(tool_settings, merged)
+            return await loop.run_in_executor(None, llm_env_factory, model, merged, enabled)
+        return await get_llm(model)
+
     @app.get("/options")
     async def options():
         loop = asyncio.get_running_loop()
@@ -325,10 +351,6 @@ def create_app(
         voice = params.get("voice") or None
         llm_model = params.get("llm_model") or default_llm_model   # None -> the provider's own default
         trigger_word = params.get("trigger_word") or None
-
-        stored = users.get_credential(user_id, params.get("provider", "local"))
-        tavily = users.get_credential(user_id, "tavily")
-        env_overrides = {**(stored or {}), **(tavily or {})} or None
 
         mode = params.get("mode", "text")
         if mode not in ("voice", "text"):
@@ -417,20 +439,15 @@ def create_app(
             await websocket.close(code=1013)
             return
         tts = NullTts() if mode == "text" else await get_tts(tts_engine, voice)
-        if not _llm_configured({**os.environ, **(env_overrides or {})}):
+        try:
+            llm = await _resolve_user_llm(user_id, params.get("provider", "local"), llm_model)
+        except _NoLlmConfigured:
             await websocket.send_json({
                 "event": "error",
                 "message": "no LLM configured -- add a provider (e.g. your local server URL) in Settings",
             })
             await websocket.close(code=1008)
             return
-        if env_overrides:
-            # Never the shared per-model cache -- two sessions sharing a
-            # model name must never share one session's personal key.
-            merged_env = {**os.environ, **env_overrides}
-            llm = await loop.run_in_executor(None, llm_env_factory, llm_model, merged_env)
-        else:
-            llm = await get_llm(llm_model)
         # What actually answers: the provider's resolved model when the client
         # named none (fakes without a .provider fall back to what was asked).
         used_model = getattr(getattr(llm, "provider", None), "model", None) or llm_model or ""
