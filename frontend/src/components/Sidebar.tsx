@@ -12,9 +12,10 @@ interface SidebarProps {
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   userEmail: string;
+  onOpenSettings: () => void;
 }
 
-export function Sidebar({ sessions, loadError, onSelect, onDelete, userEmail }: SidebarProps) {
+export function Sidebar({ sessions, loadError, onSelect, onDelete, userEmail, onOpenSettings }: SidebarProps) {
   const router = useRouter();
   return (
     <aside className="flex w-[260px] shrink-0 flex-col gap-0.5 overflow-y-auto bg-sidebar-bg p-2 max-[900px]:w-auto max-[900px]:max-h-[220px] max-[900px]:border-b max-[900px]:border-border">
@@ -59,6 +60,13 @@ export function Sidebar({ sessions, loadError, onSelect, onDelete, userEmail }: 
       </div>
       <div className="mt-auto border-t border-border px-2 pt-2">
         <div className="truncate px-2 py-1 text-[12px] text-text-faint">{userEmail}</div>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="w-full rounded-lg px-2 py-1.5 text-left text-[13px] text-text-muted hover:bg-surface-sunken hover:text-text"
+        >
+          Settings
+        </button>
         <button
           type="button"
           onClick={async () => {

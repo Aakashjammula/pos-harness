@@ -19,6 +19,7 @@ interface SettingsPanelProps {
   providerModels: { listable: boolean; models: ProviderModel[]; loading: boolean; error: string | null };
   llmModel: string; // the model a session would use right now (derived, see lib/llm.ts)
   tools: Tool[];
+  embedded?: boolean; // rendered inside the Settings shell: no header or full-height frame of its own
   onCredentialsChanged: () => void;
 }
 
@@ -90,25 +91,28 @@ export function SettingsPanel({
   providerModels,
   llmModel,
   tools,
+  embedded = false,
   onCredentialsChanged,
 }: SettingsPanelProps) {
   const textMode = mode === "text";
   const voices = options?.tts[settings.ttsEngine] || [];
 
   return (
-    <div className="flex h-screen flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-3.5 border-b border-border px-6 py-3.5">
-        <button
-          type="button"
-          onClick={onBack}
-          className="rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-text-muted hover:bg-surface-sunken hover:text-text"
-        >
-          ← Back
-        </button>
-        <div className="text-[14.5px] font-semibold">Settings</div>
-      </div>
+    <div className={embedded ? "" : "flex h-screen flex-1 flex-col"}>
+      {!embedded && (
+        <div className="flex shrink-0 items-center gap-3.5 border-b border-border px-6 py-3.5">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-text-muted hover:bg-surface-sunken hover:text-text"
+          >
+            ← Back
+          </button>
+          <div className="text-[14.5px] font-semibold">Settings</div>
+        </div>
+      )}
 
-      <div className="flex-1 overflow-y-auto px-6 pt-2 pb-10">
+      <div className={embedded ? "pb-6" : "flex-1 overflow-y-auto px-6 pt-2 pb-10"}>
         <div className="grid max-w-[820px] gap-[18px] py-1 pb-5 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
           <div className="grid content-start gap-2.5">
             <h3 className="m-0 text-[11px] font-semibold tracking-wide text-text-faint">Model</h3>

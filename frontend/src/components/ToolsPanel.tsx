@@ -10,6 +10,7 @@ interface ToolsPanelProps {
   error: string | null;
   onChanged: () => void; // a key or switch changed: re-fetch tools and saved-credential state
   onBack: () => void;
+  embedded?: boolean; // rendered inside the Settings shell: no header or full-height frame of its own
 }
 
 const inputClass =
@@ -129,21 +130,23 @@ function ToolCard({ tool, onChanged }: { tool: Tool; onChanged: () => void }) {
   );
 }
 
-export function ToolsPanel({ tools, loading, error, onChanged, onBack }: ToolsPanelProps) {
+export function ToolsPanel({ tools, loading, error, onChanged, onBack, embedded = false }: ToolsPanelProps) {
   return (
-    <div className="flex h-screen flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-3.5 border-b border-border px-6 py-3.5">
-        <button
-          type="button"
-          onClick={onBack}
-          className="rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-text-muted hover:bg-surface-sunken hover:text-text"
-        >
-          ← Back
-        </button>
-        <div className="text-[14.5px] font-semibold">Tools</div>
-      </div>
+    <div className={embedded ? "" : "flex h-screen flex-1 flex-col"}>
+      {!embedded && (
+        <div className="flex shrink-0 items-center gap-3.5 border-b border-border px-6 py-3.5">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-text-muted hover:bg-surface-sunken hover:text-text"
+          >
+            ← Back
+          </button>
+          <div className="text-[14.5px] font-semibold">Tools</div>
+        </div>
+      )}
 
-      <div className="flex-1 overflow-y-auto px-6 pt-4 pb-10">
+      <div className={embedded ? "pb-6" : "flex-1 overflow-y-auto px-6 pt-4 pb-10"}>
         <div className="grid max-w-[720px] gap-3.5">
           <p className="m-0 text-[12.5px] text-text-muted">
             Tools the assistant may call during a chat. Switch each on or off; a tool that needs an API key stays off
