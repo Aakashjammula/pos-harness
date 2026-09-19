@@ -351,7 +351,7 @@ export function SettingsPanel({
                 <input
                   id="localBaseUrl"
                   type="text"
-                  placeholder="http://localhost:1234/v1"
+                  placeholder="http://your-server:port/v1"
                   className={selectClass}
                   value={settings.keys.localBaseUrl}
                   onChange={(e) => onKeysChange({ localBaseUrl: e.target.value })}

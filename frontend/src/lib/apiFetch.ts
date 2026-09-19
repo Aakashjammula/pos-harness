@@ -29,7 +29,9 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   if (res.status !== 401) return res;
   if (await refreshSession()) return send();
   if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-    window.location.href = "/login"; // hard navigation on purpose: drop all client state with the dead session
+    // Hard navigation on purpose (outside React): it drops all client state along with the dead session.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.href = "/login";
   }
   return res;
 }
