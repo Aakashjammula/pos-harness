@@ -1,4 +1,4 @@
-import { API_URL } from "./config";
+import { apiFetch } from "./apiFetch";
 
 export interface Tool {
   id: string;
@@ -21,15 +21,14 @@ async function detail(res: Response, fallback: string): Promise<string> {
 }
 
 export async function fetchTools(): Promise<Tool[]> {
-  const res = await fetch(`${API_URL}/tools`, { credentials: "include" });
+  const res = await apiFetch("/tools");
   if (!res.ok) throw new Error(await detail(res, `Couldn't load tools (HTTP ${res.status}).`));
   return (await res.json()).tools;
 }
 
 export async function setToolEnabled(id: string, enabled: boolean): Promise<void> {
-  const res = await fetch(`${API_URL}/tools/${id}`, {
+  const res = await apiFetch(`/tools/${id}`, {
     method: "PUT",
-    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ enabled }),
   });
@@ -45,9 +44,8 @@ export async function saveToolCredential(provider: string, fields: Record<string
       .filter(([, v]) => v)
   );
   if (Object.keys(cleaned).length === 0) throw new Error("Enter the key before saving.");
-  const res = await fetch(`${API_URL}/credentials/${provider}`, {
+  const res = await apiFetch(`/credentials/${provider}`, {
     method: "PUT",
-    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(cleaned),
   });

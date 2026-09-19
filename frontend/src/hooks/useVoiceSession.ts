@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { WS_URL } from "@/lib/config";
+import { apiFetch } from "@/lib/apiFetch";
 import { streamChat } from "@/lib/chatStream";
 import { floatToPcm16, pcm16ToFloat, rms } from "@/lib/audio";
 import type {
@@ -265,6 +266,10 @@ export function useVoiceSession() {
         setState("listening", "Type a message below");
         return;
       }
+
+      // A WebSocket can't be retried after the fact, so make sure the access token
+      // is fresh first: any authenticated call refreshes it if it has expired.
+      await apiFetch("/auth/me").catch(() => undefined);
 
       setState("connecting", "Opening the microphone…");
       const audioConstraints: MediaTrackConstraints | boolean = config.micDeviceId

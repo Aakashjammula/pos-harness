@@ -1,4 +1,4 @@
-import { API_URL } from "./config";
+import { apiFetch } from "./apiFetch";
 import type { ApiKeyFields, KeyProvider } from "./types";
 
 const PROVIDER_PAYLOAD: Record<string, (k: ApiKeyFields) => Record<string, string>> = {
@@ -20,15 +20,14 @@ const PROVIDER_PAYLOAD: Record<string, (k: ApiKeyFields) => Record<string, strin
 };
 
 export async function fetchConfiguredProviders(): Promise<string[]> {
-  const res = await fetch(`${API_URL}/credentials`, { credentials: "include" });
+  const res = await apiFetch("/credentials");
   if (!res.ok) throw new Error("Couldn't load saved credentials.");
   return (await res.json()).configured;
 }
 
 export async function saveCredential(provider: Exclude<KeyProvider, "">, keys: ApiKeyFields): Promise<void> {
-  const res = await fetch(`${API_URL}/credentials/${provider}`, {
+  const res = await apiFetch(`/credentials/${provider}`, {
     method: "PUT",
-    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(PROVIDER_PAYLOAD[provider](keys)),
   });
@@ -37,7 +36,7 @@ export async function saveCredential(provider: Exclude<KeyProvider, "">, keys: A
 }
 
 export async function removeCredential(provider: string): Promise<void> {
-  await fetch(`${API_URL}/credentials/${provider}`, { method: "DELETE", credentials: "include" });
+  await apiFetch(`/credentials/${provider}`, { method: "DELETE" });
 }
 
 export interface ProviderModel {
@@ -48,7 +47,7 @@ export interface ProviderModel {
 /** The models this user's saved credential can use, asked of the provider by
  * the backend (the key never reaches the browser). Throws with the reason. */
 export async function fetchProviderModels(provider: string): Promise<ProviderModel[]> {
-  const res = await fetch(`${API_URL}/credentials/${provider}/models`, { credentials: "include" });
+  const res = await apiFetch(`/credentials/${provider}/models`);
   if (!res.ok) {
     let detail = "";
     try {

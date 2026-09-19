@@ -1,4 +1,5 @@
 import { API_URL } from "./config";
+import { apiFetch } from "./apiFetch";
 import type { OptionsResponse, SessionDetail, SessionSummary } from "./types";
 
 export async function fetchOptions(): Promise<OptionsResponse> {
@@ -8,17 +9,17 @@ export async function fetchOptions(): Promise<OptionsResponse> {
 }
 
 export async function fetchSessions(): Promise<SessionSummary[]> {
-  const res = await fetch(`${API_URL}/sessions`, { credentials: "include" });
+  const res = await apiFetch("/sessions");
   if (!res.ok) throw new Error(`GET /sessions failed: ${res.status}`);
   return res.json();
 }
 
 export async function fetchSession(id: string): Promise<SessionDetail> {
-  const res = await fetch(`${API_URL}/sessions/${id}`, { credentials: "include" });
+  const res = await apiFetch(`/sessions/${id}`);
   if (!res.ok) throw new Error(`GET /sessions/${id} failed: ${res.status}`);
   return res.json();
 }
 
 export async function deleteSession(id: string): Promise<void> {
-  await fetch(`${API_URL}/sessions/${id}`, { method: "DELETE", credentials: "include" });
+  await apiFetch(`/sessions/${id}`, { method: "DELETE" });
 }
