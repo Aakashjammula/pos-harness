@@ -239,17 +239,21 @@ def build_auth_router(users: UserStore) -> APIRouter:
 
     @router.get("/credentials/{provider}/models")
     async def list_provider_models(provider: str, user_id: str = Depends(require_user_id)):
-        """The models this user's saved credential can actually use, asked of
-        the provider itself. The key stays server-side; only ids and labels
-        are returned."""
+        """The models this user's credential (their saved key, else one the
+        server has set) can actually use, asked of the provider itself. The key
+        stays server-side; only ids and labels are returned."""
         if provider not in supported_providers():
             raise HTTPException(status_code=404, detail=f"{provider!r} has no models to list")
         stored = users.get_credential(user_id, provider)
-        if stored is None:
+        # A key the operator set on the server counts too: those users never saved
+        # their own, but the provider is still theirs to use.
+        server_has_key = any(os.environ.get(var) for var in PROVIDER_FIELDS.get(provider, {}).values())
+        if stored is None and not server_has_key:
             raise HTTPException(status_code=404, detail="no stored credential for that provider")
+        env = {**os.environ, **(stored or {})}   # the user's own key wins over the server's
         loop = asyncio.get_running_loop()
         try:
-            models = await loop.run_in_executor(None, list_models, provider, stored)
+            models = await loop.run_in_executor(None, list_models, provider, env)
         except ModelListError as e:
             raise HTTPException(status_code=502, detail=str(e)) from None
         return {"models": models}
