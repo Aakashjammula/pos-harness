@@ -5,6 +5,9 @@ import { API_URL } from "./config";
 // is still, for all practical purposes, signed in.
 let inFlightRefresh: Promise<boolean> | null = null;
 
+// Pages that are meant to be seen signed out: a dead session there is not a reason to redirect.
+const PUBLIC_PATHS = ["/login", "/signup", "/magic-link"];
+
 /** Exchange the refresh cookie for a new access token. Refresh tokens rotate
  * and are single-use, and the server treats a replayed one as theft and revokes
  * the whole family, so several requests that 401 together MUST share one call. */
@@ -28,7 +31,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   const res = await send();
   if (res.status !== 401) return res;
   if (await refreshSession()) return send();
-  if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+  if (typeof window !== "undefined" && !PUBLIC_PATHS.some((p) => window.location.pathname.startsWith(p))) {
     // Hard navigation on purpose (outside React): it drops all client state along with the dead session.
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.href = "/login";

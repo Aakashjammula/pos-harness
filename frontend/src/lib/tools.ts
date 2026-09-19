@@ -14,7 +14,8 @@ export interface Tool {
 
 async function detail(res: Response, fallback: string): Promise<string> {
   try {
-    return (await res.json()).detail || fallback;
+    const detail = (await res.json()).detail;
+    return typeof detail === "string" && detail ? detail : fallback; // validation errors carry a list, not text
   } catch {
     return fallback;
   }

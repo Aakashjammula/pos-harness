@@ -4,6 +4,11 @@ import { apiFetch } from "./apiFetch";
 export interface CurrentUser {
   id: string;
   email: string;
+  name?: string | null;
+  username?: string | null;
+  created_at?: string;
+  email_verified?: boolean;
+  has_password?: boolean;
 }
 
 async function post(path: string, body?: unknown): Promise<Response> {

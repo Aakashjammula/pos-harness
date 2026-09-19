@@ -63,7 +63,7 @@ export function Sidebar({ sessions, loadError, onSelect, onDelete, userEmail }: 
           type="button"
           onClick={async () => {
             await logout();
-            router.push("/login");
+            router.replace("/login"); // replace, so Back does not return to the app
           }}
           className="w-full rounded-lg px-2 py-1.5 text-left text-[13px] text-text-muted hover:bg-surface-sunken hover:text-text"
         >
