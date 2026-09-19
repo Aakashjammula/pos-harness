@@ -183,3 +183,21 @@ class UserStore:
                 (user_id, provider),
             )
             return cursor.rowcount > 0
+
+    def get_tool_settings(self, user_id: str) -> dict[str, bool]:
+        """The user's own on/off choices, {tool id: enabled}. A tool with no row
+        has never been touched -- callers fall back to the tool's default."""
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                "SELECT tool_id, enabled FROM user_tool_settings WHERE user_id = %s", (user_id,)
+            ).fetchall()
+        return {r["tool_id"]: r["enabled"] for r in rows}
+
+    def set_tool_enabled(self, user_id: str, tool_id: str, enabled: bool) -> None:
+        with self._pool.connection() as conn:
+            conn.execute(
+                "INSERT INTO user_tool_settings (user_id, tool_id, enabled) VALUES (%s, %s, %s) "
+                "ON CONFLICT (user_id, tool_id) DO UPDATE "
+                "SET enabled = EXCLUDED.enabled, updated_at = now()",
+                (user_id, tool_id, enabled),
+            )

@@ -198,3 +198,30 @@ def test_recent_magic_link_request_detects_a_throttle_window():
 
     assert store.recent_magic_link_request("a@test", within=timedelta(seconds=60)) is True
     assert store.recent_magic_link_request("nobody@test", within=timedelta(seconds=60)) is False
+
+
+def test_tool_settings_default_empty_and_upsert_per_user():
+    store = _store()
+    a = store.create_user("ta@test.com", None, name="A", username="user_ta")
+    b = store.create_user("tb@test.com", None, name="B", username="user_tb")
+
+    assert store.get_tool_settings(a["id"]) == {}
+
+    store.set_tool_enabled(a["id"], "web_search", False)
+    store.set_tool_enabled(a["id"], "web_search", True)      # upsert, not a duplicate row
+    store.set_tool_enabled(a["id"], "get_current_time", False)
+
+    assert store.get_tool_settings(a["id"]) == {"web_search": True, "get_current_time": False}
+    assert store.get_tool_settings(b["id"]) == {}            # per user
+
+
+def test_deleting_a_user_removes_their_tool_settings():
+    store = _store()
+    a = store.create_user("tc@test.com", None, name="C", username="user_tc")
+    store.set_tool_enabled(a["id"], "web_search", True)
+
+    with store._pool.connection() as conn:
+        conn.execute("DELETE FROM users WHERE id = %s", (a["id"],))
+        left = conn.execute("SELECT count(*) AS n FROM user_tool_settings").fetchone()["n"]
+
+    assert left == 0

@@ -107,6 +107,14 @@ CREATE TABLE IF NOT EXISTS api_credentials (
     UNIQUE (user_id, provider)
 );
 
+CREATE TABLE IF NOT EXISTS user_tool_settings (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tool_id TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, tool_id)
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
