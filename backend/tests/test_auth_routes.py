@@ -285,11 +285,13 @@ def test_models_endpoint_lists_with_the_saved_credential_and_never_returns_it(mo
 
     assert resp.status_code == 200
     assert resp.json() == {"models": [{"id": "gemini-a", "label": "Gemini A"}]}
-    assert seen == {"provider": "gemini", "env": {"GOOGLE_API_KEY": "g-secret"}}
+    assert seen["provider"] == "gemini"
+    assert seen["env"]["GOOGLE_API_KEY"] == "g-secret"
     assert "g-secret" not in resp.text
 
 
-def test_models_endpoint_requires_auth_a_saved_credential_and_a_listable_provider():
+def test_models_endpoint_requires_auth_a_saved_credential_and_a_listable_provider(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)     # a server-wide key would make it listable
     client = _client()
     assert client.get("/credentials/openai/models").status_code == 401
 
@@ -419,3 +421,45 @@ def test_signup_with_a_password_is_unaffected_by_mail_problems(monkeypatch):
 
     assert resp.json()["magic_link_sent"] is False and "message" not in resp.json()
     assert "pos_access" in resp.cookies
+
+
+def test_models_endpoint_uses_a_key_set_on_the_server_when_the_user_saved_none(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-server")
+    seen = {}
+
+    def fake_list(provider, env):
+        seen["key"] = env.get("OPENAI_API_KEY")
+        return [{"id": "m", "label": "m"}]
+
+    monkeypatch.setattr("pos.auth.routes.list_models", fake_list)
+    client = _client()
+    _signup(client, "a@test.com")
+
+    resp = client.get("/credentials/openai/models")
+
+    assert resp.status_code == 200 and resp.json() == {"models": [{"id": "m", "label": "m"}]}
+    assert seen["key"] == "sk-server"
+    assert "sk-server" not in resp.text
+
+
+def test_a_users_own_key_wins_over_the_servers_for_listing(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-server")
+    seen = {}
+    monkeypatch.setattr(
+        "pos.auth.routes.list_models", lambda provider, env: seen.update(key=env.get("OPENAI_API_KEY")) or []
+    )
+    client = _client()
+    _signup(client, "a@test.com")
+    client.put("/credentials/openai", json={"openai_api_key": "sk-mine"})
+
+    client.get("/credentials/openai/models")
+
+    assert seen["key"] == "sk-mine"
+
+
+def test_models_endpoint_404s_when_neither_the_user_nor_the_server_has_a_key(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    client = _client()
+    _signup(client, "a@test.com")
+
+    assert client.get("/credentials/openai/models").status_code == 404
