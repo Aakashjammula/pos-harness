@@ -20,7 +20,7 @@ from pos.auth.deps import (
     set_auth_cookies,
 )
 from pos.auth.mailer import send_magic_link_email
-from pos.auth.passwords import hash_password, verify_password
+from pos.auth.passwords import DUMMY_HASH, hash_password, verify_password
 from pos.auth.store import EmailTaken, UsernameTaken, UserStore
 from pos.auth.tokens import (
     MAGIC_LINK_TOKEN_TTL,
@@ -74,6 +74,14 @@ PROVIDER_FIELDS: dict[str, dict[str, str]] = {**_LLM_PROVIDER_FIELDS, **tool_cre
 class Credentials(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
+
+
+class PasswordChange(BaseModel):
+    """`current_password` is required when the account already has a password;
+    an account that signs in only by email link may set its first without one."""
+
+    current_password: str | None = None
+    new_password: str = Field(min_length=8)
 
 
 class SignupBody(BaseModel):
@@ -142,12 +150,13 @@ def build_auth_router(users: UserStore, auth: Auth | None = None) -> APIRouter:
         user = users.get_user_by_email(body.email)
         # Same 401 for an unknown email, a magic-link-only account (no
         # password set), and a wrong password: distinguishing any of
-        # these tells an attacker which addresses are registered.
-        if (
-            user is None
-            or user["password_hash"] is None
-            or not verify_password(body.password, user["password_hash"])
-        ):
+        # these tells an attacker which addresses are registered. The
+        # same goes for how long it takes, so exactly one password
+        # verification always runs -- against a dummy hash when there is
+        # no real one -- and the dummy can never authenticate.
+        real_hash = user["password_hash"] if user else None
+        password_ok = verify_password(body.password, real_hash or DUMMY_HASH)
+        if user is None or real_hash is None or not password_ok:
             raise HTTPException(status_code=401, detail="invalid email or password")
         _issue(request, response, user["id"])
         return {"id": user["id"], "email": user["email"]}
@@ -202,6 +211,19 @@ def build_auth_router(users: UserStore, auth: Auth | None = None) -> APIRouter:
                 return {"id": user["id"], "email": user["email"]}
         _issue(request, response, user["id"])
         return {"id": user["id"], "email": user["email"]}
+
+    @router.put("/auth/password")
+    async def change_password(body: PasswordChange, request: Request, user_id: str = Depends(require_user_id)):
+        current = users.get_password_hash(user_id)
+        if current is not None and (
+            not body.current_password or not verify_password(body.current_password, current)
+        ):
+            raise HTTPException(status_code=401, detail="current password is incorrect")
+        users.set_password_hash(user_id, hash_password(body.new_password))
+        # A password change is a security boundary (OWASP): whoever else was signed in,
+        # on a device the person may no longer control, is signed out.
+        users.revoke_all_auth_sessions(user_id, except_id=auth.session_id_from_request(request))
+        return {"ok": True}
 
     @router.post("/auth/verify-email/request")
     async def request_email_verification(user_id: str = Depends(require_user_id)):
