@@ -98,7 +98,7 @@ from pos.auth.store import UserStore
 from pos.db import create_pool, init_schema
 from pos.interfaces import LlmBase, SttBase, TtsBase, VadBase
 from pos.llm.providers import is_configured, resolve_provider
-from pos.llm.tools import tool_status
+from pos.tools import tool_status
 from pos.null_engines import NullTts, NullVad
 from pos.storage import SessionStore
 from pos.utils import pcm16_to_float32

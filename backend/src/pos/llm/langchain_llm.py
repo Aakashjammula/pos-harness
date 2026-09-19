@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
 from ..interfaces.llm import LlmBase
 from .providers import build_model, context_window_for, estimate_cost, resolve_provider
-from .tools import default_tools
+from ..tools import build_tools
 
 
 class LangChainLlm(LlmBase):
@@ -40,12 +40,13 @@ class LangChainLlm(LlmBase):
         warmup_attempts: int = 3,        # bounded backoff, not a long block — see _warmup()
         warmup_backoff_base: float = 1.0,
         env: Mapping[str, str] | None = None,   # defaults to os.environ -- see providers/registry.py
+        enabled_tools: Iterable[str] | None = None,   # tool ids; None = every default-enabled, available tool
     ):
         self.provider = resolve_provider(model_override=model, env=env)
         self._context_window = context_window_for(self.provider)
         self.system_prompt = system_prompt
         self.max_tool_rounds = max_tool_rounds
-        self.tools = default_tools(env=env) if tools is None else tools
+        self.tools = build_tools(enabled_tools, env) if tools is None else tools
         self._tools_by_name = {t.name: t for t in self.tools}
 
         self._model = build_model(

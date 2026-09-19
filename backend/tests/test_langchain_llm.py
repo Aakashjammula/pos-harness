@@ -154,11 +154,11 @@ def test_init_passes_env_override_to_resolve_provider(monkeypatch):
 def test_init_passes_env_override_to_default_tools_when_tools_not_given(monkeypatch):
     seen = {}
 
-    def fake_default_tools(env=None):
+    def fake_build_tools(enabled=None, env=None):
         seen["env"] = env
         return []
 
-    monkeypatch.setattr("pos.llm.langchain_llm.default_tools", fake_default_tools)
+    monkeypatch.setattr("pos.llm.langchain_llm.build_tools", fake_build_tools)
     monkeypatch.setattr("pos.llm.langchain_llm.build_model", lambda provider, **kw: MagicMock(
         bind_tools=lambda tools: _FakeRunnable([])
     ))
