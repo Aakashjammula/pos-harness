@@ -31,9 +31,17 @@ def resolve_provider(
         if provider.detect(env):
             return provider.resolve(model_override, env)
     raise RuntimeError(
-        "no LLM provider available -- this should be unreachable if a "
-        "fallback provider (priority high enough, detect() always True) is registered"
+        "no LLM provider configured -- set LOCAL_BASE_URL (an OpenAI-compatible server) "
+        "or a provider API key such as OPENAI_API_KEY"
     )
+
+
+def is_configured(env: Mapping[str, str] | None = None) -> bool:
+    """True if some provider detects its settings in env. Cheap: never
+    resolves a provider, so it makes no network request."""
+    if env is None:
+        env = os.environ
+    return any(p.detect(env) for p in _REGISTRY.values())
 
 
 def build_model(provider: ProviderConfig, **model_kwargs):

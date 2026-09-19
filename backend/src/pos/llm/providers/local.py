@@ -1,6 +1,7 @@
-"""LM Studio (or any OpenAI-compatible local server). Always detected
-(the fallback provider -- lowest priority in resolve_provider()'s
-checking order, i.e. the highest priority number). See
+"""LM Studio (or any OpenAI-compatible local server). Detected only when a
+base URL is given (LOCAL_BASE_URL) -- nothing is assumed, so with no URL and
+no other provider configured there is no LLM at all. Checked last in
+resolve_provider()'s order (highest priority number). See
 docs/superpowers/specs/2026-09-10-llm-provider-registry-and-src-layout-design.md."""
 
 from __future__ import annotations
@@ -11,29 +12,45 @@ from langchain_openai import ChatOpenAI
 from .base import LlmProviderBase, ProviderConfig
 from .registry import register
 
-_DEFAULT_MODEL = "lfm2.5-230m"
-_DEFAULT_BASE_URL = "http://localhost:1234/v1"
-_DEFAULT_API_KEY = "lm-studio"   # a harmless placeholder -- LM Studio ignores it
-                                 # unless its own "Require Authentication" setting
-                                 # is turned on, in which case LOCAL_API_KEY below
-                                 # must carry its real token.
+_PLACEHOLDER_API_KEY = "lm-studio"   # the OpenAI SDK insists on a non-empty key; LM Studio
+                                     # ignores it unless its own "Require Authentication"
+                                     # setting is on, in which case LOCAL_API_KEY must carry
+                                     # its real token. Not a configuration default.
+
+
+def _first_served_model(base_url: str, api_key: str) -> str | None:
+    """The first model id the server reports, or None. Used only when the
+    user gave a URL but did not name a model."""
+    try:
+        resp = requests.get(
+            f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"}, timeout=3
+        )
+        resp.raise_for_status()
+        ids = [m["id"] for m in resp.json().get("data", [])]
+        return ids[0] if ids else None
+    except Exception:
+        return None
 
 
 @register
 class LocalProvider(LlmProviderBase):
     name = "local"
-    priority = 100   # fallback -- always matches, checked last
+    priority = 100   # checked last
 
     def detect(self, env) -> bool:
-        return True
+        return bool(env.get("LOCAL_BASE_URL"))
 
     def resolve(self, model_override: str | None, env) -> ProviderConfig:
-        return ProviderConfig(
-            name=self.name,
-            model=model_override or _DEFAULT_MODEL,
-            base_url=env.get("LOCAL_BASE_URL", _DEFAULT_BASE_URL),
-            api_key=env.get("LOCAL_API_KEY", _DEFAULT_API_KEY),
-        )
+        base_url = env.get("LOCAL_BASE_URL")
+        if not base_url:
+            raise RuntimeError("LOCAL_BASE_URL is not set")
+        api_key = env.get("LOCAL_API_KEY") or _PLACEHOLDER_API_KEY
+        model = model_override or env.get("LOCAL_MODEL") or _first_served_model(base_url, api_key)
+        if not model:
+            raise RuntimeError(
+                f"no model chosen and none reported by {base_url} -- load a model there or set LOCAL_MODEL"
+            )
+        return ProviderConfig(name=self.name, model=model, base_url=base_url, api_key=api_key)
 
     def build_model(self, provider: ProviderConfig, **model_kwargs):
         return ChatOpenAI(

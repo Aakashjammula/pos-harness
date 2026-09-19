@@ -246,7 +246,7 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
   const modelChipLabel = !options
     ? "Model: —"
     : hasLlm(options, configured)
-      ? `Model: ${options.provider.name} · ${settings.llmModel}`
+      ? `Model: ${settings.provider || options.provider.name || "provider"} · ${settings.llmModel || "default"}`
       : "No LLM configured";
   const fieldsDisabled = session.connected || session.state === "connecting";
 

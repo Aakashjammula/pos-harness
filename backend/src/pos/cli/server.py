@@ -19,7 +19,7 @@ Four endpoints (plus /auth/* and /credentials/* -- see pos.auth.routes):
                          session_id), then "user_text"/"bot_text"/"interrupted"
                          events for live captions. Config is chosen via
                          query params, e.g.
-                         /ws?tts=kokoro&voice=af_bella&llm_model=lfm2.5-230m&trigger_word=computer&vad_threshold=0.5&vad_min_silence_ms=1200&vad_speech_pad_ms=300&mode=voice
+                         /ws?tts=kokoro&voice=af_bella&llm_model=<model id>&trigger_word=computer&vad_threshold=0.5&vad_min_silence_ms=1200&vad_speech_pad_ms=300&mode=voice
                          — all optional, falling back to each engine's own
                          default. Headphones are assumed unconditionally (no
                          echo suppression, full barge-in) — every client is
@@ -97,7 +97,7 @@ from pos.auth.routes import build_auth_router
 from pos.auth.store import UserStore
 from pos.db import create_pool, init_schema
 from pos.interfaces import LlmBase, SttBase, TtsBase, VadBase
-from pos.llm.providers import resolve_provider
+from pos.llm.providers import is_configured, resolve_provider
 from pos.llm.tools import tool_status
 from pos.null_engines import NullTts, NullVad
 from pos.storage import SessionStore
@@ -118,21 +118,22 @@ def _default_vad_factory(
     )
 
 
-def _default_llm_models(base_url: str | None, fallback: str) -> list[str]:
+def _default_llm_models(base_url: str | None, fallback: str | None) -> list[str]:
     """LM Studio's own loaded-model list, for the /options dropdown —
     advisory only. Falls back to just the configured default rather than
     failing the whole endpoint if LM Studio isn't reachable right now.
     With no base_url configured there is nothing to ask, so no request is
     made at all."""
+    fallback_list = [fallback] if fallback else []
     if not base_url:
-        return [fallback]
+        return fallback_list
     try:
         resp = requests.get(f"{base_url}/models", timeout=3)
         resp.raise_for_status()
         ids = [m["id"] for m in resp.json().get("data", [])]
-        return ids or [fallback]
+        return ids or fallback_list
     except Exception:
-        return [fallback]
+        return fallback_list
 
 
 class _LazyStt(SttBase):
@@ -156,11 +157,11 @@ class _LazyStt(SttBase):
 def create_app(
     stt: SttBase,
     tts_engines: dict[str, type[TtsBase]] | None = None,
-    llm_factory: Callable[[str], LlmBase] | None = None,
-    llm_env_factory: Callable[[str, Mapping[str, str]], LlmBase] | None = None,
+    llm_factory: Callable[[str | None], LlmBase] | None = None,
+    llm_env_factory: Callable[[str | None, Mapping[str, str]], LlmBase] | None = None,
     vad_factory: Callable[..., VadBase] = _default_vad_factory,
     default_tts_engine: str = "kokoro",
-    default_llm_model: str = "lfm2.5-230m",
+    default_llm_model: str | None = None,   # no model is assumed: each provider uses its own default
     llm_base_url: str | None = None,
     session_store: SessionStore | None = None,
     user_store: UserStore | None = None,
@@ -222,7 +223,7 @@ def create_app(
     # built on the first connection that has one (a user's saved credential
     # or a server-level env var) and never contacted before that.
     _tts_cache: dict[tuple[str, str], TtsBase] = {}
-    _llm_cache: dict[str, LlmBase] = {}
+    _llm_cache: dict[str | None, LlmBase] = {}
     _models_ready = threading.Event()
     _warm_errors: list[str] = []
 
@@ -254,7 +255,7 @@ def create_app(
                 _tts_cache[key] = await loop.run_in_executor(None, lambda: cls(**kwargs))
         return _tts_cache[key]
 
-    async def get_llm(model: str) -> LlmBase:
+    async def get_llm(model: str | None) -> LlmBase:
         async with _cache_lock:
             if model not in _llm_cache:
                 loop = asyncio.get_running_loop()
@@ -262,15 +263,11 @@ def create_app(
         return _llm_cache[model]
 
     def _llm_configured(env: Mapping[str, str]) -> bool:
-        """True once some provider has real settings. `local` always
-        "detects" as the fallback, so it only counts when a base URL was
-        actually given -- otherwise nothing is configured and no request
-        may be sent anywhere. Fakes injected via llm_factory (tests, embedding)
-        bring their own backend, so they are always considered configured."""
-        if not uses_real_llm:
-            return True
-        provider = resolve_provider(env=env)
-        return provider.name != "local" or bool(env.get("LOCAL_BASE_URL"))
+        """True once some provider has real settings (a local server URL or
+        a provider API key). Nothing is assumed, so with none of them no
+        request may be sent anywhere. Fakes injected via llm_factory (tests,
+        embedding) bring their own backend, so they are always configured."""
+        return True if not uses_real_llm else is_configured(env)
 
     @app.get("/options")
     async def options():
@@ -278,13 +275,19 @@ def create_app(
         llm_models = await loop.run_in_executor(
             None, _default_llm_models, llm_base_url, default_llm_model
         )
-        provider = resolve_provider()
         llm_configured = _llm_configured(os.environ)
+        provider = {"name": "", "model": ""}   # nothing configured server-wide: don't invent one
+        if llm_configured:
+            try:
+                resolved = resolve_provider()
+                provider = {"name": resolved.name, "model": resolved.model}
+            except RuntimeError:
+                pass   # e.g. Azure key without an endpoint -- surfaces when a session connects
         return {
             "tts": {name: cls.list_voices() for name, cls in tts_engines.items()},
             "llm_models": llm_models,
-            "defaults": {"tts_engine": default_tts_engine, "llm_model": default_llm_model},
-            "provider": {"name": provider.name, "model": provider.model},
+            "defaults": {"tts_engine": default_tts_engine, "llm_model": default_llm_model or ""},
+            "provider": provider,
             "llm_configured": llm_configured,
             "tools": tool_status(),
         }
@@ -320,7 +323,7 @@ def create_app(
         params = websocket.query_params
         tts_engine = params.get("tts", default_tts_engine)
         voice = params.get("voice") or None
-        llm_model = params.get("llm_model", default_llm_model)
+        llm_model = params.get("llm_model") or default_llm_model   # None -> the provider's own default
         trigger_word = params.get("trigger_word") or None
 
         stored = users.get_credential(user_id, params.get("provider", "local"))
@@ -428,6 +431,9 @@ def create_app(
             llm = await loop.run_in_executor(None, llm_env_factory, llm_model, merged_env)
         else:
             llm = await get_llm(llm_model)
+        # What actually answers: the provider's resolved model when the client
+        # named none (fakes without a .provider fall back to what was asked).
+        used_model = getattr(getattr(llm, "provider", None), "model", None) or llm_model or ""
 
         session_id = resume_session_id or uuid.uuid4().hex
         stored_tts_engine = None if mode == "text" else tts_engine
@@ -435,7 +441,7 @@ def create_app(
             try:
                 store.create_session(
                     session_id, user_id, mode=mode,
-                    tts_engine=stored_tts_engine, llm_model=llm_model,
+                    tts_engine=stored_tts_engine, llm_model=used_model,
                 )
             except Exception as e:
                 print(f"  session store error (create_session): {e}")
@@ -456,7 +462,7 @@ def create_app(
             "input_sample_rate": config.MIC_RATE,
             "output_sample_rate": tts.sample_rate,
             "tts_engine": stored_tts_engine,
-            "llm_model": llm_model,
+            "llm_model": used_model,
         })
 
         # Title generation (like ChatGPT's own "name the chat after the

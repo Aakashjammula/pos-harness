@@ -53,6 +53,7 @@ from pos.agent import Agent
 from pos.auth.passwords import hash_password
 from pos.auth.store import UserStore
 from pos.db import create_pool, init_schema
+from pos.llm import LangChainLlm
 from pos.storage import SessionStore
 from pos.tts import KokoroTts, SupertonicTts
 from pos.utils import list_input_devices, resolve_input_device, start_mute_toggle_listener
@@ -119,6 +120,12 @@ def main():
 
     device = resolve_input_device(args.mic)
 
+    # Fail fast, before loading any model: no LLM endpoint is assumed.
+    try:
+        llm = LangChainLlm()
+    except RuntimeError as e:
+        parser.error(str(e))
+
     tts_kwargs = {"voice": args.voice} if args.voice else {}
     tts = _TTS_ENGINES[args.tts](**tts_kwargs)
 
@@ -138,7 +145,7 @@ def main():
     session_store = SessionStore(pool)
     session_id = uuid.uuid4().hex
     session_store.create_session(
-        session_id, cli_user["id"], mode="voice", tts_engine=args.tts, llm_model="lfm2.5-230m"
+        session_id, cli_user["id"], mode="voice", tts_engine=args.tts, llm_model=llm.provider.model
     )
 
     def on_event(name: str, data: dict) -> None:
@@ -150,7 +157,7 @@ def main():
         except Exception as e:
             print(f"  session store error: {e}")
 
-    agent = Agent(vad=vad, tts=tts, trigger_word=args.trigger_word, on_event=on_event)
+    agent = Agent(vad=vad, tts=tts, llm=llm, trigger_word=args.trigger_word, on_event=on_event)
     start_mute_toggle_listener(agent.muted)
     agent.run(device=device)
 

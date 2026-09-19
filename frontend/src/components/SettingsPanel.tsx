@@ -147,6 +147,7 @@ export function SettingsPanel({
                 value={settings.llmModel}
                 onChange={(e) => onSettingsChange({ llmModel: e.target.value })}
               >
+                <option value="">Provider default</option>
                 {(options?.llm_models || []).map((model) => (
                   <option key={model} value={model}>
                     {model}

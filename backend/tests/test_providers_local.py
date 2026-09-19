@@ -1,5 +1,6 @@
-import os
 from unittest.mock import MagicMock
+
+import pytest
 
 from pos.llm.providers.base import ProviderConfig
 from pos.llm.providers.local import LocalProvider
@@ -9,55 +10,71 @@ def _local_provider(model="meta-llama-3.1-8b-instruct"):
     return ProviderConfig(name="local", model=model, base_url="http://localhost:1234/v1", api_key="lm-studio")
 
 
-def test_detect_is_always_true():
-    assert LocalProvider().detect(os.environ) is True
+_ENV = {"LOCAL_BASE_URL": "http://192.168.1.50:1234/v1", "LOCAL_MODEL": "env-model"}
 
 
-def test_resolve_defaults_when_no_model_override():
-    provider = LocalProvider().resolve(model_override=None, env=os.environ)
+def test_detect_requires_a_base_url():
+    assert LocalProvider().detect({}) is False
+    assert LocalProvider().detect({"LOCAL_BASE_URL": ""}) is False
+    assert LocalProvider().detect({"LOCAL_BASE_URL": "http://x/v1"}) is True
+
+
+def test_resolve_without_a_base_url_raises():
+    with pytest.raises(RuntimeError, match="LOCAL_BASE_URL"):
+        LocalProvider().resolve(model_override=None, env={})
+
+
+def test_resolve_uses_the_given_url_and_model_env():
+    provider = LocalProvider().resolve(model_override=None, env=_ENV)
 
     assert provider.name == "local"
-    assert provider.model == "lfm2.5-230m"
-    assert provider.base_url == "http://localhost:1234/v1"
-    assert provider.api_key == "lm-studio"
+    assert provider.base_url == "http://192.168.1.50:1234/v1"
+    assert provider.model == "env-model"
 
 
 def test_resolve_model_override_wins():
-    provider = LocalProvider().resolve(model_override="custom-model", env=os.environ)
+    provider = LocalProvider().resolve(model_override="custom-model", env=_ENV)
 
     assert provider.model == "custom-model"
 
 
-def test_resolve_base_url_env_override_wins(monkeypatch):
-    monkeypatch.setenv("LOCAL_BASE_URL", "http://192.168.1.50:1234/v1")
+def test_resolve_asks_the_server_for_a_model_when_none_is_named(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {"data": [{"id": "first-loaded"}, {"id": "second"}]}
+    response.raise_for_status.return_value = None
+    seen = {}
 
-    provider = LocalProvider().resolve(model_override=None, env=os.environ)
+    def fake_get(url, headers, timeout):
+        seen["url"] = url
+        return response
 
-    assert provider.base_url == "http://192.168.1.50:1234/v1"
+    monkeypatch.setattr("pos.llm.providers.local.requests.get", fake_get)
+
+    provider = LocalProvider().resolve(model_override=None, env={"LOCAL_BASE_URL": "http://h:1/v1"})
+
+    assert provider.model == "first-loaded"
+    assert seen["url"] == "http://h:1/v1/models"
 
 
-def test_resolve_base_url_defaults_when_not_set(monkeypatch):
-    monkeypatch.delenv("LOCAL_BASE_URL", raising=False)
+def test_resolve_raises_when_no_model_is_named_or_served(monkeypatch):
+    def boom(url, headers, timeout):
+        raise ConnectionError("down")
 
-    provider = LocalProvider().resolve(model_override=None, env=os.environ)
+    monkeypatch.setattr("pos.llm.providers.local.requests.get", boom)
 
-    assert provider.base_url == "http://localhost:1234/v1"
+    with pytest.raises(RuntimeError, match="no model chosen"):
+        LocalProvider().resolve(model_override=None, env={"LOCAL_BASE_URL": "http://h:1/v1"})
 
 
-def test_resolve_api_key_env_override_wins(monkeypatch):
-    monkeypatch.setenv("LOCAL_API_KEY", "real-lm-studio-token")
-
-    provider = LocalProvider().resolve(model_override=None, env=os.environ)
+def test_resolve_api_key_env_override_wins():
+    provider = LocalProvider().resolve(model_override=None, env={**_ENV, "LOCAL_API_KEY": "real-lm-studio-token"})
 
     assert provider.api_key == "real-lm-studio-token"
 
 
-def test_resolve_api_key_defaults_when_not_set(monkeypatch):
-    monkeypatch.delenv("LOCAL_API_KEY", raising=False)
-
-    provider = LocalProvider().resolve(model_override=None, env=os.environ)
-
-    assert provider.api_key == "lm-studio"
+def test_resolve_api_key_uses_a_placeholder_when_not_set():
+    # The OpenAI SDK requires a non-empty key; LM Studio ignores it.
+    assert LocalProvider().resolve(model_override=None, env=_ENV).api_key == "lm-studio"
 
 
 def test_price_for_is_always_free():

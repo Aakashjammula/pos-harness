@@ -148,6 +148,8 @@ def test_options_endpoint_lists_tts_voices_and_llm_models(monkeypatch):
 
 
 def test_options_endpoint_includes_provider_and_tools_for_connections_diagram(monkeypatch):
+    monkeypatch.setenv("LOCAL_BASE_URL", "http://llm.test/v1")
+    monkeypatch.setenv("LOCAL_MODEL", "test-model")
     monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
@@ -666,7 +668,7 @@ def test_ws_credentials_are_loaded_via_llm_env_factory(monkeypatch):
     with client.websocket_connect("/ws") as ws:
         ws.receive_json()  # ready
 
-    assert captured["model"] == "lfm2.5-230m"
+    assert captured["model"] is None   # no model forced: the provider picks its own default
     assert captured["env"]["OPENAI_API_KEY"] == "sk-override"
 
 
@@ -1244,3 +1246,39 @@ def test_background_warmup_serves_text_and_auth_before_models_load_and_gates_voi
                     break
         else:
             raise AssertionError("voice mode never became ready after warm-up finished")
+
+
+def test_options_reports_no_provider_or_default_model_when_nothing_is_configured(monkeypatch):
+    client = _real_llm_app(monkeypatch)
+
+    body = client.get("/options").json()
+
+    assert body["llm_configured"] is False
+    assert body["provider"] == {"name": "", "model": ""}
+    assert body["defaults"]["llm_model"] == ""
+    assert body["llm_models"] == []
+
+
+def test_ws_sends_no_model_override_and_records_the_resolved_model(monkeypatch):
+    session_store, user_store = _fresh_stores()
+    seen = []
+
+    class _Llm(FakeLlm):
+        provider = type("P", (), {"model": "resolved-model"})()
+
+    app = create_app(
+        stt=FakeStt("hello"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: seen.append(model) or _Llm(),
+        default_tts_engine="kokoro",
+        session_store=session_store,
+        user_store=user_store,
+    )
+    client = TestClient(app)
+    _sign_in(client)
+
+    with client.websocket_connect("/ws?mode=text") as ws:
+        ready = ws.receive_json()
+
+    assert seen == [None]
+    assert ready["llm_model"] == "resolved-model"
