@@ -32,6 +32,7 @@ from pos.auth.tokens import (
     new_refresh_token,
 )
 from pos.llm.model_listing import ModelListError, list_models, supported_providers
+from pos.net_policy import UnsafeUrl, validate_credential_urls
 from pos.tools import all_tools, get_tool
 from pos.tools import credential_fields as tool_credential_fields
 
@@ -336,6 +337,10 @@ def build_auth_router(users: UserStore, auth: Auth | None = None) -> APIRouter:
         }
         if not payload:
             raise HTTPException(status_code=422, detail="no credential fields provided")
+        try:   # resolves DNS, which can block: keep it off the event loop
+            await asyncio.get_running_loop().run_in_executor(None, validate_credential_urls, payload)
+        except UnsafeUrl as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
         users.save_credential(user_id, provider, payload)
         return {"saved": provider}
 

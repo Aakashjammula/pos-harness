@@ -20,7 +20,7 @@ def http(monkeypatch):
     """Record every requests.get and answer from a per-URL queue."""
     calls, queue = [], {}
 
-    def fake_get(url, headers=None, params=None, timeout=None):
+    def fake_get(url, headers=None, params=None, timeout=None, **kw):
         calls.append({"url": url, "headers": headers or {}, "params": params or {}})
         return queue[url].pop(0)
 

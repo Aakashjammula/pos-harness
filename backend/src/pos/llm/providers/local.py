@@ -6,8 +6,11 @@ docs/superpowers/specs/2026-09-10-llm-provider-registry-and-src-layout-design.md
 
 from __future__ import annotations
 
+import httpx
 import requests
 from langchain_openai import ChatOpenAI
+
+from pos.net_policy import UnsafeUrl, check_user_url
 
 from .base import LlmProviderBase, ProviderConfig
 from .registry import register
@@ -18,12 +21,16 @@ _PLACEHOLDER_API_KEY = "lm-studio"   # the OpenAI SDK insists on a non-empty key
                                      # its real token. Not a configuration default.
 
 
+# Shared by every local-provider chat client; per-request timeouts still apply.
+_NO_REDIRECTS = httpx.Client(follow_redirects=False)
+
+
 def _first_served_model(base_url: str, api_key: str) -> str | None:
     """The first model id the server reports, or None. Used only when the
     user gave a URL but did not name a model."""
     try:
         resp = requests.get(
-            f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"}, timeout=3
+            f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"}, timeout=3, allow_redirects=False
         )
         resp.raise_for_status()
         ids = [m["id"] for m in resp.json().get("data", [])]
@@ -44,6 +51,10 @@ class LocalProvider(LlmProviderBase):
         base_url = env.get("LOCAL_BASE_URL")
         if not base_url:
             raise RuntimeError("LOCAL_BASE_URL is not set")
+        try:   # a user may have saved this: it must not point the server at internal services
+            check_user_url("LOCAL_BASE_URL", base_url)
+        except UnsafeUrl as e:
+            raise RuntimeError(f"LOCAL_BASE_URL is not allowed: {e}") from None
         api_key = env.get("LOCAL_API_KEY") or _PLACEHOLDER_API_KEY
         model = model_override or env.get("LOCAL_MODEL") or _first_served_model(base_url, api_key)
         if not model:
@@ -57,6 +68,7 @@ class LocalProvider(LlmProviderBase):
             base_url=provider.base_url,
             api_key=provider.api_key,
             model=provider.model,
+            http_client=_NO_REDIRECTS,   # a redirect is how a checked URL becomes an unchecked one
             **model_kwargs,
         )
 
@@ -66,7 +78,7 @@ class LocalProvider(LlmProviderBase):
     def context_window_for(self, provider: ProviderConfig) -> int | None:
         host = (provider.base_url or "").removesuffix("/v1")
         try:
-            resp = requests.get(f"{host}/api/v0/models", timeout=3)
+            resp = requests.get(f"{host}/api/v0/models", timeout=3, allow_redirects=False)
             resp.raise_for_status()
             for entry in resp.json().get("data", []):
                 if entry.get("id") == provider.model:

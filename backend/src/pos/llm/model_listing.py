@@ -29,6 +29,8 @@ from collections.abc import Callable, Mapping
 
 import requests
 
+from pos.net_policy import UnsafeUrl, check_user_url
+
 _TIMEOUT = 10
 _MAX_PAGES = 20   # a hard stop on pagination loops
 
@@ -49,12 +51,14 @@ def _get_json(
     bad_key_statuses: tuple[int, ...] = (401, 403),
 ) -> dict:
     try:
-        resp = requests.get(url, headers=dict(headers), params=params, timeout=_TIMEOUT)
+        resp = requests.get(url, headers=dict(headers), params=params, timeout=_TIMEOUT, allow_redirects=False)
     except requests.RequestException as e:
         # str(e) can embed the URL; keep only the exception type.
         raise ModelListError(f"couldn't reach the provider ({type(e).__name__})") from None
     if resp.status_code in bad_key_statuses:
         raise ModelListError("the provider rejected this key (unauthorized)")
+    if 300 <= resp.status_code < 400:   # never followed (see net_policy): say so rather than reading it as success
+        raise ModelListError("the server redirected the request, and redirects are not followed")
     if resp.status_code >= 400:
         raise ModelListError(f"the provider returned HTTP {resp.status_code}")
     try:
@@ -83,6 +87,10 @@ _OPENAI_NON_CHAT = (
 
 def _list_local(env: Mapping[str, str]) -> list[Model]:
     base = _need(env, "LOCAL_BASE_URL", "server URL").rstrip("/")
+    try:
+        check_user_url("LOCAL_BASE_URL", base)
+    except UnsafeUrl as e:
+        raise ModelListError(f"that server URL is not allowed: {e}") from None
     key = env.get("LOCAL_API_KEY") or "lm-studio"
     data = _get_json(f"{base}/models", headers={"Authorization": f"Bearer {key}"})
     return [{"id": m["id"], "label": m["id"]} for m in data.get("data", []) if m.get("id")]
