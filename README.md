@@ -476,8 +476,6 @@ backend/src/pos/
                                   — console script: `uv run pos-server`
     relay_client.py              Python CLI relay client for server.py
                                   — console script: `uv run pos-client`
-  static/index.html              browser relay client for server.py — voice/text toggle, live
-                                  transcript, settings, session History sidebar
   config.py                      shared, engine-agnostic settings
   utils.py                       resample_linear, pcm16_to_float32, float32_to_pcm16
   agent.py                       orchestrator: threads + queues wiring; feed_audio/on_text_message/
@@ -504,7 +502,6 @@ backend/src/pos/
                                   self-registering provider each; add a new backend by adding
                                   one file here, no other file needs to change)
   llm/tools.py                   get_current_time, web search (Tavily, needs TAVILY_API_KEY)
-  llm/openai_compatible.py       OpenAiCompatibleLlm(LlmBase) — plain OpenAI SDK, no tool calling, kept for reference/tests
 tests/                           pytest suite (fakes.py holds shared no-hardware/no-network test doubles); run with `uv run pytest`
 ```
 

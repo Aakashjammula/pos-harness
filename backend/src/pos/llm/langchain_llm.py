@@ -13,7 +13,7 @@ from .tools import default_tools
 
 
 class LangChainLlm(LlmBase):
-    """Same LlmBase contract as OpenAiCompatibleLlm, plus tool calling
+    """The LlmBase implementation: tool calling
     via LangChain's bind_tools() and multi-backend support (local LM
     Studio / OpenAI / Azure OpenAI, picked by resolve_provider() from
     env vars — see docs/superpowers/specs/2026-09-10-llm-provider-cost-tracking-design.md).

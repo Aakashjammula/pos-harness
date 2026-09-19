@@ -50,7 +50,7 @@ VERBOSE_TIMING = True
 REALTIME_LOG = True               # per-stage trigger log: VAD / STT / LLM / TTS
 
 HISTORY_TURNS = 3   # how many prior user/assistant turn-pairs to include as LLM
-                     # context. Previously owned by OpenAiCompatibleLlm itself;
+                     # context. Previously owned by the LLM class itself;
                      # moved to Agent since the LLM engine is now stateless and
                      # (in server mode) shared across concurrent sessions.
 
