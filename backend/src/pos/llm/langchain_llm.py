@@ -8,8 +8,9 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.tools import BaseTool
 
 from ..interfaces.llm import LlmBase
-from .providers import build_model, context_window_for, estimate_cost, resolve_provider
 from ..tools import build_tools
+from .content import content_text
+from .providers import build_model, context_window_for, estimate_cost, resolve_provider
 
 
 class LangChainLlm(LlmBase):
@@ -99,7 +100,7 @@ class LangChainLlm(LlmBase):
                 ),
                 HumanMessage(f"User: {first_user_message}\nAssistant: {first_bot_message}"),
             ], max_tokens=16)
-            title = (response.content or "").strip().strip('"').strip("'")
+            title = content_text(response.content).strip().strip('"').strip("'")
             return title or None
         except Exception:
             return None
@@ -124,8 +125,9 @@ class LangChainLlm(LlmBase):
                 if cancel.is_set():
                     return
                 accumulated = chunk if accumulated is None else accumulated + chunk
-                if chunk.content:
-                    yield chunk.content
+                text = content_text(chunk.content)
+                if text:
+                    yield text
 
             if accumulated is None or not accumulated.tool_calls:
                 if usage is not None and accumulated is not None:

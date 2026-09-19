@@ -407,3 +407,32 @@ def test_generate_title_returns_none_for_empty_response(monkeypatch):
     llm._model.invoke.return_value = MagicMock(content="   ")
 
     assert llm.generate_title("hi", "hello") is None
+
+
+def test_stream_yields_text_from_block_list_content(monkeypatch):
+    chunks = [
+        AIMessageChunk(content=[{"type": "text", "text": "hel"}]),
+        AIMessageChunk(content=[{"type": "text", "text": "lo"}]),
+    ]
+    llm = _make_llm(monkeypatch, _FakeRunnable([chunks]), tools=[])
+
+    pieces = list(llm.stream([{"role": "user", "content": "hi"}], threading.Event()))
+
+    assert pieces == ["hel", "lo"]          # plain strings, so the caller can concatenate them
+
+
+def test_stream_skips_chunks_that_carry_no_text(monkeypatch):
+    chunks = [
+        AIMessageChunk(content=[{"type": "thinking", "thinking": "hm"}]),
+        AIMessageChunk(content=[{"type": "text", "text": "ok"}]),
+    ]
+    llm = _make_llm(monkeypatch, _FakeRunnable([chunks]), tools=[])
+
+    assert list(llm.stream([{"role": "user", "content": "hi"}], threading.Event())) == ["ok"]
+
+
+def test_generate_title_handles_block_list_content(monkeypatch):
+    llm = _make_llm(monkeypatch, _FakeRunnable([]), tools=[])
+    llm._model.invoke.return_value = AIMessageChunk(content=[{"type": "text", "text": '"Trip planning"'}])
+
+    assert llm.generate_title("a", "b") == "Trip planning"
