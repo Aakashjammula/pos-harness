@@ -125,6 +125,12 @@ def test_two_concurrent_sessions_have_independent_history(monkeypatch):
             for _ in range(3):
                 ws.send_bytes(float32_to_pcm16(frame))
             ws.receive_bytes()
+        # receive_bytes() can return the sink's background silence rather than the reply, so it
+        # proves nothing about the second session. Wait for the condition itself (both sessions
+        # have reached the LLM) before the `with` block closes the sockets and shuts them down.
+        deadline = time.time() + 5.0
+        while len(fake_llm.calls) < 2 and time.time() < deadline:
+            time.sleep(0.02)
 
     assert len(fake_llm.calls) == 2
     assert fake_llm.calls[0] == fake_llm.calls[1] == [{"role": "user", "content": "hello"}]
