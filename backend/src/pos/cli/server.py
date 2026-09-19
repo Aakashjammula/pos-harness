@@ -87,6 +87,7 @@ from pos.auth.deps import Auth
 from pos.auth.routes import build_auth_router
 from pos.auth.store import UserStore
 from pos.db import create_pool, init_schema
+from pos.http_security import OriginCheckMiddleware
 from pos.interfaces import LlmBase, SttBase, TtsBase, VadBase
 from pos.llm.providers import is_configured, resolve_provider
 from pos.null_engines import NullVad
@@ -215,6 +216,7 @@ def create_app(
         yield
 
     app = FastAPI(lifespan=lifespan)
+    app.add_middleware(OriginCheckMiddleware, allowed_origins=config.CORS_ORIGINS)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=config.CORS_ORIGINS,
