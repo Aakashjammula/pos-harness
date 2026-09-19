@@ -68,6 +68,8 @@ CORS_ORIGINS = [
 ]
 
 ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "")
+# Retired keys (comma-separated, base64) still accepted for decryption while rotating -- see pos.auth.crypto.
+ENCRYPTION_KEY_PREVIOUS = os.environ.get("ENCRYPTION_KEY_PREVIOUS", "")
 
 def _flag(name: str, default: str = "false") -> bool:
     return os.environ.get(name, default).lower() == "true"

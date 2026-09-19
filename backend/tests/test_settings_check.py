@@ -52,3 +52,11 @@ def test_localhost_variants_do_not_warn():
 def test_messages_never_contain_the_secret_values():
     errors, warnings = _check(JWT_SECRET="tiny-secret-value", ENCRYPTION_KEY="key-value-xyz")
     assert all("tiny-secret-value" not in m and "key-value-xyz" not in m for m in errors + warnings)
+
+
+def test_previous_encryption_keys_are_validated_too():
+    good_old = base64.b64encode(os.urandom(32)).decode()
+    assert _check(ENCRYPTION_KEY_PREVIOUS=good_old) == ([], [])
+    assert _check(ENCRYPTION_KEY_PREVIOUS=f"{good_old}, {good_old}") == ([], [])
+    errors, _ = _check(ENCRYPTION_KEY_PREVIOUS=f"{good_old},not-a-key")
+    assert any("ENCRYPTION_KEY_PREVIOUS" in e for e in errors)
