@@ -21,6 +21,17 @@ def _ensure_nltk_tagger() -> None:
         nltk.download("averaged_perceptron_tagger_eng", quiet=True)
 
 
+_DEFAULT_REPO = "NeuML/kokoro-base-onnx"
+# The exact commit that was tested. Fetching "main" would run whatever the repo holds today,
+# and a model file is code-adjacent: onnxruntime executes the graph it is handed.
+_PINNED_REVISION = "adf39fcf901ff5f6bf576421e1570114a78669a4"
+
+
+def _revision_for(repo: str, revision: str | None) -> str | None:
+    """An explicit revision wins; the default repo is pinned; a custom repo is the caller's business."""
+    return revision or (_PINNED_REVISION if repo == _DEFAULT_REPO else None)
+
+
 class KokoroTts(TtsBase):
     """
     Two things dominate Kokoro's realtime behaviour:
@@ -40,7 +51,7 @@ class KokoroTts(TtsBase):
 
     def __init__(
         self,
-        repo: str = "NeuML/kokoro-base-onnx",
+        repo: str = _DEFAULT_REPO,
         voice: str = "af_bella",
         speed: float = 1.0,
         sample_rate: int = 24000,
@@ -56,8 +67,9 @@ class KokoroTts(TtsBase):
         self.sample_rate = sample_rate
         self.speed = speed
 
-        model_path = hf_hub_download(repo, "model.onnx")
-        voices_path = hf_hub_download(repo, "voices.json")
+        pinned = _revision_for(repo, None)
+        model_path = hf_hub_download(repo, "model.onnx", revision=pinned)
+        voices_path = hf_hub_download(repo, "voices.json", revision=pinned)
 
         with open(voices_path, encoding="utf-8") as f:
             voices = json.load(f)
@@ -104,13 +116,13 @@ class KokoroTts(TtsBase):
         return np.asarray(out[0], dtype=np.float32).flatten()
 
     @staticmethod
-    def list_voices(repo: str = "NeuML/kokoro-base-onnx") -> list[str]:
+    def list_voices(repo: str = _DEFAULT_REPO) -> list[str]:
         """Available voice names, without loading the full ~380MB model —
         voices.json is a separate, tiny file from model.onnx."""
         import json
 
         from huggingface_hub import hf_hub_download
 
-        voices_path = hf_hub_download(repo, "voices.json")
+        voices_path = hf_hub_download(repo, "voices.json", revision=_revision_for(repo, None))
         with open(voices_path, encoding="utf-8") as f:
             return sorted(json.load(f))
