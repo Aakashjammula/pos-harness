@@ -19,10 +19,19 @@ const PROVIDER_PAYLOAD: Record<string, (k: ApiKeyFields) => Record<string, strin
   openrouter: (k) => ({ openrouter_api_key: k.openrouterApiKey }),
 };
 
-export async function fetchConfiguredProviders(): Promise<string[]> {
+/** What is already saved. Keys never come back; `hints` are their last four characters and
+ * `public` holds the non-secret settings (server URL, Azure endpoint/deployment, AWS region). */
+export interface CredentialSummary {
+  configured: string[];
+  public: Record<string, Record<string, string>>;
+  hints: Record<string, string>;
+}
+
+export async function fetchCredentialSummary(): Promise<CredentialSummary> {
   const res = await apiFetch("/credentials");
   if (!res.ok) throw new Error("Couldn't load saved credentials.");
-  return (await res.json()).configured;
+  const body = await res.json();
+  return { configured: body.configured, public: body.public ?? {}, hints: body.hints ?? {} };
 }
 
 export async function saveCredential(provider: Exclude<KeyProvider, "">, keys: ApiKeyFields): Promise<void> {

@@ -19,6 +19,7 @@ interface SettingsPanelProps {
   providerModels: { listable: boolean; models: ProviderModel[]; loading: boolean; error: string | null };
   llmModel: string; // the model a session would use right now (derived, see lib/llm.ts)
   tools: Tool[];
+  hints: Record<string, string>; // "••••abcd" for each provider that has a saved key
   embedded?: boolean; // rendered inside the Settings shell: no header or full-height frame of its own
   onCredentialsChanged: () => void;
 }
@@ -91,10 +92,16 @@ export function SettingsPanel({
   providerModels,
   llmModel,
   tools,
+  hints,
   embedded = false,
   onCredentialsChanged,
 }: SettingsPanelProps) {
   const textMode = mode === "text";
+  // In a key field: what is already saved (masked), else the usual example.
+  const keyPlaceholder = (provider: string, example: string) =>
+    configured.includes(provider)
+      ? `Saved ${hints[provider] ?? ""} — type a new key to replace it`.replace("  ", " ")
+      : example;
   const voices = options?.tts[settings.ttsEngine] || [];
 
   return (
@@ -321,6 +328,9 @@ export function SettingsPanel({
                 className="shrink-0 accent-accent"
               />
               <span className="flex-1">{p.label}</span>
+              {configured.includes(p.value) && (
+                <span className="font-mono text-[11.5px] text-text-faint">Saved {hints[p.value] ?? ""}</span>
+              )}
               <span
                 className={`h-2 w-2 shrink-0 rounded-full ${
                   configured.includes(p.value) ? "bg-accent" : "bg-text-faint"
@@ -343,9 +353,9 @@ export function SettingsPanel({
               <Field label="API key (optional)" htmlFor="localApiKey">
                 <input
                   id="localApiKey"
+                  placeholder={keyPlaceholder("local", "only if Require Authentication is on")}
                   type="password"
                   autoComplete="off"
-                  placeholder="only if Require Authentication is on"
                   className={selectClass}
                   value={settings.keys.localApiKey}
                   onChange={(e) => onKeysChange({ localApiKey: e.target.value })}
@@ -380,9 +390,9 @@ export function SettingsPanel({
               <Field label="API key" htmlFor="openaiApiKey">
                 <input
                   id="openaiApiKey"
+                  placeholder={keyPlaceholder("openai", "sk-…")}
                   type="password"
                   autoComplete="off"
-                  placeholder="sk-…"
                   className={selectClass}
                   value={settings.keys.openaiApiKey}
                   onChange={(e) => onKeysChange({ openaiApiKey: e.target.value })}
@@ -407,6 +417,7 @@ export function SettingsPanel({
               <Field label="API key" htmlFor="azureApiKey">
                 <input
                   id="azureApiKey"
+                  placeholder={keyPlaceholder("azure", "")}
                   type="password"
                   autoComplete="off"
                   className={selectClass}
@@ -452,9 +463,9 @@ export function SettingsPanel({
               <Field label="API key" htmlFor="anthropicApiKey">
                 <input
                   id="anthropicApiKey"
+                  placeholder={keyPlaceholder("anthropic", "sk-ant-…")}
                   type="password"
                   autoComplete="off"
-                  placeholder="sk-ant-…"
                   className={selectClass}
                   value={settings.keys.anthropicApiKey}
                   onChange={(e) => onKeysChange({ anthropicApiKey: e.target.value })}
@@ -479,6 +490,7 @@ export function SettingsPanel({
               <Field label="API key" htmlFor="geminiApiKey">
                 <input
                   id="geminiApiKey"
+                  placeholder={keyPlaceholder("gemini", "")}
                   type="password"
                   autoComplete="off"
                   className={selectClass}
@@ -505,9 +517,9 @@ export function SettingsPanel({
               <Field label="Access key ID" htmlFor="bedrockAccessKeyId">
                 <input
                   id="bedrockAccessKeyId"
+                  placeholder={keyPlaceholder("bedrock", "AKIA…")}
                   type="text"
                   autoComplete="off"
-                  placeholder="AKIA…"
                   className={selectClass}
                   value={settings.keys.bedrockAccessKeyId}
                   onChange={(e) => onKeysChange({ bedrockAccessKeyId: e.target.value })}
@@ -516,6 +528,7 @@ export function SettingsPanel({
               <Field label="Secret access key" htmlFor="bedrockSecretAccessKey">
                 <input
                   id="bedrockSecretAccessKey"
+                  placeholder={keyPlaceholder("bedrock", "")}
                   type="password"
                   autoComplete="off"
                   className={selectClass}
@@ -552,9 +565,9 @@ export function SettingsPanel({
               <Field label="API key" htmlFor="openrouterApiKey">
                 <input
                   id="openrouterApiKey"
+                  placeholder={keyPlaceholder("openrouter", "sk-or-…")}
                   type="password"
                   autoComplete="off"
-                  placeholder="sk-or-…"
                   className={selectClass}
                   value={settings.keys.openrouterApiKey}
                   onChange={(e) => onKeysChange({ openrouterApiKey: e.target.value })}
