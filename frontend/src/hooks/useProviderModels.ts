@@ -17,8 +17,14 @@ interface Result {
  * re-fetches even when the provider was already configured (a new key can
  * unlock different models). State is only written from the async callbacks,
  * and loading/staleness are derived by comparing request keys. */
-export function useProviderModels(provider: KeyProvider, configured: string[], version: number) {
-  const active = !UNLISTABLE.includes(provider) && configured.includes(provider);
+export function useProviderModels(
+  provider: KeyProvider,
+  configured: string[],
+  version: number,
+  serverProvider = "" // the provider the operator configured server-wide, if any
+) {
+  // Listable with the user's own saved key, or with the one the server has set.
+  const active = !UNLISTABLE.includes(provider) && (configured.includes(provider) || provider === serverProvider);
   const key = active ? `${provider}:${version}` : "";
   const [result, setResult] = useState<Result | null>(null);
 
