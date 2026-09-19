@@ -2,6 +2,8 @@
 
 import { effectiveModel, hasLlm } from "@/lib/llm";
 import { useProviderModels } from "@/hooks/useProviderModels";
+import { useTools } from "@/hooks/useTools";
+import { ToolsPanel } from "@/components/ToolsPanel";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deleteSession, fetchOptions, fetchSession, fetchSessions } from "@/lib/api";
 import { AuthGuard } from "@/components/AuthGuard";
@@ -32,6 +34,8 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [sessionsError, setSessionsError] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [toolsVersion, setToolsVersion] = useState(0);
   const [configured, setConfigured] = useState<string[]>([]);
   const [credentialsVersion, setCredentialsVersion] = useState(0);
 
@@ -103,7 +107,10 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
 
   // hash-based settings route, so #/settings survives refresh/back-forward
   useEffect(() => {
-    const applyRoute = () => setSettingsOpen(window.location.hash === "#/settings");
+    const applyRoute = () => {
+      setSettingsOpen(window.location.hash === "#/settings");
+      setToolsOpen(window.location.hash === "#/tools");
+    };
     applyRoute();
     window.addEventListener("hashchange", applyRoute);
     return () => window.removeEventListener("hashchange", applyRoute);
@@ -115,12 +122,15 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
   const closeSettings = useCallback(() => {
     window.location.hash = "";
   }, []);
+  const openTools = useCallback(() => {
+    window.location.hash = "#/tools";
+  }, []);
 
   // Once connected, leave Settings automatically (mirrors the original's
   // ws "ready" handler forcing location.hash back to "").
   useEffect(() => {
-    if (session.connected && settingsOpen) closeSettings();
-  }, [session.connected, settingsOpen, closeSettings]);
+    if (session.connected && (settingsOpen || toolsOpen)) closeSettings();
+  }, [session.connected, settingsOpen, toolsOpen, closeSettings]);
 
   // Refresh the sidebar once a session becomes ready, and again ~1.5s
   // after each bot reply (the server generates a title off-thread, after
@@ -156,6 +166,11 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
   // --- connect / disconnect ---
 
   const providerModels = useProviderModels(settings.provider, configured, credentialsVersion);
+  const toolsState = useTools(toolsVersion);
+  const onToolsChanged = useCallback(() => {
+    setToolsVersion((v) => v + 1);
+    refreshConfigured(); // a saved/removed tool key changes the saved-credential list too
+  }, [refreshConfigured]);
   const llmModel = effectiveModel(
     settings.provider,
     settings.llmModel,
@@ -270,7 +285,15 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
         onDelete={handleDeleteSession}
         userEmail={user.email}
       />
-      {settingsOpen ? (
+      {toolsOpen ? (
+        <ToolsPanel
+          tools={toolsState.tools}
+          loading={toolsState.loading}
+          error={toolsState.error}
+          onChanged={onToolsChanged}
+          onBack={closeSettings}
+        />
+      ) : settingsOpen ? (
         <SettingsPanel
           settings={settings}
           onSettingsChange={onSettingsChange}
@@ -283,6 +306,7 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
           configured={configured}
           providerModels={providerModels}
           llmModel={llmModel}
+          tools={toolsState.tools}
           onCredentialsChanged={refreshConfigured}
         />
       ) : (
@@ -301,6 +325,7 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
           onConnect={handleConnect}
           onDisconnect={handleDisconnect}
           onOpenSettings={openSettings}
+          onOpenTools={openTools}
           modelChipLabel={modelChipLabel}
           onSendText={session.sendText}
         />

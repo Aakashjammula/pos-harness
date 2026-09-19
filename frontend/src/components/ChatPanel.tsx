@@ -20,6 +20,7 @@ interface ChatPanelProps {
   onConnect: () => void;
   onDisconnect: () => void;
   onOpenSettings: () => void;
+  onOpenTools: () => void;
   modelChipLabel: string;
   onSendText: (text: string) => void;
 }
@@ -39,6 +40,7 @@ export function ChatPanel({
   onConnect,
   onDisconnect,
   onOpenSettings,
+  onOpenTools,
   modelChipLabel,
   onSendText,
 }: ChatPanelProps) {
@@ -169,13 +171,20 @@ export function ChatPanel({
 
       {/* composer */}
       <div className="shrink-0 border-t border-border px-6 pt-3.5 pb-5">
-        <div className="mx-auto mb-2 flex max-w-[720px] justify-center">
+        <div className="mx-auto mb-2 flex max-w-[720px] justify-center gap-2">
           <button
             type="button"
             onClick={onOpenSettings}
             className="rounded-full border border-border bg-surface-sunken px-3.5 py-1 text-xs font-medium text-text-muted transition-colors hover:border-text-muted hover:text-text"
           >
             {modelChipLabel}
+          </button>
+          <button
+            type="button"
+            onClick={onOpenTools}
+            className="rounded-full border border-border bg-surface-sunken px-3.5 py-1 text-xs font-medium text-text-muted transition-colors hover:border-text-muted hover:text-text"
+          >
+            Tools
           </button>
         </div>
         <div className="mx-auto flex max-w-[720px] items-center gap-3">
