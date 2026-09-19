@@ -1,18 +1,19 @@
 "use client";
 
-import { effectiveModel, hasLlm } from "@/lib/llm";
+import { effectiveModel, hasLlm, LLM_PROVIDERS } from "@/lib/llm";
 import { useProviderModels } from "@/hooks/useProviderModels";
 import { useTools } from "@/hooks/useTools";
 import { ToolsPanel } from "@/components/ToolsPanel";
 import { hashForTab, SettingsShell, type SettingsTab, tabFromHash } from "@/components/SettingsShell";
 import { AccountTab } from "@/components/settings/AccountTab";
 import { SecurityTab } from "@/components/settings/SecurityTab";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { deleteSession, fetchOptions, fetchSession, fetchSessions } from "@/lib/api";
 import { AuthGuard } from "@/components/AuthGuard";
 import type { CurrentUser } from "@/lib/auth";
-import { fetchConfiguredProviders } from "@/lib/credentials";
-import { DEFAULT_SETTINGS, type ApiKeyFields, type OptionsResponse, type SessionMode, type SessionSummary, type Settings } from "@/lib/types";
+import { fetchCredentialSummary } from "@/lib/credentials";
+import { loadSettings, saveSettings } from "@/lib/settingsStore";
+import { type ApiKeyFields, type OptionsResponse, type SessionMode, type SessionSummary, type Settings } from "@/lib/types";
 import { useVoiceSession } from "@/hooks/useVoiceSession";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/ChatPanel";
@@ -30,7 +31,9 @@ export default function Home() {
 function VoiceAgent({ user }: { user: CurrentUser }) {
   const session = useVoiceSession();
   const [mode, setMode] = useState<SessionMode>("text");
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  // What you last chose survives a reload. This subtree only renders after the sign-in check,
+  // on the client, so reading browser storage here cannot cause a hydration mismatch.
+  const [storedSettings, setSettings] = useState<Settings>(() => loadSettings(user.id));
   const [options, setOptions] = useState<OptionsResponse | null>(null);
   const [optionsError, setOptionsError] = useState(false);
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
@@ -39,6 +42,16 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
   const [toolsVersion, setToolsVersion] = useState(0);
   const [configured, setConfigured] = useState<string[]>([]);
+  const [hints, setHints] = useState<Record<string, string>>({});
+  // With exactly one LLM provider saved and none picked, use it: nothing to choose between.
+  const onlySaved = useMemo(() => configured.filter((p) => LLM_PROVIDERS.includes(p)), [configured]);
+  const settings = useMemo<Settings>(
+    () => ({
+      ...storedSettings,
+      provider: storedSettings.provider || ((onlySaved.length === 1 ? onlySaved[0] : "") as Settings["provider"]),
+    }),
+    [storedSettings, onlySaved]
+  );
   const [credentialsVersion, setCredentialsVersion] = useState(0);
 
   // --- initial data: /options, mic list, session history ---
@@ -47,10 +60,11 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
     fetchOptions()
       .then((opts) => {
         setOptions(opts);
+        // Server defaults only fill what you have not chosen yet.
         setSettings((s) => ({
           ...s,
-          ttsEngine: opts.defaults.tts_engine,
-          llmModel: opts.defaults.llm_model,
+          ttsEngine: s.ttsEngine || opts.defaults.tts_engine,
+          llmModel: s.llmModel || opts.defaults.llm_model,
         }));
       })
       .catch(() => setOptionsError(true));
@@ -95,7 +109,21 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
   const refreshConfigured = useCallback(async () => {
     setCredentialsVersion((v) => v + 1); // a saved/removed key can change which models exist
     try {
-      setConfigured(await fetchConfiguredProviders());
+      const saved = await fetchCredentialSummary();
+      setConfigured(saved.configured);
+      setHints(saved.hints);
+      // Fill the non-secret fields from what is saved, so the form does not look empty after a reload.
+      const pub = saved.public;
+      setSettings((s) => ({
+        ...s,
+        keys: {
+          ...s.keys,
+          localBaseUrl: s.keys.localBaseUrl || pub.local?.LOCAL_BASE_URL || "",
+          azureEndpoint: s.keys.azureEndpoint || pub.azure?.AZURE_OPENAI_ENDPOINT || "",
+          azureDeployment: s.keys.azureDeployment || pub.azure?.AZURE_OPENAI_DEPLOYMENT || "",
+          bedrockRegion: s.keys.bedrockRegion || pub.bedrock?.AWS_REGION || "",
+        },
+      }));
     } catch {
       // leave the previous list in place -- a transient failure here
       // shouldn't blank out dots the user just saw as configured
@@ -106,6 +134,10 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     refreshConfigured();
   }, [refreshConfigured]);
+
+  useEffect(() => {
+    saveSettings(user.id, storedSettings);
+  }, [user.id, storedSettings]);
 
   // hash-based settings route, so #/settings survives refresh/back-forward
   useEffect(() => {
@@ -325,6 +357,7 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
               mode={mode}
               configured={configured}
               providerModels={providerModels}
+              hints={hints}
               llmModel={llmModel}
               tools={toolsState.tools}
               onCredentialsChanged={refreshConfigured}

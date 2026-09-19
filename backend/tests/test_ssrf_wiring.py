@@ -51,7 +51,7 @@ def test_saving_the_metadata_address_as_a_server_url_is_refused_even_when_privat
     resp = client.put("/credentials/local", json={"local_base_url": METADATA})
 
     assert resp.status_code == 422 and "LOCAL_BASE_URL" in resp.json()["detail"]
-    assert client.get("/credentials").json() == {"configured": []}          # nothing was stored
+    assert client.get("/credentials").json()["configured"] == []        # nothing was stored
 
 
 def test_a_private_server_url_is_accepted_only_when_the_operator_allows_it(monkeypatch):

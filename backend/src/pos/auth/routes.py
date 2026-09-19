@@ -72,6 +72,25 @@ _LLM_PROVIDER_FIELDS: dict[str, dict[str, str]] = {
 PROVIDER_FIELDS: dict[str, dict[str, str]] = {**_LLM_PROVIDER_FIELDS, **tool_credential_fields()}
 
 
+# Credential fields that are settings, not secrets: safe to show back to their owner.
+_PUBLIC_ENV = {"LOCAL_BASE_URL", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT", "AWS_REGION"}
+
+# The one secret per provider that identifies it, shown masked ("••••abcd") so a person can tell
+# WHICH key is saved without it ever being sent back. Short values are not hinted at all: the
+# last four characters of a short secret are too large a share of it.
+_HINT_ENV = {
+    "local": "LOCAL_API_KEY", "openai": "OPENAI_API_KEY", "azure": "AZURE_OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY", "gemini": "GOOGLE_API_KEY", "bedrock": "AWS_ACCESS_KEY_ID",
+    "openrouter": "OPENROUTER_API_KEY", "tavily": "TAVILY_API_KEY",
+}
+_MIN_HINT_LENGTH = 12
+
+
+def _secret_hint(provider: str, saved: dict) -> str | None:
+    secret = saved.get(_HINT_ENV.get(provider, ""), "")
+    return f"••••{secret[-4:]}" if len(secret) >= _MIN_HINT_LENGTH else None
+
+
 class Credentials(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
@@ -360,7 +379,21 @@ def build_auth_router(users: UserStore, auth: Auth | None = None) -> APIRouter:
 
     @router.get("/credentials")
     async def list_credentials(user_id: str = Depends(require_user_id)):
-        return {"configured": users.list_credential_providers(user_id)}
+        configured = users.list_credential_providers(user_id)
+        # Settings is meant to show what is already saved. Keys are never sent back, but the
+        # non-secret parts (server URL, Azure endpoint/deployment, AWS region) are, so the
+        # form can fill them in instead of looking empty after a reload.
+        public: dict[str, dict[str, str]] = {}
+        hints: dict[str, str] = {}
+        for provider in configured:
+            saved = users.get_credential(user_id, provider) or {}
+            shown = {k: v for k, v in saved.items() if k in _PUBLIC_ENV}
+            if shown:
+                public[provider] = shown
+            hint = _secret_hint(provider, saved)
+            if hint:
+                hints[provider] = hint
+        return {"configured": configured, "public": public, "hints": hints}
 
     @router.put("/credentials/{provider}")
     async def put_credential(

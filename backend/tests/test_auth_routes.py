@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 
 import pytest
@@ -171,12 +172,12 @@ def test_credentials_are_per_user_and_never_returned():
     client.put("/credentials/openai", json={"openai_api_key": "sk-secret"})
 
     listed = client.get("/credentials")
-    assert listed.json() == {"configured": ["openai"]}
+    assert listed.json()["configured"] == ["openai"]
     assert "sk-secret" not in listed.text
 
     client.post("/auth/logout")
     _signup(client, "b@test.com", "pw-12345678")
-    assert client.get("/credentials").json() == {"configured": []}
+    assert client.get("/credentials").json()["configured"] == []
 
 
 def test_delete_credential():
@@ -185,7 +186,7 @@ def test_delete_credential():
     client.put("/credentials/openai", json={"openai_api_key": "sk-secret"})
 
     assert client.delete("/credentials/openai").status_code == 200
-    assert client.get("/credentials").json() == {"configured": []}
+    assert client.get("/credentials").json()["configured"] == []
     assert client.delete("/credentials/openai").status_code == 404
 
 
@@ -463,3 +464,55 @@ def test_models_endpoint_404s_when_neither_the_user_nor_the_server_has_a_key(mon
     _signup(client, "a@test.com")
 
     assert client.get("/credentials/openai/models").status_code == 404
+
+
+def test_credentials_list_shows_saved_settings_but_never_a_key():
+    client = _client()
+    _signup(client, "a@test.com")
+    client.put(
+        "/credentials/local", json={"local_base_url": "http://192.168.1.5:1234/v1", "local_api_key": "lm-secret"}
+    )
+    client.put("/credentials/azure", json={"azure_api_key": "az-secret", "azure_endpoint": "https://r.openai.azure.com/",
+                                          "azure_deployment": "my-dep"})
+    client.put("/credentials/openai", json={"openai_api_key": "sk-secret"})
+
+    body = client.get("/credentials").json()
+
+    assert body["configured"] == ["azure", "local", "openai"]
+    assert body["public"]["local"] == {"LOCAL_BASE_URL": "http://192.168.1.5:1234/v1"}
+    assert body["public"]["azure"] == {"AZURE_OPENAI_ENDPOINT": "https://r.openai.azure.com/",
+                                       "AZURE_OPENAI_DEPLOYMENT": "my-dep"}
+    assert "openai" not in body["public"]                          # a provider with only a key shows nothing
+    for secret in ("lm-secret", "az-secret", "sk-secret"):
+        assert secret not in json.dumps(body)
+
+
+def test_one_users_saved_settings_are_not_visible_to_another():
+    a = _client()
+    _signup(a, "a@test.com")
+    a.put("/credentials/local", json={"local_base_url": "http://192.168.1.5:1234/v1"})
+    b = TestClient(a.app)
+    _signup(b, "b@test.com")
+
+    assert b.get("/credentials").json() == {"configured": [], "public": {}, "hints": {}}
+
+
+def test_a_saved_key_is_shown_only_as_its_last_four_characters():
+    client = _client()
+    _signup(client, "a@test.com")
+    client.put("/credentials/openai", json={"openai_api_key": "sk-proj-abcdefghij1234"})
+    client.put("/credentials/gemini", json={"gemini_api_key": "AIzaSyVeryLongSecretKeyWXYZ"})
+
+    body = client.get("/credentials").json()
+
+    assert body["hints"] == {"gemini": "••••WXYZ", "openai": "••••1234"}
+    text = json.dumps(body)
+    assert "sk-proj-abcdefghij" not in text and "AIzaSyVeryLong" not in text     # nothing but the last four
+
+
+def test_a_short_secret_gets_no_hint_at_all():
+    client = _client()
+    _signup(client, "a@test.com")
+    client.put("/credentials/openai", json={"openai_api_key": "short-key-1"})   # 11 characters
+
+    assert client.get("/credentials").json()["hints"] == {}
