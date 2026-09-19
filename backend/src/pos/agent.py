@@ -16,6 +16,7 @@ from .interfaces import AudioSinkBase, LlmBase, SttBase, TtsBase, VadBase
 from .llm import LangChainLlm
 from .stt import OnnxAsrEngine
 from .tts import KokoroTts
+from .turn import run_turn
 from .vad import SileroVad
 
 
@@ -401,33 +402,43 @@ class Agent:
         ]
 
         t_start = time.perf_counter()
-        usage: dict = {}
+
+        def on_piece(piece: str) -> bool:
+            """Sentence-chunk each piece for TTS; False stops the turn."""
+            nonlocal buf, ttft
+            if self.cancel.is_set() or turn != self.current_turn():
+                return False
+            if ttft is None:
+                # enqueue() below hands the first-piece latency to the TTS queue
+                # while the stream is still running, so it is needed mid-turn.
+                ttft = time.perf_counter() - t_start
+            full_response.append(piece)
+            drained = drain(buf + piece)
+            if drained is None:
+                return False
+            buf = drained
+            return True
+
         try:
-            for piece in self.llm.stream(messages, self.cancel, usage):
-                if self.cancel.is_set() or turn != self.current_turn():
-                    return
-                if ttft is None:
-                    ttft = time.perf_counter() - t_start
-                full_response.append(piece)
-                buf += piece
-                buf = drain(buf)
-                if buf is None:
-                    return
+            stats = run_turn(self.llm, messages, self.cancel, on_piece)
         except Exception as e:
             print(f"   [llm failed: {e}]")
             return
+        if stats.stopped:
+            return
+        usage = stats.usage
 
         if buf.strip():
             enqueue(buf)
 
         latency: dict | None = None
-        if ttft is not None:
-            total = time.perf_counter() - t_start
-            latency = {"ttft": round(ttft, 3), "total": round(total, 3)}
-            self.m_ttft.append(ttft)
+        if stats.ttft is not None:
+            total = stats.total
+            latency = {"ttft": round(stats.ttft, 3), "total": round(total, 3)}
+            self.m_ttft.append(stats.ttft)
             self.m_llm.append(total)
             if config.VERBOSE_TIMING:
-                print(f"      llm: ttft {ttft:.2f}s / total {total:.2f}s")
+                print(f"      llm: ttft {stats.ttft:.2f}s / total {total:.2f}s")
             if usage:
                 cost = usage.get("cost_usd")
                 cost_str = f"${cost:.4f}" if cost is not None else "n/a"
