@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { formatUsageLine, truncateToolResult } from "@/lib/format";
+import { formatTokens, formatUsageLine, truncateToolResult } from "@/lib/format";
 import type { ConnState, SessionMode, TranscriptLine } from "@/lib/types";
 import { StateIcon } from "./icons";
 
@@ -25,6 +25,8 @@ interface ChatPanelProps {
   onSendText: (text: string) => void;
   replying: boolean; // a text reply is still streaming in
   onNewChat: () => void;
+  contextUsed?: number; // tokens the conversation occupies after the latest reply
+  contextWindow?: number; // the model's input limit, when the provider says
 }
 
 export function ChatPanel({
@@ -47,6 +49,8 @@ export function ChatPanel({
   onSendText,
   replying,
   onNewChat,
+  contextUsed,
+  contextWindow,
 }: ChatPanelProps) {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const [textValue, setTextValue] = useState("");
@@ -137,6 +141,23 @@ export function ChatPanel({
                   <div className={`mb-4 flex ${isYou ? "justify-end" : line.who === "system" ? "justify-center mb-2.5" : ""}`}>
                     {line.who === "system" ? (
                       <span className="text-[12.5px] italic text-text-faint">{line.text}</span>
+                    ) : line.who === "error" ? (
+                      <span
+                        role="alert"
+                        className="max-w-full whitespace-pre-wrap break-words rounded-lg border border-danger/40 bg-danger-tint px-3.5 py-2.5 text-[13.5px] text-danger"
+                      >
+                        {line.text}
+                      </span>
+                    ) : line.who === "bot" && line.text === "" && replying ? (
+                      <span role="status" aria-label="The assistant is thinking" className="flex items-center gap-1.5 py-2">
+                        {[0, 1, 2].map((i) => (
+                          <span
+                            key={i}
+                            className="h-2 w-2 animate-pulse rounded-full bg-text-faint"
+                            style={{ animationDelay: `${i * 0.2}s` }}
+                          />
+                        ))}
+                      </span>
                     ) : (
                       <span
                         className={`whitespace-pre-wrap break-words text-[15px] leading-relaxed ${
@@ -194,6 +215,31 @@ export function ChatPanel({
           >
             Tools
           </button>
+          {(contextUsed != null || contextWindow != null) && (
+            <span
+              title={
+                contextWindow
+                  ? `${contextUsed ?? 0} of ${contextWindow} tokens of the model's context are in use`
+                  : "Tokens in use. This provider does not say how large the model's context is."
+              }
+              className="flex items-center gap-2 rounded-full border border-border bg-surface-sunken px-3.5 py-1 font-mono text-[11.5px] text-text-muted"
+            >
+              <span>
+                Context {formatTokens(contextUsed ?? 0)}
+                {contextWindow ? ` / ${formatTokens(contextWindow)}` : " tokens"}
+              </span>
+              {contextWindow ? (
+                <span className="h-1 w-14 overflow-hidden rounded-full bg-border">
+                  <span
+                    className={`block h-full rounded-full ${
+                      (contextUsed ?? 0) / contextWindow > 0.8 ? "bg-danger" : "bg-accent"
+                    }`}
+                    style={{ width: `${Math.min(100, ((contextUsed ?? 0) / contextWindow) * 100)}%` }}
+                  />
+                </span>
+              ) : null}
+            </span>
+          )}
           {textMode && (
             <button
               type="button"

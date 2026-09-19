@@ -19,10 +19,15 @@ export function hasLlm(options: OptionsResponse | null, configured: string[]): b
 export function effectiveModel(
   provider: string,
   chosen: string,
-  listed: { id: string }[],
+  listed: { id: string; chat?: boolean }[],
   listable: boolean
 ): string {
   if (!provider) return chosen; // no provider selected: the server-level list
   if (!listable || listed.length === 0) return "";
-  return listed.some((m) => m.id === chosen) ? chosen : listed[0].id;
+  if (listed.some((m) => m.id === chosen)) return chosen; // keep any explicit choice, even one hidden by default
+  // Default: a chat model, preferring a "-latest" alias. Providers list retired models beside live ones
+  // (Google still lists one that answers 404), and an alias always points at a current one.
+  const chat = listed.filter((m) => m.chat !== false);
+  const pool = chat.length > 0 ? chat : listed;
+  return (pool.find((m) => /-latest$/.test(m.id)) ?? pool[0]).id;
 }

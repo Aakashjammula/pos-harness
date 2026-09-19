@@ -51,6 +51,8 @@ export async function removeCredential(provider: string): Promise<void> {
 export interface ProviderModel {
   id: string;
   label: string;
+  chat?: boolean; // answers in text. false = image/audio/music/agent/etc., hidden unless "show all"
+  context_window?: number; // input tokens, when the provider says (OpenAI does not)
 }
 
 /** The models this user's saved credential can use, asked of the provider by

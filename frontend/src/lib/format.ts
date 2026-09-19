@@ -1,5 +1,12 @@
 import type { Latency, Usage } from "./types";
 
+/** 1048576 -> "1M", 200000 -> "200k", 4200 -> "4.2k". */
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${+(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
 export function formatUsageLine(usage?: Usage, latency?: Latency): string {
   const parts: string[] = [];
   if (latency) parts.push(`${latency.ttft.toFixed(2)}s ttft / ${latency.total.toFixed(2)}s total`);

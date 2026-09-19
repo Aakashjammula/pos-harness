@@ -414,7 +414,7 @@ export function useVoiceSession() {
           onError: (message) => {
             // Drop the empty bubble if nothing had arrived; keep partial text if it had.
             setLines((prev) => prev.filter((l) => l.id !== botId || l.text !== ""));
-            addLine("system", message);
+            addLine("error", message);
           },
         },
         controller.signal
@@ -422,7 +422,7 @@ export function useVoiceSession() {
         .catch((e: unknown) => {
           if ((e as Error).name === "AbortError") return; // user disconnected mid-reply
           setLines((prev) => prev.filter((l) => l.id !== botId || l.text !== ""));
-          addLine("system", `Connection problem: ${(e as Error).message}`);
+          addLine("error", `Connection problem: ${(e as Error).message}`);
         })
         .finally(() => {
           if (streamAbortRef.current === controller) streamAbortRef.current = null;
