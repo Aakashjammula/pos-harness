@@ -20,6 +20,13 @@ from .turn import run_turn
 from .vad import SileroVad
 
 
+def _content(text: str) -> str:
+    """What a log line may say about something a person or the assistant said. By
+    default only its length: conversations are private and server logs are kept and
+    shipped around. LOG_CONVERSATIONS=true prints the text, for debugging your own setup."""
+    return text if config.LOG_CONVERSATIONS else f"<{len(text)} chars>"
+
+
 class Agent:
     def __init__(
         self,
@@ -311,12 +318,12 @@ class Agent:
                 if not m or len(remainder) < 2:
                     if config.REALTIME_LOG:
                         reason = "no trigger word" if not m else "nothing after trigger word"
-                        print(f"      [STT] dropped        {reason}  (text={text!r})")
+                        print(f"      [STT] dropped        {reason}  (text={_content(text)!r})")
                     continue
                 # Gate on the trigger, but send the LLM the full, unmodified
                 # STT output (not the stripped remainder) — text is left as-is.
 
-            print(f"USER: {text}")
+            print(f"USER: {_content(text)}")
             self._on_event("user_text", {"text": text})
             self.respond(text, turn, stt_t)
 
@@ -381,7 +388,7 @@ class Agent:
             return buf
 
         if config.REALTIME_LOG:
-            print(f"      [LLM] triggered      \"{text}\"")
+            print(f"      [LLM] triggered      \"{_content(text)}\"")
 
         messages = self.conversation[-config.HISTORY_TURNS * 2 :] + [
             {"role": "user", "content": text}
@@ -453,7 +460,7 @@ class Agent:
             self._on_event("bot_text", payload)
 
         if spoken:
-            print(f"BOT:  {' '.join(spoken)}")
+            print(f"BOT:  {_content(' '.join(spoken))}")
 
     def tts_thread(self):
         """TTS consumer stage: synthesizes queued sentence chunks in order
@@ -470,7 +477,7 @@ class Agent:
 
             if config.REALTIME_LOG:
                 preview = chunk if len(chunk) <= 40 else chunk[:37] + "..."
-                print(f"      [TTS] triggered #{chunk_no}   \"{preview}\"")
+                print(f"      [TTS] triggered #{chunk_no}   \"{_content(preview)}\"")
 
             t0 = time.perf_counter()
             try:

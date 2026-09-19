@@ -315,3 +315,60 @@ def test_ptt_end_to_end_produces_a_response(monkeypatch):
         assert fake_sink.pushed
     finally:
         agent.shutdown(threads)
+
+
+# --- conversation content stays out of the logs unless the operator opts in ----------------------------
+
+_SECRET_PHRASE = "my-medical-question-about-zebras"
+
+
+def test_conversation_text_is_not_printed_by_default(monkeypatch, capsys):
+    monkeypatch.setattr(config, "LOG_CONVERSATIONS", False)
+    agent = _build_agent(llm=FakeLlm("the-assistants-private-answer"))
+
+    agent.respond(_SECRET_PHRASE, agent.new_turn(), stt_t=0.0)
+
+    out = capsys.readouterr().out
+    assert _SECRET_PHRASE not in out and "the-assistants-private-answer" not in out
+    assert "[LLM] triggered" in out                       # the log still says that a turn happened
+
+
+def test_conversation_text_is_printed_when_the_operator_asks_for_it(monkeypatch, capsys):
+    monkeypatch.setattr(config, "LOG_CONVERSATIONS", True)
+    agent = _build_agent(llm=FakeLlm("the-assistants-private-answer"))
+
+    agent.respond(_SECRET_PHRASE, agent.new_turn(), stt_t=0.0)
+
+    out = capsys.readouterr().out
+    assert _SECRET_PHRASE in out and "the-assistants-private-answer" in out
+
+
+def test_the_redaction_keeps_the_length_so_logs_stay_useful(monkeypatch):
+    from pos.agent import _content
+
+    monkeypatch.setattr(config, "LOG_CONVERSATIONS", False)
+    assert _content("hello there") == "<11 chars>"
+    monkeypatch.setattr(config, "LOG_CONVERSATIONS", True)
+    assert _content("hello there") == "hello there"
+
+
+def test_no_print_in_the_agent_can_interpolate_conversation_text_without_the_helper():
+    """A guard for the future: a new print of user/bot text must go through _content()."""
+    import ast
+    import inspect
+
+    import pos.agent as agent_module
+
+    sensitive = {"text", "preview", "spoken", "joined", "full_response", "chunk"}
+    offenders = []
+    tree = ast.parse(inspect.getsource(agent_module))
+    for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+        if not (isinstance(call.func, ast.Name) and call.func.id == "print"):
+            continue
+        for fmt in (n for a in call.args for n in ast.walk(a) if isinstance(n, ast.FormattedValue)):
+            wrapped = isinstance(fmt.value, ast.Call) and isinstance(fmt.value.func, ast.Name) \
+                and fmt.value.func.id == "_content"
+            names = {n.id for n in ast.walk(fmt.value) if isinstance(n, ast.Name)}
+            if names & sensitive and not wrapped:
+                offenders.append(f"line {call.lineno}: {ast.unparse(fmt.value)}")
+    assert offenders == []
