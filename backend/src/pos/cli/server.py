@@ -87,6 +87,8 @@ from contextlib import asynccontextmanager
 import requests
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from pos import config
 from pos.agent import Agent
@@ -101,6 +103,7 @@ from pos.llm.providers import is_configured, resolve_provider
 from pos.null_engines import NullTts, NullVad
 from pos.storage import SessionStore
 from pos.tools import all_tools, resolve_enabled, tool_status
+from pos.turn import run_turn
 from pos.utils import pcm16_to_float32
 from pos.vad import SileroVad
 
@@ -134,6 +137,19 @@ def _default_llm_models(base_url: str | None, fallback: str | None) -> list[str]
         return ids or fallback_list
     except Exception:
         return fallback_list
+
+
+class ChatBody(BaseModel):
+    message: str
+    session_id: str | None = None   # continue this session; None starts a new one
+    provider: str | None = None     # which stored credential to use (default: local)
+    llm_model: str | None = None    # None: the provider's own default
+
+
+def _sse(event: str, data: dict) -> str:
+    """One server-sent event. Like Anthropic's stream, the name is on the
+    `event:` line and the payload is JSON on `data:`."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
 class _LazyStt(SttBase):
@@ -334,6 +350,101 @@ def create_app(
         if not store.delete_session(session_id, user_id):
             raise HTTPException(status_code=404, detail="session not found")
         return {"deleted": True}
+
+    @app.post("/chat/stream")
+    async def chat_stream(body: ChatBody, user_id: str = Depends(require_user_id)):
+        """Text chat as a server-sent event stream, over the same LlmBase.stream()
+        that voice mode uses (see pos.turn.run_turn).
+
+        Problems found before streaming starts are plain HTTP statuses (401, 404,
+        409, 422). Once the 200 is sent a status can't change, so a failure
+        mid-stream is an `error` event instead. Events: `session` {id}, `token`
+        {text}, `ping` {} (keepalive), `done` {text, usage?, latency?}, `title`
+        {title}, `error` {message}."""
+        text = body.message.strip()
+        if not text:
+            raise HTTPException(status_code=422, detail="message is empty")
+        history: list[dict] = []
+        if body.session_id:
+            existing = store.get_session(body.session_id, user_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="session not found")
+            history = [{"role": t["role"], "content": t["text"]} for t in existing["turns"]]
+        try:
+            llm = await _resolve_user_llm(user_id, body.provider or "local", body.llm_model or default_llm_model)
+        except _NoLlmConfigured:
+            raise HTTPException(
+                status_code=409, detail="no LLM configured -- add a provider (e.g. your local server URL) in Settings"
+            ) from None
+
+        loop = asyncio.get_running_loop()
+        used_model = getattr(getattr(llm, "provider", None), "model", None) or body.llm_model or ""
+        new_session = body.session_id is None
+        session_id = body.session_id or uuid.uuid4().hex
+        if new_session:
+            store.create_session(session_id, user_id, mode="text", tts_engine=None, llm_model=used_model)
+        store.add_turn(session_id, "user", text)
+        messages = history[-config.HISTORY_TURNS * 2 :] + [{"role": "user", "content": text}]
+
+        async def events():
+            cancel = threading.Event()
+            queue: asyncio.Queue = asyncio.Queue()
+
+            def push(item) -> None:
+                loop.call_soon_threadsafe(queue.put_nowait, item)
+
+            def on_piece(piece: str) -> bool:
+                push(("token", {"text": piece}))
+                return not cancel.is_set()
+
+            def work() -> None:
+                try:
+                    push(("stats", run_turn(llm, messages, cancel, on_piece)))
+                except Exception as e:  # noqa: BLE001 -- reported to the client as an error event
+                    print(f"  chat stream error: {e}")
+                    push(("error", {"message": str(e)[:300] or type(e).__name__}))
+                finally:
+                    push(None)
+
+            worker = loop.run_in_executor(None, work)
+            try:
+                yield _sse("session", {"id": session_id})
+                while True:
+                    try:
+                        item = await asyncio.wait_for(queue.get(), timeout=15)
+                    except TimeoutError:
+                        yield _sse("ping", {})   # keeps proxies from closing a stream that looks idle
+                        continue
+                    if item is None:
+                        break
+                    kind, payload = item
+                    if kind != "stats":
+                        yield _sse(kind, payload)
+                        continue
+                    if not payload.text:
+                        continue
+                    done: dict = {"text": payload.text}
+                    if payload.usage:
+                        done["usage"] = payload.usage
+                    if payload.ttft is not None:
+                        done["latency"] = {"ttft": round(payload.ttft, 3), "total": round(payload.total, 3)}
+                    store.add_turn(session_id, "assistant", payload.text, payload.usage or None)
+                    yield _sse("done", done)
+                    generate_title = getattr(llm, "generate_title", None)
+                    if new_session and generate_title is not None:
+                        title = await loop.run_in_executor(None, generate_title, text, payload.text)
+                        if title:
+                            store.set_title(session_id, title)
+                            yield _sse("title", {"title": title})
+            finally:
+                cancel.set()   # client gone (or finished): stop generating tokens nobody will read
+                await worker
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket):
