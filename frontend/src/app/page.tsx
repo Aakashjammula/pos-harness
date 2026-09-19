@@ -4,6 +4,9 @@ import { effectiveModel, hasLlm } from "@/lib/llm";
 import { useProviderModels } from "@/hooks/useProviderModels";
 import { useTools } from "@/hooks/useTools";
 import { ToolsPanel } from "@/components/ToolsPanel";
+import { hashForTab, SettingsShell, type SettingsTab, tabFromHash } from "@/components/SettingsShell";
+import { AccountTab } from "@/components/settings/AccountTab";
+import { SecurityTab } from "@/components/settings/SecurityTab";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deleteSession, fetchOptions, fetchSession, fetchSessions } from "@/lib/api";
 import { AuthGuard } from "@/components/AuthGuard";
@@ -33,8 +36,7 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [sessionsError, setSessionsError] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
   const [toolsVersion, setToolsVersion] = useState(0);
   const [configured, setConfigured] = useState<string[]>([]);
   const [credentialsVersion, setCredentialsVersion] = useState(0);
@@ -107,30 +109,24 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
 
   // hash-based settings route, so #/settings survives refresh/back-forward
   useEffect(() => {
-    const applyRoute = () => {
-      setSettingsOpen(window.location.hash === "#/settings");
-      setToolsOpen(window.location.hash === "#/tools");
-    };
+    const applyRoute = () => setSettingsTab(tabFromHash(window.location.hash));
     applyRoute();
     window.addEventListener("hashchange", applyRoute);
     return () => window.removeEventListener("hashchange", applyRoute);
   }, []);
 
-  const openSettings = useCallback(() => {
-    window.location.hash = "#/settings";
+  const openSettings = useCallback((tab: SettingsTab = "account") => {
+    window.location.hash = hashForTab(tab);
   }, []);
   const closeSettings = useCallback(() => {
     window.location.hash = "";
-  }, []);
-  const openTools = useCallback(() => {
-    window.location.hash = "#/tools";
   }, []);
 
   // Once connected, leave Settings automatically (mirrors the original's
   // ws "ready" handler forcing location.hash back to "").
   useEffect(() => {
-    if (session.connected && (settingsOpen || toolsOpen)) closeSettings();
-  }, [session.connected, settingsOpen, toolsOpen, closeSettings]);
+    if (session.connected && settingsTab) closeSettings();
+  }, [session.connected, settingsTab, closeSettings]);
 
   // Refresh the sidebar once a session becomes ready, and again ~1.5s
   // after each bot reply (the server generates a title off-thread, after
@@ -296,31 +292,41 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
         onSelect={continueSession}
         onDelete={handleDeleteSession}
         userEmail={user.email}
+        onOpenSettings={() => openSettings("account")}
       />
-      {toolsOpen ? (
-        <ToolsPanel
-          tools={toolsState.tools}
-          loading={toolsState.loading}
-          error={toolsState.error}
-          onChanged={onToolsChanged}
-          onBack={closeSettings}
-        />
-      ) : settingsOpen ? (
-        <SettingsPanel
-          settings={settings}
-          onSettingsChange={onSettingsChange}
-          onKeysChange={onKeysChange}
-          options={optionsError ? null : options}
-          mics={mics}
-          disabled={fieldsDisabled}
-          onBack={closeSettings}
-          mode={mode}
-          configured={configured}
-          providerModels={providerModels}
-          llmModel={llmModel}
-          tools={toolsState.tools}
-          onCredentialsChanged={refreshConfigured}
-        />
+      {settingsTab ? (
+        <SettingsShell tab={settingsTab} onTab={openSettings} onBack={closeSettings}>
+          {settingsTab === "account" && <AccountTab />}
+          {settingsTab === "security" && <SecurityTab />}
+          {settingsTab === "model" && (
+            <SettingsPanel
+              embedded
+              settings={settings}
+              onSettingsChange={onSettingsChange}
+              onKeysChange={onKeysChange}
+              options={optionsError ? null : options}
+              mics={mics}
+              disabled={fieldsDisabled}
+              onBack={closeSettings}
+              mode={mode}
+              configured={configured}
+              providerModels={providerModels}
+              llmModel={llmModel}
+              tools={toolsState.tools}
+              onCredentialsChanged={refreshConfigured}
+            />
+          )}
+          {settingsTab === "tools" && (
+            <ToolsPanel
+              embedded
+              tools={toolsState.tools}
+              loading={toolsState.loading}
+              error={toolsState.error}
+              onChanged={onToolsChanged}
+              onBack={closeSettings}
+            />
+          )}
+        </SettingsShell>
       ) : (
         <ChatPanel
           mode={mode}
@@ -336,8 +342,8 @@ function VoiceAgent({ user }: { user: CurrentUser }) {
           onToggleMute={session.toggleMute}
           onConnect={handleConnect}
           onDisconnect={handleDisconnect}
-          onOpenSettings={openSettings}
-          onOpenTools={openTools}
+          onOpenSettings={() => openSettings("model")}
+          onOpenTools={() => openSettings("tools")}
           modelChipLabel={modelChipLabel}
           onSendText={session.sendText}
           replying={session.replying}
