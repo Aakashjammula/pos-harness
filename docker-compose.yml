@@ -29,6 +29,8 @@ services:
       LOCAL_BASE_URL: ${LOCAL_BASE_URL:-}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set - see .env.example}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set - see .env.example}
+      HF_HOME: /home/app/.cache/huggingface
+      NLTK_DATA: /home/app/nltk_data
       PYTHONUNBUFFERED: "1"   # show model-load progress in `docker compose logs`
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
@@ -44,8 +46,8 @@ services:
     volumes:
       # Model files live in the repo folder, not the container, so a
       # recreated container reuses them instead of re-downloading (~1GB).
-      - ./models/huggingface:/root/.cache/huggingface
-      - ./models/nltk_data:/root/nltk_data
+      - ./models/huggingface:/home/app/.cache/huggingface
+      - ./models/nltk_data:/home/app/nltk_data
       - ./assets:/app/assets:ro
     ports:
       - "8000:8000"
