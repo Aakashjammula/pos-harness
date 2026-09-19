@@ -1,4 +1,5 @@
 import { API_URL } from "./config";
+import { apiFetch } from "./apiFetch";
 
 export interface CurrentUser {
   id: string;
@@ -87,7 +88,7 @@ export async function logout(): Promise<void> {
 }
 
 export async function fetchMe(): Promise<CurrentUser | null> {
-  const res = await fetch(`${API_URL}/auth/me`, { credentials: "include" });
+  const res = await apiFetch("/auth/me");
   if (res.status === 401) return null;
   if (!res.ok) throw new Error("Couldn't load your account.");
   return res.json();

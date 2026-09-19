@@ -1,4 +1,4 @@
-import { API_URL } from "./config";
+import { apiFetch } from "./apiFetch";
 
 export interface ChatHandlers {
   onSession: (id: string) => void;
@@ -43,9 +43,8 @@ export async function streamChat(
   handlers: ChatHandlers,
   signal: AbortSignal
 ): Promise<void> {
-  const res = await fetch(`${API_URL}/chat/stream`, {
+  const res = await apiFetch("/chat/stream", {
     method: "POST",
-    credentials: "include",
     signal,
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
     body: JSON.stringify(body),
