@@ -116,8 +116,16 @@ def build_auth_router(users: UserStore) -> APIRouter:
         # their inbox. Never issue cookies on this branch -- doing so
         # would make an unverified email a logged-in session.
         if body.password is None:
-            await _send_magic_link(body.email.lower())
-            return {"id": user["id"], "email": user["email"], "magic_link_sent": True}
+            sent = await _send_magic_link(body.email.lower())
+            result = {"id": user["id"], "email": user["email"], "magic_link_sent": sent}
+            if not sent:
+                # The account exists but no email went out, so the person has no
+                # way in yet. Say so instead of showing "check your inbox".
+                result["message"] = (
+                    "Your account was created, but the sign-in email couldn't be sent. "
+                    "Try \"email me a link\" on the sign-in page in a minute."
+                )
+            return result
 
         _issue(response, user["id"])
         return {"id": user["id"], "email": user["email"], "magic_link_sent": False}
@@ -137,13 +145,16 @@ def build_auth_router(users: UserStore) -> APIRouter:
         _issue(response, user["id"])
         return {"id": user["id"], "email": user["email"]}
 
-    async def _send_magic_link(email: str) -> None:
+    async def _send_magic_link(email: str) -> bool:
         """Mint, store and mail one link, honouring the cooldown. Shared
         by the request endpoint and by a passwordless signup, so the
         throttle covers both -- signing up repeatedly must not be a way
-        around the rate limit on the request endpoint."""
+        around the rate limit on the request endpoint.
+
+        True when a link is on its way (freshly sent, or one already
+        outstanding inside the cooldown); False when sending failed."""
         if users.recent_magic_link_request(email, within=MAGIC_LINK_REQUEST_COOLDOWN):
-            return
+            return True
         raw, token_hash = new_magic_link_token()
         users.store_magic_link_token(email, token_hash, datetime.now(UTC) + MAGIC_LINK_TOKEN_TTL)
         link_url = f"{config.FRONTEND_URL}/magic-link?token={raw}"
@@ -151,6 +162,8 @@ def build_auth_router(users: UserStore) -> APIRouter:
             await send_magic_link_email(email, link_url)
         except Exception as e:
             print(f"  magic-link email send failed for {email}: {e}")
+            return False
+        return True
 
     @router.post("/auth/magic-link/request")
     async def request_magic_link(body: MagicLinkRequest):

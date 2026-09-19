@@ -33,6 +33,9 @@ export interface SignupResult extends CurrentUser {
   /** True when no password was given: the account exists but this
    * browser is NOT signed in -- the link in their inbox is. */
   magic_link_sent: boolean;
+  /** Set when a passwordless signup could not send its email: the account
+   * exists, but nothing is on its way to the person's inbox. */
+  message?: string;
 }
 
 export async function signup(input: SignupInput): Promise<SignupResult> {
