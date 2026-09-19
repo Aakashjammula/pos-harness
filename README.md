@@ -78,9 +78,11 @@ You'll also need a Postgres database for session history — see
 "Running with Docker Compose" below, or point `DATABASE_URL` at your own
 instance (defaults to `postgresql://pos:pos@localhost:5432/pos`).
 
-Then start LM Studio, load a model, and start its local server (default
-`http://localhost:1234/v1` — matches `LangChainLlm`'s default; see
-Configuration below if yours differs).
+No LLM endpoint is assumed. To use a local model, start LM Studio (or any
+OpenAI-compatible server), load a model, start its server, and give the
+backend its URL — `LOCAL_BASE_URL=http://localhost:1234/v1`, or per user in
+the web UI's Settings. Until then (and with no provider API key), sessions
+are refused with "no LLM configured".
 
 ### Optional: Supertonic TTS
 
@@ -303,7 +305,7 @@ works.
 
 | Backend | Selected by | Other vars |
 |---|---|---|
-| Local (default) | *(none of the below set)* | — talks to LM Studio, same as before |
+| Local | `LOCAL_BASE_URL` (no default) | `LOCAL_MODEL` (optional; otherwise the first model the server reports), `LOCAL_API_KEY` |
 | OpenAI | `OPENAI_API_KEY` | `OPENAI_MODEL` (default `gpt-4o-mini`) |
 | Azure OpenAI | `AZURE_OPENAI_API_KEY` (wins if both are set) | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`, `AZURE_OPENAI_API_VERSION` (default `2026-01-01-preview`) |
 
@@ -594,10 +596,18 @@ Starts three services:
   `http://localhost:3000`, with `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_WS_URL`
   pointed at the backend service
 
-The `backend` image does not bundle the STT/TTS model weights (`assets/`,
-gitignored, ~1GB+) — they auto-download on first run into a container
-volume, same as running locally. LM Studio (or another OpenAI-compatible
-server) still runs on the host, outside Compose — set `LOCAL_BASE_URL` if
-it's not on the default `http://localhost:1234/v1` from inside the
-backend container (`http://host.docker.internal:1234/v1` on
-Windows/Mac).
+The `backend` image does not bundle the STT/TTS model weights (~1GB+).
+Compose mounts `./models` (Hugging Face and NLTK caches) and `./assets`
+(Supertonic) into the container, so they download once on first run and
+survive container recreation. Both are gitignored.
+
+No LLM endpoint is assumed. LM Studio (or another OpenAI-compatible server)
+runs on the host, outside Compose; give the backend its URL with
+`LOCAL_BASE_URL` (from inside the container that is
+`http://host.docker.internal:1234/v1`), or let each user enter theirs in
+Settings.
+
+The Postgres port is published on `127.0.0.1` only, and backend tests
+refuse to run against any database not named `*_test` (default `pos_test`;
+create it with `docker compose exec postgres psql -U pos -d postgres -c
+'CREATE DATABASE pos_test'`).

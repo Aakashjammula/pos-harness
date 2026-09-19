@@ -1,18 +1,38 @@
 import pytest
 
-from pos.llm.providers import ProviderConfig, estimate_cost, resolve_provider
+from pos.llm.providers import ProviderConfig, estimate_cost, is_configured, resolve_provider
 
 
-def test_defaults_to_local_when_no_env_vars_set(monkeypatch):
-    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+_ALL_PROVIDER_ENV = (
+    "LOCAL_BASE_URL", "LOCAL_MODEL", "AZURE_OPENAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY", "AWS_ACCESS_KEY_ID", "OPENROUTER_API_KEY",
+)
+
+
+def _clear_all(monkeypatch):
+    for name in _ALL_PROVIDER_ENV:
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_no_provider_is_assumed_when_nothing_is_configured(monkeypatch):
+    _clear_all(monkeypatch)
+
+    assert is_configured() is False
+    with pytest.raises(RuntimeError, match="no LLM provider configured"):
+        resolve_provider()
+
+
+def test_local_is_selected_only_once_a_base_url_is_given(monkeypatch):
+    _clear_all(monkeypatch)
+    monkeypatch.setenv("LOCAL_BASE_URL", "http://my-host:1234/v1")
+    monkeypatch.setenv("LOCAL_MODEL", "my-model")
 
     provider = resolve_provider()
 
+    assert is_configured() is True
     assert provider.name == "local"
-    assert provider.base_url == "http://localhost:1234/v1"
-    assert provider.api_key == "lm-studio"
-    assert provider.model == "lfm2.5-230m"
+    assert provider.base_url == "http://my-host:1234/v1"
+    assert provider.model == "my-model"
 
 
 def test_openai_backend_selected_when_key_set(monkeypatch):

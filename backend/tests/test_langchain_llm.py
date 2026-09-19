@@ -11,6 +11,10 @@ from pos.llm.langchain_llm import LangChainLlm
 def _clear_provider_env(monkeypatch):
     monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # Nothing is assumed about the LLM, so give the local provider an explicit
+    # URL and model (no network: a named model skips the /models lookup).
+    monkeypatch.setenv("LOCAL_BASE_URL", "http://llm.test/v1")
+    monkeypatch.setenv("LOCAL_MODEL", "test-model")
     # Default every test in this file to no real network call for the
     # context-window lookup (local's provider hits LM Studio's REST
     # API) — test_context_window_resolved_once_at_construction below
@@ -159,9 +163,10 @@ def test_init_passes_env_override_to_default_tools_when_tools_not_given(monkeypa
         bind_tools=lambda tools: _FakeRunnable([])
     ))
 
-    LangChainLlm(env={"TAVILY_API_KEY": "tvly-override"}, warmup=False)
+    env = {"TAVILY_API_KEY": "tvly-override", "LOCAL_BASE_URL": "http://llm.test/v1", "LOCAL_MODEL": "m"}
+    LangChainLlm(env=env, warmup=False)
 
-    assert seen["env"] == {"TAVILY_API_KEY": "tvly-override"}
+    assert seen["env"] == env
 
 
 def test_init_passes_expected_kwargs_to_build_model(monkeypatch):
@@ -258,7 +263,7 @@ def test_stream_populates_usage_dict_for_plain_text_reply(monkeypatch):
 
     assert result == ["hi"]
     assert usage["provider"] == "local"
-    assert usage["model"] == "lfm2.5-230m"
+    assert usage["model"] == "test-model"
     assert usage["input_tokens"] == 100
     assert usage["output_tokens"] == 20
     assert usage["total_tokens"] == 120

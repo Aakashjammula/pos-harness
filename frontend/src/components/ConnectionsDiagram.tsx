@@ -21,7 +21,11 @@ export function ConnectionsDiagram({
     return <div className="mt-2.5 text-[12.5px] text-text-faint">Loading…</div>;
   }
 
-  const providerLabel = llmConfigured ? `${options.provider.name} · ${options.provider.model}` : "No LLM configured";
+  const providerLabel = !llmConfigured
+    ? "No LLM configured"
+    : options.provider.name
+      ? `${options.provider.name} · ${options.provider.model}`
+      : "Your saved provider";
 
   return (
     <div className="grid content-start gap-2.5">
