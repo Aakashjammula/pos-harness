@@ -23,6 +23,7 @@ interface ChatPanelProps {
   onOpenTools: () => void;
   modelChipLabel: string;
   onSendText: (text: string) => void;
+  replying: boolean; // a text reply is still streaming in
 }
 
 export function ChatPanel({
@@ -43,6 +44,7 @@ export function ChatPanel({
   onOpenTools,
   modelChipLabel,
   onSendText,
+  replying,
 }: ChatPanelProps) {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const [textValue, setTextValue] = useState("");
@@ -71,7 +73,7 @@ export function ChatPanel({
 
   function handleSend() {
     const value = textValue.trim();
-    if (!value) return;
+    if (!value || replying) return;
     onSendText(value);
     setTextValue("");
   }
@@ -237,14 +239,15 @@ export function ChatPanel({
               value={textValue}
               onChange={(e) => setTextValue(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSend()}
-              placeholder="Message the assistant…"
+              placeholder={replying ? "Replying…" : "Message the assistant…"}
               autoFocus
               className="flex-1 bg-transparent py-2 text-[14.5px] outline-none placeholder:text-text-faint"
             />
             <button
               type="button"
               onClick={handleSend}
-              className="shrink-0 rounded-full bg-text px-[18px] py-2.5 text-[13.5px] font-semibold text-bg transition-opacity hover:opacity-85"
+              disabled={replying}
+              className="shrink-0 rounded-full bg-text px-[18px] py-2.5 text-[13.5px] font-semibold text-bg transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Send
             </button>
