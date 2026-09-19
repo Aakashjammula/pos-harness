@@ -26,9 +26,10 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-pos}:${POSTGRES_PASSWORD:-pos}@postgres:5432/${POSTGRES_DB:-pos}
-      LOCAL_BASE_URL: ${LOCAL_BASE_URL:-http://host.docker.internal:1234/v1}
+      LOCAL_BASE_URL: ${LOCAL_BASE_URL:-}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set - see .env.example}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set - see .env.example}
+      PYTHONUNBUFFERED: "1"   # show model-load progress in `docker compose logs`
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       DB_POOL_MAX_SIZE: ${DB_POOL_MAX_SIZE:-10}
@@ -40,6 +41,12 @@ services:
       MAIL_PORT: ${MAIL_PORT:-587}
       MAIL_TLS: ${MAIL_TLS:-true}
       MAIL_SSL: ${MAIL_SSL:-false}
+    volumes:
+      # Model files live in the repo folder, not the container, so a
+      # recreated container reuses them instead of re-downloading (~1GB).
+      - ./models/huggingface:/root/.cache/huggingface
+      - ./models/nltk_data:/root/nltk_data
+      - ./assets:/app/assets:ro
     ports:
       - "8000:8000"
     extra_hosts:

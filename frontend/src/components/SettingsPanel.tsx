@@ -153,6 +153,11 @@ export function SettingsPanel({
                 ))}
               </select>
             </Field>
+            {options && !options.llm_configured && !configured.some((p) => p !== "tavily") && (
+              <p className="m-0 text-xs text-text-faint">
+                No LLM configured yet. Add your server URL or an API key in the provider settings.
+              </p>
+            )}
           </div>
 
           {!textMode && (
