@@ -1,28 +1,14 @@
-"""No-op stand-ins for text-mode sessions (see server.py's ws_endpoint),
-which never feed audio in or synthesize audio out at all. Deliberately
-NOT placed inside the tts/ or vad/ packages -- those packages' own
-__init__.py eagerly import the real (heavy) engines, and importing
-anything from a package always runs its __init__.py first. A module
-that needs "a null engine, nothing else" would otherwise drag in
-KokoroTts/SupertonicTts/SileroVad's own imports just by asking for
-these -- exactly the cost text mode exists to avoid, and exactly what
-this project's existing lazy-import convention (see create_app()'s own
-deferred `from pos.tts import ...`) is careful to prevent for
-tests that inject fake engines instead."""
+"""A no-op VAD for push-to-talk sessions (see server.py's ws_endpoint), where the
+client says explicitly when speech starts and stops, so voice-activity
+detection is never consulted. Kept out of the vad/ package: that package's
+__init__ eagerly imports the real (heavy) SileroVad, and importing anything from
+a package runs its __init__ first."""
 
 from __future__ import annotations
 
 import numpy as np
 
-from .interfaces.tts import TtsBase
 from .interfaces.vad import VadBase
-
-
-class NullTts(TtsBase):
-    sample_rate = 16000
-
-    def __call__(self, text: str) -> np.ndarray:
-        return np.zeros(0, dtype=np.float32)
 
 
 class NullVad(VadBase):

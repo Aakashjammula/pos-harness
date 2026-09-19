@@ -10,8 +10,7 @@ class _Llm:
 
     def stream(self, messages, cancel, usage=None):
         self.seen.append((messages, cancel))
-        for p in self.pieces:
-            yield p
+        yield from self.pieces
         if self.error:
             raise self.error
         if usage is not None:

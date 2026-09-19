@@ -156,41 +156,10 @@ def test_bot_text_event_includes_usage_when_llm_reports_it(monkeypatch):
         agent.shutdown(threads)
 
 
-def test_text_only_agent_never_pushes_to_tts_queue(monkeypatch):
-    monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
-    fake_llm = FakeLlm(reply="hi there")
-    agent = _build_agent(llm=fake_llm, text_only=True)
-
-    agent.on_text_message("hello")
-
-    assert agent.tts_q.qsize() == 0
-    assert agent.conversation == [
-        {"role": "user", "content": "hello"},
-        {"role": "assistant", "content": "hi there "},
-    ]
-
-
-def test_on_text_message_fires_user_text_then_bot_text():
-    events: list[tuple[str, dict]] = []
-    agent = _build_agent(
-        llm=FakeLlm("hi there"), text_only=True,
-        on_event=lambda name, data: events.append((name, data)),
-    )
-
-    agent.on_text_message("hello")
-
-    assert events[0] == ("user_text", {"text": "hello"})
-    assert len(events) == 2
-    bot_name, bot_data = events[1]
-    assert bot_name == "bot_text"
-    assert bot_data["text"] == "hi there "
-    assert bot_data["latency"]["ttft"] >= 0
-
-
 def test_voice_mode_agent_still_pushes_to_tts_queue(monkeypatch):
     monkeypatch.setattr(config, "MIN_SPEECH_SEC", 0.01)
     fake_llm = FakeLlm(reply="hi there")
-    agent = _build_agent(llm=fake_llm)  # text_only defaults to False
+    agent = _build_agent(llm=fake_llm)
 
     agent.respond("hello", agent.new_turn(), stt_t=0.0)
 

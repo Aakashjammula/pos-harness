@@ -64,7 +64,9 @@ def test_gemini_keeps_only_generate_content_models_and_strips_the_prefix(http):
             {"name": "models/gemini-a", "displayName": "Gemini A", "supportedGenerationMethods": ["generateContent"]},
             {"name": "models/embed-x", "supportedGenerationMethods": ["embedContent"]},
         ], "nextPageToken": "t2"}),
-        _Resp({"models": [{"name": "models/gemini-b", "supportedGenerationMethods": ["generateContent", "countTokens"]}]}),
+        _Resp({"models": [
+            {"name": "models/gemini-b", "supportedGenerationMethods": ["generateContent", "countTokens"]},
+        ]}),
     ]
 
     models = list_models("gemini", {"GOOGLE_API_KEY": "g-secret"})
@@ -78,7 +80,8 @@ def test_gemini_keeps_only_generate_content_models_and_strips_the_prefix(http):
 
 def test_openrouter_keeps_text_models_that_support_tools(http):
     http.queue["https://openrouter.ai/api/v1/models"] = [_Resp({"data": [
-        {"id": "a/chat", "name": "Chat", "architecture": {"output_modalities": ["text"]}, "supported_parameters": ["tools"]},
+        {"id": "a/chat", "name": "Chat", "architecture": {"output_modalities": ["text"]},
+         "supported_parameters": ["tools"]},
         {"id": "b/image", "architecture": {"output_modalities": ["image"]}, "supported_parameters": ["tools"]},
         {"id": "c/no-tools", "architecture": {"output_modalities": ["text"]}, "supported_parameters": ["temperature"]},
         {"id": "d/unknown-fields"},
@@ -141,7 +144,8 @@ def test_pagination_has_a_hard_stop(http):
 
 
 def test_gemini_reports_its_400_for_an_invalid_key_as_a_rejected_key(http):
-    http.queue["https://generativelanguage.googleapis.com/v1beta/models"] = [_Resp({"error": {"status": "INVALID_ARGUMENT"}}, 400)]
+    url = "https://generativelanguage.googleapis.com/v1beta/models"
+    http.queue[url] = [_Resp({"error": {"status": "INVALID_ARGUMENT"}}, 400)]
 
     with pytest.raises(ModelListError, match="rejected this key"):
         list_models("gemini", {"GOOGLE_API_KEY": "bad"})

@@ -1,66 +1,56 @@
 """
-FastAPI websocket server — see docs/superpowers/specs/
-2026-09-09-transport-provider-harness-design.md (transport) and
-2026-09-10-web-ui-provider-selection-design.md (model/provider
-selection, this file's /options + query-param handling).
+FastAPI server: text chat over server-sent events, voice over a websocket.
+See docs/superpowers/specs/2026-09-09-transport-provider-harness-design.md
+(transport) and 2026-09-10-web-ui-provider-selection-design.md (model/provider
+selection, this file's /options handling).
 
-Four endpoints (plus /auth/* and /credentials/* -- see pos.auth.routes):
+Endpoints (plus /auth/*, /credentials/* and /tools -- see pos.auth.routes):
   GET  /options          what the UI can offer before connecting (TTS
-                         engines/voices, LLM models currently loaded in
-                         LM Studio, the active provider, and which tools
-                         are bound/enabled — for the Settings page's
-                         Connections diagram)
+                         engines/voices, the active provider, and which tools
+                         would be bound server-wide)
   GET  /sessions         list of past sessions (id, mode, turn count, ...),
                          newest first — read-only, see storage.py
   GET  /sessions/{id}    one session's stored turns, 404 if unknown
-  WS   /ws               binary frames carry raw PCM16 mono audio in both
-                         directions (voice mode only — see mode below); one
-                         JSON "ready" event on connect (includes a
-                         session_id), then "user_text"/"bot_text"/"interrupted"
-                         events for live captions. Config is chosen via
-                         query params, e.g.
-                         /ws?tts=kokoro&voice=af_bella&llm_model=<model id>&trigger_word=computer&vad_threshold=0.5&vad_min_silence_ms=1200&vad_speech_pad_ms=300&mode=voice
+  POST /chat/stream      text chat. Body {message, session_id?, provider?,
+                         llm_model?}; the reply streams back as server-sent
+                         events (`session`, `token`, `ping`, `done`, `title`,
+                         `error`) from the same LlmBase.stream() voice uses
+                         (see pos.turn.run_turn). Problems found before
+                         streaming starts are plain HTTP statuses (401, 404,
+                         409 no LLM configured, 422 empty message).
+  WS   /ws               voice only: binary frames carry raw PCM16 mono audio
+                         in both directions; one JSON "ready" event on connect
+                         (includes a session_id), then
+                         "user_text"/"bot_text"/"interrupted" events for live
+                         captions. Config is chosen via query params, e.g.
+                         /ws?tts=kokoro&voice=af_bella&llm_model=<id>&vad_threshold=0.5
                          — all optional, falling back to each engine's own
                          default. Headphones are assumed unconditionally (no
-                         echo suppression, full barge-in) — every client is
-                         expected to have real mic/speaker isolation; there's
-                         no safer fallback mode. An invalid vad_* value gets
-                         an "error" event and the socket is closed rather
-                         than silently falling back.
+                         echo suppression, full barge-in). An invalid vad_*
+                         value gets an "error" event and the socket is closed
+                         rather than silently falling back. `mode=text` is
+                         refused with a pointer to /chat/stream.
 
-                         `mode` is "text" (default) or "voice" — text is the
-                         product's primary mode, voice is secondary. Text
-                         mode skips mic/VAD/STT/TTS entirely: the client sends
-                         {"text": "..."} JSON messages instead of PCM audio,
-                         and never receives binary audio frames back. An
-                         invalid mode gets the same error+close treatment as
-                         an invalid vad_* value.
-
-                         `voice_input_mode` (voice mode only) is "vad"
-                         (default), "wake_word", or "push_to_talk".
-                         "wake_word" requires trigger_word to also be set
-                         (rejected otherwise) — same underlying continuous
-                         VAD as "vad", just gated on the transcript leading
-                         with the trigger phrase. "push_to_talk" skips VAD
-                         entirely: the client sends {"event":"ptt_start"}
+                         `voice_input_mode` is "vad" (default), "wake_word",
+                         or "push_to_talk". "wake_word" requires trigger_word
+                         to also be set (rejected otherwise) — same underlying
+                         continuous VAD as "vad", just gated on the transcript
+                         leading with the trigger phrase. "push_to_talk" skips
+                         VAD entirely: the client sends {"event":"ptt_start"}
                          before streaming frames and {"event":"ptt_stop"}
                          after the last one, and any trigger_word sent
-                         alongside it is ignored. Switching between "voice"
-                         and "text" mode mid-conversation is a plain
-                         reconnect with resume_session_id set to the same
-                         session_id — see the browser client's mode toggle.
+                         alongside it is ignored. Switching between voice and
+                         text mid-conversation reuses the same session_id
+                         (resume_session_id here, session_id on /chat/stream).
 
-                         `provider` (optional) selects which stored, per-user
-                         encrypted credential to load for this connection --
-                         see pos.auth.routes.PROVIDER_FIELDS for the set of
-                         providers and pos.auth.store.UserStore for how
-                         credentials are stored. A connection with stored
-                         credentials never uses the shared per-model LLM
-                         cache -- it gets its own uncached LangChainLlm,
-                         since two sessions sharing one model name must
-                         never share one session's key.
+Both transports take a `provider` (optional) selecting which stored, per-user
+encrypted credential to load -- see pos.auth.routes.PROVIDER_FIELDS and
+pos.auth.store.UserStore. A user with stored credentials or tool choices never
+uses the shared per-model LLM cache -- they get their own uncached LangChainLlm
+with their own tools bound, since two sessions sharing one model name must never
+share one session's key.
 
-Every /ws connection and every /sessions* request requires a signed-in
+Every /ws connection, /chat/stream call and /sessions* request requires a signed-in
 user (see pos.auth.deps) -- there is no anonymous mode.
 
 Each connection gets its own Agent (own VAD state, own conversation
@@ -92,7 +82,6 @@ from pydantic import BaseModel
 
 from pos import config
 from pos.agent import Agent
-from pos.audio.null_sink import NullAudioSink
 from pos.audio.ws_sink import WebSocketAudioSink
 from pos.auth.deps import require_user_id, user_id_from_request
 from pos.auth.routes import build_auth_router
@@ -100,7 +89,7 @@ from pos.auth.store import UserStore
 from pos.db import create_pool, init_schema
 from pos.interfaces import LlmBase, SttBase, TtsBase, VadBase
 from pos.llm.providers import is_configured, resolve_provider
-from pos.null_engines import NullTts, NullVad
+from pos.null_engines import NullVad
 from pos.storage import SessionStore
 from pos.tools import all_tools, resolve_enabled, tool_status
 from pos.turn import run_turn
@@ -370,6 +359,10 @@ def create_app(
             if existing is None:
                 raise HTTPException(status_code=404, detail="session not found")
             history = [{"role": t["role"], "content": t["text"]} for t in existing["turns"]]
+            if existing["session"]["mode"] != "text":
+                # Same rule as resuming over /ws: the stored mode is whichever
+                # the session was last used in.
+                store.set_mode(body.session_id, "text")
         try:
             llm = await _resolve_user_llm(user_id, body.provider or "local", body.llm_model or default_llm_model)
         except _NoLlmConfigured:
@@ -463,11 +456,17 @@ def create_app(
         llm_model = params.get("llm_model") or default_llm_model   # None -> the provider's own default
         trigger_word = params.get("trigger_word") or None
 
-        mode = params.get("mode", "text")
-        if mode not in ("voice", "text"):
+        mode = params.get("mode", "voice")
+        if mode != "voice":
+            # Text chat moved to POST /chat/stream (server-sent events); this
+            # socket is only for voice, which needs bidirectional binary audio.
             await websocket.send_json({
                 "event": "error",
-                "message": f"mode must be 'voice' or 'text', got {mode!r}",
+                "message": (
+                    "text chat moved to POST /chat/stream"
+                    if mode == "text"
+                    else f"mode must be 'voice', got {mode!r}"
+                ),
             })
             await websocket.close(code=1008)
             return
@@ -534,11 +533,9 @@ def create_app(
             await websocket.close(code=1008)
             return
 
-        # Text-mode sessions never synthesize audio at all, so skip
-        # constructing (and warming/loading) a real TTS engine for one —
-        # NullTts stands in instead. Same reasoning for VAD further below.
-        if mode == "voice" and not _models_ready.is_set():
-            # Text mode needs neither STT nor TTS, so only voice waits.
+        if not _models_ready.is_set():
+            # Voice needs the STT and TTS models; text chat (POST /chat/stream)
+            # needs neither, so it works while these are still loading.
             await websocket.send_json({
                 "event": "error",
                 "message": (
@@ -549,7 +546,7 @@ def create_app(
             })
             await websocket.close(code=1013)
             return
-        tts = NullTts() if mode == "text" else await get_tts(tts_engine, voice)
+        tts = await get_tts(tts_engine, voice)
         try:
             llm = await _resolve_user_llm(user_id, params.get("provider", "local"), llm_model)
         except _NoLlmConfigured:
@@ -564,7 +561,7 @@ def create_app(
         used_model = getattr(getattr(llm, "provider", None), "model", None) or llm_model or ""
 
         session_id = resume_session_id or uuid.uuid4().hex
-        stored_tts_engine = None if mode == "text" else tts_engine
+        stored_tts_engine = tts_engine
         if not resume_session_id:
             try:
                 store.create_session(
@@ -646,32 +643,22 @@ def create_app(
 
         vad = (
             NullVad()
-            if mode == "text" or voice_input_mode == "push_to_talk"
+            if voice_input_mode == "push_to_talk"
             else vad_factory(
                 threshold=vad_threshold,
                 min_silence_ms=vad_min_silence_ms,
                 speech_pad_ms=vad_speech_pad_ms,
             )
         )
-        sink = (
-            NullAudioSink()
-            if mode == "text"
-            else WebSocketAudioSink(websocket, loop, rate=tts.sample_rate, blocksize=config.OUT_BLOCK)
-        )
+        sink = WebSocketAudioSink(websocket, loop, rate=tts.sample_rate, blocksize=config.OUT_BLOCK)
         agent = Agent(
             vad=vad, stt=stt, tts=tts, llm=llm,
             trigger_word=trigger_word, audio_sink=sink, on_event=emit,
-            text_only=(mode == "text"), conversation=resumed_conversation,
+            conversation=resumed_conversation,
         )
         threads = agent.start()
         try:
-            if mode == "text":
-                while True:
-                    msg = await websocket.receive_json()
-                    text = msg.get("text", "")
-                    if text.strip():
-                        await loop.run_in_executor(None, agent.on_text_message, text)
-            elif voice_input_mode == "push_to_talk":
+            if voice_input_mode == "push_to_talk":
                 # Unlike vad/wake_word (audio frames only), push-to-talk
                 # also needs small JSON control messages on the same
                 # connection -- receive_bytes()/receive_json() each raise

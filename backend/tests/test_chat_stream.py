@@ -160,3 +160,55 @@ def test_block_list_content_streams_as_text():
         events = _events(resp)
 
     assert "".join(d["text"] for n, d in events if n == "token") == "hello"
+
+
+
+def _client_with_store(llm):
+    session_store, user_store = _fresh_stores()
+    app = create_app(
+        stt=FakeStt("x"),
+        tts_engines={"kokoro": FakeTts},
+        llm_factory=lambda model: llm,
+        default_tts_engine="kokoro",
+        session_store=session_store,
+        user_store=user_store,
+    )
+    client = TestClient(app)
+    return client, session_store, _sign_in(client)
+
+
+def test_continuing_a_voice_session_in_text_updates_its_stored_mode():
+    client, store, user_id = _client_with_store(FakeLlm(reply="ok"))
+    store.create_session("s1", user_id, mode="voice", tts_engine="kokoro", llm_model="m")
+
+    with client.stream("POST", "/chat/stream", json={"message": "hi", "session_id": "s1"}) as resp:
+        list(resp.iter_lines())
+
+    assert store.get_session("s1", user_id)["session"]["mode"] == "text"
+    assert store.list_sessions(user_id)[0]["mode"] == "text"
+
+
+def test_continuing_a_text_session_leaves_the_mode_alone():
+    client, store, user_id = _client_with_store(FakeLlm(reply="ok"))
+    store.create_session("s1", user_id, mode="text", tts_engine=None, llm_model="m")
+
+    with client.stream("POST", "/chat/stream", json={"message": "hi", "session_id": "s1"}) as resp:
+        list(resp.iter_lines())
+
+    assert store.get_session("s1", user_id)["session"]["mode"] == "text"
+
+
+def test_continuing_a_titled_session_does_not_regenerate_its_title():
+    llm = FakeLlm(reply="ok", fake_title="Should not be used")
+    client, store, user_id = _client_with_store(llm)
+    store.create_session("s1", user_id, mode="text", tts_engine=None, llm_model="m")
+    store.add_turn("s1", "user", "hi")
+    store.add_turn("s1", "assistant", "hello")
+    store.set_title("s1", "Original title")
+
+    with client.stream("POST", "/chat/stream", json={"message": "one more thing", "session_id": "s1"}) as resp:
+        names = [n for n, _ in _events(resp)]
+
+    assert "title" not in names and llm.title_calls == []
+    assert store.get_session("s1", user_id)["session"]["title"] == "Original title"
+    assert llm.calls[0][0] == {"role": "user", "content": "hi"}          # the stored history was sent

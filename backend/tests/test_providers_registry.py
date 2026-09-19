@@ -2,7 +2,6 @@ import pytest
 
 from pos.llm.providers import ProviderConfig, estimate_cost, is_configured, resolve_provider
 
-
 _ALL_PROVIDER_ENV = (
     "LOCAL_BASE_URL", "LOCAL_MODEL", "AZURE_OPENAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
     "GOOGLE_API_KEY", "AWS_ACCESS_KEY_ID", "OPENROUTER_API_KEY",
