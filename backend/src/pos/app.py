@@ -24,7 +24,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langgraph.checkpoint.sqlite import SqliteSaver
 from pydantic import BaseModel
@@ -83,30 +82,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(lifespan=lifespan)
 
-# The built UI, when there is one. Packaged, `next build` output is copied
-# to src/pos/web/ and served from here, so the API and the UI share one
-# origin on one port. In development it's absent and the Next dev server
-# serves the UI on :3000 instead.
-WEB_DIR = Path(__file__).resolve().parent / "web"
-PACKAGED = WEB_DIR.is_dir()
+# The built UI. `npm run build:app` in frontend/ writes Next.js's static
+# export here and it is committed, so running this server is the whole app:
+# no Node, nothing to build, one port.
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 http_headers.add_security_headers(app)
 
-if PACKAGED:
-    # Path operations are matched first; the frontend only answers what no
-    # route claimed. `fallback` sends unknown paths to index.html so the
-    # client router can handle them.
-    app.frontend("/", directory=str(WEB_DIR), fallback="index.html")
-else:
-    # Development only: UI on :3000, API on :8000, so the browser has to be
-    # told the cross-origin calls are allowed. Packaged there is no second
-    # origin, so this is not added at all.
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["http://localhost:3000"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+# Path operations are matched first; these files only answer what no route
+# claimed, and `fallback` hands unknown paths to index.html for the client
+# router. check_dir=False so a checkout with no build still starts and
+# serves the API.
+app.frontend("/", directory=str(STATIC_DIR), fallback="index.html", check_dir=False)
 
 
 @app.post("/chat/stream")

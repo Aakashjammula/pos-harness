@@ -47,33 +47,33 @@ entered through the UI.
 
 ## Development
 
-Two servers, hot reload on both:
+One server, always:
 
 ```bash
-# terminal 1
 cd backend && uv run uvicorn pos.app:app --reload --port 8000
-
-# terminal 2
-cd frontend && npm install && npm run dev
 ```
 
-The UI is on <http://localhost:3000> and talks to the API on `:8000`. The
-backend enables CORS for that origin only while running this way.
+That serves the API *and* the UI. There is no second process.
 
-### How it is packaged
+### Changing the UI
 
-The frontend is Next.js, but nothing Node-related is needed to *run* the
-app — only to build it. `next build` with `output: 'export'` produces plain
-files, a [hatchling](https://hatch.pypa.io/) build hook copies them into the
-Python package, and FastAPI serves them. So the packaged app is one process
-on one port, and a user installs Python and nothing else.
+The frontend is Next.js, but nothing Node-related runs when the app runs —
+Node is only needed to build. `next build` with `output: 'export'` produces
+plain files, and those files are committed at `backend/src/pos/static/`,
+which is what the server hands out.
+
+So after editing anything under `frontend/src/`:
 
 ```bash
-cd backend && uv build --wheel     # builds the UI and bundles it
+cd frontend && npm run build:app
 ```
 
-The hook removes its output from your checkout afterwards, so development
-keeps using the Next dev server.
+That rebuilds and copies the result into `backend/src/pos/static/`. Commit
+that folder along with your source change — it is the part that actually
+ships.
+
+Changes do not appear until you rebuild. That is the trade for having one
+command instead of two.
 
 ### Where things live
 
@@ -83,6 +83,7 @@ keeps using the Next dev server.
 | `backend/src/pos/agent.py` | how the agent is assembled |
 | `backend/src/pos/prompt.py` | the system prompt |
 | `backend/src/pos/trace.py` | per-round and per-tool token accounting |
+| `backend/src/pos/static/` | the built UI, committed |
 | `backend/skills/` | the global skills |
 | `backend/memory/AGENTS.md` | global standing instructions |
 | `frontend/src/components/` | the UI |
@@ -109,8 +110,8 @@ full list. The ones you are most likely to change:
 WORKSPACE=C:/Users/me/projects docker compose up --build
 ```
 
-One service, not two: the image builds the UI and the backend serves it, so
-there is nothing else to run.
+One service, and no Node stage in the image: the UI is already built and
+committed, so the image only installs Python dependencies.
 
 This is for deploying the app somewhere, **not** for daily use on your own
 machine. A container has no display, so the folder picker cannot open --

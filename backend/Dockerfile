@@ -1,18 +1,12 @@
-# The backend, API only. Build context is the repo root, because the wheel
-# build needs frontend/ too (see hatch_build.py).
+# Build context is the repo root.
+#
+# There is no Node stage: the UI is built ahead of time with
+# `npm run build:app` and committed to backend/src/pos/static/, so this image
+# only has to install Python dependencies and copy the source.
 #
 # This image is for deploying the app somewhere, not for daily local use:
 # a container has no display, so the native folder picker cannot open, and
 # `execute` runs inside the container rather than on your machine.
-
-FROM node:24-alpine AS ui
-WORKDIR /src
-COPY frontend/package.json frontend/package-lock.json ./frontend/
-RUN cd frontend && npm ci
-COPY frontend ./frontend
-# output: 'export' -- plain files the backend serves, no Node at runtime.
-RUN cd frontend && npm run build
-
 
 FROM python:3.14-slim AS builder
 # Pinned rather than :latest, per Astral's Docker guide -- a moving uv is a
@@ -34,9 +28,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev --compile-bytecode
 
 COPY backend/ /app/
-# The UI is built in the `ui` stage above; drop it where the build hook
-# expects it so the hook finds it ready and skips running npm.
-COPY --from=ui /src/frontend/out /app/src/pos/web
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --compile-bytecode
 
