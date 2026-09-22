@@ -1,192 +1,75 @@
-"""Postgres connection pool shared by every store in the process.
+"""The app's own tables, living in the same SQLite file as LangGraph's
+checkpointer tables.
 
-Replaces the single connection + global lock the SQLite-era SessionStore
-used: that serialized every query process-wide, which Postgres has no
-reason to do."""
+LangGraph's checkpointer stores raw conversation state, keyed by
+`thread_id` -- it has no concept of a session's title or which folder it
+belongs to. These two tables hold exactly that: the metadata the sidebar
+needs that the checkpointer doesn't track.
+"""
 
 from __future__ import annotations
 
-from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
+import sqlite3
+from pathlib import Path
 
-from pos import config
-
-
-def create_pool(dsn: str | None = None, max_size: int | None = None) -> ConnectionPool:
-    return ConnectionPool(
-        conninfo=dsn or config.DATABASE_URL,
-        min_size=2,
-        max_size=max_size or config.DB_POOL_MAX_SIZE,
-        kwargs={"row_factory": dict_row, "autocommit": True},
-        open=True,
-    )
-
+# repo_root/data/, not backend/data/ -- resolved from this file's own
+# location so it's the same regardless of the working directory the
+# server is started from.
+DB_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
+DB_PATH = DB_DIR / "checkpoint.db"
 
 _SCHEMA = """
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
-CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT,
-    name TEXT,
-    username TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
--- password_hash was NOT NULL before magic-link sign-in existed. A
--- database created under the old schema already has the constraint;
--- dropping one that was never added (a fresh database) is a no-op.
-ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
--- name/username arrived with the signup form; a database created before
--- that has neither. Both stay NULLable: magic-link sign-in creates an
--- account from an email alone and has no name to put there.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
--- Unique but case-insensitive, and only over rows that have one, so the
--- passwordless magic-link accounts (username IS NULL) don't collide.
-CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_key
-    ON users (lower(username)) WHERE username IS NOT NULL;
-
-CREATE TABLE IF NOT EXISTS user_settings (
-    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    compaction_enabled BOOLEAN,
-    pii_enabled BOOLEAN,
-    rate_limits_enabled BOOLEAN,
-    compact_trigger_fraction REAL,
-    compact_keep_messages INTEGER,
-    pii_strategy TEXT,
-    pii_apply_to_output BOOLEAN,
-    tool_calls_per_hour INTEGER,
-    model_calls_per_hour INTEGER,
-    max_cost_usd_per_day NUMERIC(10, 4),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS user_pii_rules (
-    id BIGSERIAL PRIMARY KEY,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    pii_type TEXT NOT NULL,
-    enabled BOOLEAN NOT NULL DEFAULT true,
-    strategy TEXT,
-    pattern TEXT,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (user_id, pii_type)
-);
-
-CREATE TABLE IF NOT EXISTS refresh_tokens (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_hash TEXT NOT NULL UNIQUE,
-    expires_at TIMESTAMPTZ NOT NULL,
-    revoked_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at);
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
-
--- NULL until the person proves they control the address (by opening a link mailed
--- to it). An account whose address was never proven may have been created by
--- someone else, so proving it later resets the account (see UserStore.reset_unverified_account).
-ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
-
--- One row per signed-in browser/device. The access token carries this id and every
--- request checks it, so revoking a row signs that device out at once; the list is
--- what the Settings page shows.
-CREATE TABLE IF NOT EXISTS auth_sessions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    user_agent TEXT,
-    ip TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    revoked_at TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id) WHERE revoked_at IS NULL;
-ALTER TABLE refresh_tokens
-    ADD COLUMN IF NOT EXISTS auth_session_id UUID REFERENCES auth_sessions(id) ON DELETE CASCADE;
-
-CREATE TABLE IF NOT EXISTS magic_link_tokens (
-    id BIGSERIAL PRIMARY KEY,
-    email TEXT NOT NULL,
-    token_hash TEXT NOT NULL UNIQUE,
-    expires_at TIMESTAMPTZ NOT NULL,
-    consumed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_magic_link_tokens_email_created
-    ON magic_link_tokens(email, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS api_credentials (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    provider TEXT NOT NULL,
-    encrypted_payload BYTEA NOT NULL,
-    nonce BYTEA NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (user_id, provider)
-);
-
-CREATE TABLE IF NOT EXISTS user_tool_settings (
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    tool_id TEXT NOT NULL,
-    enabled BOOLEAN NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (user_id, tool_id)
-);
-
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ NOT NULL,
-    mode TEXT NOT NULL,
-    tts_engine TEXT,
-    llm_model TEXT NOT NULL,
-    title TEXT
+    folder TEXT,
+    title TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_sessions_user_created ON sessions(user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS turns (
-    id BIGSERIAL PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id TEXT NOT NULL,
     role TEXT NOT NULL,
     text TEXT NOT NULL,
-    usage_json JSONB,
-    created_at TIMESTAMPTZ NOT NULL,
-    token_count INTEGER,
-    pii_flags JSONB
+    model TEXT,
+    finish_reason TEXT,
+    reasoning_effort TEXT,
+    usage_json TEXT,
+    tool_calls_json TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
 
-CREATE TABLE IF NOT EXISTS session_summaries (
-    id BIGSERIAL PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    summary_text TEXT NOT NULL,
-    covers_through_turn_id BIGINT NOT NULL,
-    token_count INTEGER NOT NULL,
-    model TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_summaries_session ON session_summaries(session_id, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS usage_events (
-    id BIGSERIAL PRIMARY KEY,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-    kind TEXT NOT NULL,
-    name TEXT,
-    status TEXT NOT NULL,
-    input_tokens INTEGER,
-    output_tokens INTEGER,
-    cost_usd NUMERIC(12, 6),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_usage_events_user_kind
-    ON usage_events(user_id, kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_turns_thread_id ON turns (thread_id);
 """
 
 
-def init_schema(pool: ConnectionPool) -> None:
-    with pool.connection() as conn:
-        conn.execute(_SCHEMA)
+def connect() -> sqlite3.Connection:
+    """Opens a connection to the app database, creating its tables if new.
+
+    Returns:
+        A connection with `row_factory` set so query results behave like
+        dicts (`row["field"]`) instead of positional tuples.
+    """
+    DB_DIR.mkdir(exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_SCHEMA)
+    return conn
+
+
+def delete_session(session_id: str) -> bool:
+    """Removes a session and its stored turns.
+
+    The LangGraph checkpoint for the same thread is deleted separately, by
+    the caller, since it belongs to the checkpointer rather than to us.
+
+    Args:
+        session_id: The session (and thread) id to remove.
+
+    Returns:
+        True if a session row was actually deleted.
+    """
+    with connect() as conn:
+        conn.execute("DELETE FROM turns WHERE thread_id = ?", (session_id,))
+        cursor = conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        return cursor.rowcount > 0
