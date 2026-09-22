@@ -10,7 +10,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "POS",
-  description: "Voice, text, and local/cloud model agent client.",
+  description: "Text-based local/cloud model agent client.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

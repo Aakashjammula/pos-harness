@@ -1,409 +1,169 @@
 "use client";
 
-import { effectiveModel, hasLlm, LLM_PROVIDERS } from "@/lib/llm";
-import { useProviderModels } from "@/hooks/useProviderModels";
-import { useTools } from "@/hooks/useTools";
-import { ToolsPanel } from "@/components/ToolsPanel";
-import { hashForTab, SettingsShell, type SettingsTab, tabFromHash } from "@/components/SettingsShell";
-import { AccountTab } from "@/components/settings/AccountTab";
-import { SecurityTab } from "@/components/settings/SecurityTab";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { deleteSession, fetchOptions, fetchSession, fetchSessions } from "@/lib/api";
-import { AuthGuard } from "@/components/AuthGuard";
-import type { CurrentUser } from "@/lib/auth";
-import { fetchCredentialSummary } from "@/lib/credentials";
-import { loadSettings, saveSettings } from "@/lib/settingsStore";
-import { type ApiKeyFields, type OptionsResponse, type SessionMode, type SessionSummary, type Settings } from "@/lib/types";
-import { useVoiceSession } from "@/hooks/useVoiceSession";
+import { useCallback, useEffect, useState } from "react";
+import { useChatSession } from "@/hooks/useChatSession";
+import { useWorkspaceFolder } from "@/hooks/useWorkspaceFolder";
+import { deleteSession, fetchSession, fetchSessions, type SessionSummary } from "@/lib/sessions";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/ChatPanel";
-import { SettingsPanel } from "@/components/SettingsPanel";
+import { SettingsPage } from "@/components/SettingsPage";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { TracePage } from "@/components/TracePage";
 
-function isTypingTarget(target: EventTarget | null): boolean {
-  const tag = (target as HTMLElement | null)?.tagName;
-  return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
-}
+// Fixed for now -- one Azure deployment, read from the backend's own .env,
+// not something picked from a list (see the backend design discussion:
+// no /models endpoint, so nothing here to choose between).
+const MODEL_NAME = "gpt-5.6-luna";
+const LEVELS = ["Low", "Medium", "High"];
 
 export default function Home() {
-  return <AuthGuard>{(user) => <VoiceAgent user={user} />}</AuthGuard>;
-}
-
-function VoiceAgent({ user }: { user: CurrentUser }) {
-  const session = useVoiceSession();
-  const [mode, setMode] = useState<SessionMode>("text");
-  // What you last chose survives a reload. This subtree only renders after the sign-in check,
-  // on the client, so reading browser storage here cannot cause a hydration mismatch.
-  const [storedSettings, setSettings] = useState<Settings>(() => loadSettings(user.id));
-  const [options, setOptions] = useState<OptionsResponse | null>(null);
-  const [optionsError, setOptionsError] = useState(false);
-  const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
+  const session = useChatSession();
+  const workspace = useWorkspaceFolder();
+  const [level, setLevel] = useState(LEVELS[2]);
+  const [showSettings, setShowSettings] = useState(false);
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
-  const [sessionsError, setSessionsError] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
-  const [toolsVersion, setToolsVersion] = useState(0);
-  const [configured, setConfigured] = useState<string[]>([]);
-  const [hints, setHints] = useState<Record<string, string>>({});
-  // With exactly one LLM provider saved and none picked, use it: nothing to choose between.
-  const onlySaved = useMemo(() => configured.filter((p) => LLM_PROVIDERS.includes(p)), [configured]);
-  const settings = useMemo<Settings>(
-    () => ({
-      ...storedSettings,
-      provider: storedSettings.provider || ((onlySaved.length === 1 ? onlySaved[0] : "") as Settings["provider"]),
-    }),
-    [storedSettings, onlySaved]
-  );
-  const [credentialsVersion, setCredentialsVersion] = useState(0);
+  // The chat awaiting a delete confirmation; null when no dialog is open.
+  const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
+  const [showTrace, setShowTrace] = useState(false);
 
-  // --- initial data: /options, mic list, session history ---
-
-  useEffect(() => {
-    fetchOptions()
-      .then((opts) => {
-        setOptions(opts);
-        // Server defaults only fill what you have not chosen yet.
-        setSettings((s) => ({
-          ...s,
-          ttsEngine: s.ttsEngine || opts.defaults.tts_engine,
-          llmModel: s.llmModel || opts.defaults.llm_model,
-        }));
-      })
-      .catch(() => setOptionsError(true));
-  }, []);
-
-  const refreshMics = useCallback(async () => {
+  // Every folder's chats, not just the open one -- the sidebar groups them
+  // by folder, so picking a chat also says which folder it belongs to.
+  const refreshSessions = useCallback(async () => {
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      setMics(devices.filter((d) => d.kind === "audioinput"));
+      setSessions(await fetchSessions());
     } catch {
-      // enumerateDevices can fail (insecure context, unsupported browser) --
-      // leave the mic list empty, "System default" still works fine.
+      setSessions([]); // a transient failure shows an empty list, not a permanent spinner
     }
   }, []);
 
-  useEffect(() => {
-    // Fetch-on-mount: refreshMics is async, so any setState it performs
-    // happens after a microtask, not synchronously within this effect.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    refreshMics();
-    if (navigator.mediaDevices) navigator.mediaDevices.ondevicechange = refreshMics;
-    return () => {
-      if (navigator.mediaDevices) navigator.mediaDevices.ondevicechange = null;
-    };
-  }, [refreshMics]);
-
-  const refreshHistoryList = useCallback(async () => {
-    try {
-      const list = await fetchSessions();
-      setSessions(list);
-      setSessionsError(false);
-    } catch {
-      setSessionsError(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    refreshHistoryList();
-  }, [refreshHistoryList]);
-
-  const refreshConfigured = useCallback(async () => {
-    setCredentialsVersion((v) => v + 1); // a saved/removed key can change which models exist
-    try {
-      const saved = await fetchCredentialSummary();
-      setConfigured(saved.configured);
-      setHints(saved.hints);
-      // Fill the non-secret fields from what is saved, so the form does not look empty after a reload.
-      const pub = saved.public;
-      setSettings((s) => ({
-        ...s,
-        keys: {
-          ...s.keys,
-          localBaseUrl: s.keys.localBaseUrl || pub.local?.LOCAL_BASE_URL || "",
-          azureEndpoint: s.keys.azureEndpoint || pub.azure?.AZURE_OPENAI_ENDPOINT || "",
-          azureDeployment: s.keys.azureDeployment || pub.azure?.AZURE_OPENAI_DEPLOYMENT || "",
-          bedrockRegion: s.keys.bedrockRegion || pub.bedrock?.AWS_REGION || "",
-        },
-      }));
-    } catch {
-      // leave the previous list in place -- a transient failure here
-      // shouldn't blank out dots the user just saw as configured
-    }
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    refreshConfigured();
-  }, [refreshConfigured]);
-
-  useEffect(() => {
-    saveSettings(user.id, storedSettings);
-  }, [user.id, storedSettings]);
-
-  // hash-based settings route, so #/settings survives refresh/back-forward
-  useEffect(() => {
-    const applyRoute = () => setSettingsTab(tabFromHash(window.location.hash));
-    applyRoute();
-    window.addEventListener("hashchange", applyRoute);
-    return () => window.removeEventListener("hashchange", applyRoute);
-  }, []);
-
-  const openSettings = useCallback((tab: SettingsTab = "account") => {
-    window.location.hash = hashForTab(tab);
-  }, []);
-  const closeSettings = useCallback(() => {
-    window.location.hash = "";
-  }, []);
-
-  // Once connected, leave Settings automatically (mirrors the original's
-  // ws "ready" handler forcing location.hash back to "").
-  useEffect(() => {
-    if (session.connected && settingsTab) closeSettings();
-  }, [session.connected, settingsTab, closeSettings]);
-
-  // Refresh the sidebar once a session becomes ready, and again ~1.5s
-  // after each bot reply (the server generates a title off-thread, after
-  // the first exchange, so the row's label may only be ready shortly
-  // after this).
-  const prevConnected = useRef(false);
-  useEffect(() => {
-    if (session.connected && !prevConnected.current) refreshHistoryList();
-    prevConnected.current = session.connected;
-  }, [session.connected, refreshHistoryList]);
-
-  // A streamed text chat is created, then titled, after its first reply; both
-  // arrive as events, so refresh the sidebar when the hook says so.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- sets state only when the fetch completes
-    if (session.historyVersion > 0) refreshHistoryList().catch(() => {});
-  }, [session.historyVersion, refreshHistoryList]);
+    refreshSessions();
+  }, [refreshSessions]);
 
-  const prevLineCount = useRef(0);
   useEffect(() => {
-    if (session.lines.length > prevLineCount.current) {
-      const last = session.lines[session.lines.length - 1];
-      if (last?.who === "bot") {
-        const t = setTimeout(() => refreshHistoryList().catch(() => {}), 1500);
-        return () => clearTimeout(t);
-      }
-    }
-    prevLineCount.current = session.lines.length;
-  }, [session.lines, refreshHistoryList]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sets state only when the fetch completes
+    if (session.historyVersion > 0) refreshSessions();
+  }, [session.historyVersion, refreshSessions]);
 
-  // --- settings field updates ---
-
-  const onSettingsChange = useCallback((patch: Partial<Settings>) => {
-    setSettings((s) => ({ ...s, ...patch }));
-  }, []);
-  const onKeysChange = useCallback((patch: Partial<ApiKeyFields>) => {
-    setSettings((s) => ({ ...s, keys: { ...s.keys, ...patch } }));
-  }, []);
-
-  // --- connect / disconnect ---
-
-  const providerModels = useProviderModels(
-    settings.provider,
-    configured,
-    credentialsVersion,
-    options?.provider.name ?? ""
-  );
-  const toolsState = useTools(toolsVersion);
-  const onToolsChanged = useCallback(() => {
-    setToolsVersion((v) => v + 1);
-    refreshConfigured(); // a saved/removed tool key changes the saved-credential list too
-  }, [refreshConfigured]);
-  const llmModel = effectiveModel(
-    settings.provider,
-    settings.llmModel,
-    providerModels.models,
-    providerModels.listable
-  );
-
-  // How full the model's context is: the latest reply's token total, against the model's own limit
-  // (from its listing, else what the server reported). Providers without a limit show just the count.
+  // How full the model's context is. Not `input_tokens` -- that sums every
+  // round of a turn, so a turn with 11 tool calls reports ~121k for a thread
+  // that is really ~17k. `context_tokens` is the last round's input, which is
+  // the thread as it now stands.
   const lastUsage = [...session.lines].reverse().find((l) => l.usage)?.usage;
-  const contextUsed = lastUsage?.total_tokens ?? undefined;
-  const contextWindow =
-    providerModels.models.find((m) => m.id === llmModel)?.context_window ?? lastUsage?.context_window ?? undefined;
-
-  const doConnect = useCallback(
-    async (resumeSessionId: string | null, connectMode: SessionMode) => {
-      await session.connect(
-        {
-          mode: connectMode,
-          ttsEngine: settings.ttsEngine,
-          ttsVoice: settings.ttsVoice,
-          llmModel,
-          micDeviceId: settings.micDeviceId,
-          voiceInputMode: settings.voiceInputMode,
-          triggerWord: settings.triggerWord,
-          vadThreshold: settings.vadThreshold,
-          vadMinSilenceMs: settings.vadMinSilenceMs,
-          vadSpeechPadMs: settings.vadSpeechPadMs,
-          provider: settings.provider || undefined,
-          resumeSessionId,
-        },
-        resumeSessionId !== null
-      );
-      refreshMics(); // refresh with real labels now that mic permission was (maybe) granted
-    },
-    [settings, llmModel, session, refreshMics]
-  );
-
-  // Switching to voice carries the current chat along: connecting resumes it.
-  const resumeOnConnect = useRef<string | null>(null);
-
-  const handleConnect = useCallback(() => {
-    const resume = resumeOnConnect.current;
-    resumeOnConnect.current = null;
-    doConnect(resume, "voice");
-  }, [doConnect]);
-
-  const handleDisconnect = useCallback(() => {
-    session.disconnect();
-  }, [session]);
-
-  // Text needs no connection, so switching modes only changes what the panel offers. The chat
-  // (its session id and transcript) carries over; voice still needs a Connect for the microphone.
-  const handleModeChange = useCallback(
-    (next: SessionMode) => {
-      if (next === mode) return;
-      const sessionId = session.sessionId;
-      if (session.connected) session.disconnect();
-      setMode(next);
-      if (next === "text") session.startTextChat(sessionId, false);
-      else resumeOnConnect.current = sessionId;
-    },
-    [mode, session]
-  );
-
-  const handleNewChat = useCallback(() => {
-    if (session.connected) session.disconnect();
-    resumeOnConnect.current = null;
-    session.startTextChat(null, true);
-  }, [session]);
+  const contextUsed = lastUsage?.context_tokens ?? undefined;
+  const contextWindow = lastUsage?.context_window ?? undefined;
+  // What this chat has cost so far, summed over its replies.
+  const chatCostUsd = session.lines.reduce((sum, l) => sum + (l.usage?.cost_usd ?? 0), 0) || undefined;
 
   const handleSendText = useCallback(
-    (text: string) => session.sendText(text, { provider: settings.provider || undefined, llmModel }),
-    [session, settings.provider, llmModel]
+    (text: string) => session.sendText(text, { folder: workspace.folderPath, reasoningEffort: level }),
+    [session, workspace.folderPath, level]
   );
 
-  const continueSession = useCallback(
-    async (id: string) => {
-      const detail = await fetchSession(id);
-      if (session.connected) session.disconnect();
-      setMode(detail.session.mode);
-      session.loadHistory(detail.turns);
-      if (detail.session.mode === "text") session.startTextChat(id, false);
-      else await doConnect(id, "voice");
+  // Opening a past chat also switches to the folder it belongs to -- otherwise
+  // the next message in it would run against whichever folder happened to be
+  // open, and get stored under that one.
+  const handleSelectSession = useCallback(
+    async (summary: SessionSummary) => {
+      try {
+        const { turns } = await fetchSession(summary.id);
+        workspace.setFolder(summary.folder);
+        session.loadHistory(summary.id, turns);
+      } catch {
+        // leave the current transcript alone if the reload fails
+      }
     },
-    [session, doConnect]
+    [session, workspace]
   );
 
-  const handleDeleteSession = useCallback(
-    async (id: string) => {
-      await deleteSession(id);
-      refreshHistoryList();
+  const handleNewChatInFolder = useCallback(
+    (folder: string) => {
+      workspace.setFolder(folder);
+      session.newChat();
     },
-    [refreshHistoryList]
+    [session, workspace]
   );
 
-  // --- push-to-talk (hold Space) ---
-
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.code !== "Space" || e.repeat) return;
-      if (!session.connected || mode === "text" || !session.isPttActive) return;
-      if (isTypingTarget(e.target)) return;
-      e.preventDefault();
-      session.pttStart();
+  // Deleting is permanent -- the chat, its stored turns and its memory all
+  // go -- so it asks first. Deleting the chat you're looking at leaves the
+  // transcript pointing at a thread that no longer exists, so start a fresh one.
+  const handleConfirmDelete = useCallback(async () => {
+    const summary = pendingDelete;
+    setPendingDelete(null);
+    if (!summary) return;
+    try {
+      await deleteSession(summary.id);
+      if (summary.id === session.threadId) session.newChat();
+      await refreshSessions();
+    } catch {
+      // leave the list alone if the delete failed
     }
-    function onKeyUp(e: KeyboardEvent) {
-      if (e.code !== "Space") return;
-      if (!session.isPttHeld()) return;
-      session.pttStop();
-    }
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
-    };
-  }, [session, mode]);
+  }, [pendingDelete, session, refreshSessions]);
 
-  const modelChipLabel = !options
-    ? "Model: —"
-    : hasLlm(options, configured)
-      ? `Model: ${settings.provider || options.provider.name || "provider"} · ${llmModel || "default"}`
-      : "No LLM configured";
-  const fieldsDisabled = session.connected || session.state === "connecting";
+  // A new chat belongs to the folder you're in; with no folder open there's
+  // nowhere to put it, so ask for one instead of starting a chat that can't run.
+  const handleNewChat = useCallback(() => {
+    if (!workspace.folderPath) {
+      workspace.openFolder();
+      return;
+    }
+    session.newChat();
+  }, [session, workspace]);
 
   return (
     <div className="flex min-h-screen items-stretch max-[900px]:flex-col">
       <Sidebar
         sessions={sessions}
-        loadError={sessionsError}
-        onSelect={continueSession}
-        onDelete={handleDeleteSession}
-        userEmail={user.email}
-        onOpenSettings={() => openSettings("account")}
+        activeFolder={workspace.folderPath}
+        activeSessionId={session.threadId}
+        onSelectSession={handleSelectSession}
+        onNewChat={handleNewChat}
+        onNewChatInFolder={handleNewChatInFolder}
+        onDeleteSession={setPendingDelete}
+        onOpenFolder={workspace.openFolder}
+        onOpenSettings={() => setShowSettings(true)}
       />
-      {settingsTab ? (
-        <SettingsShell tab={settingsTab} onTab={openSettings} onBack={closeSettings}>
-          {settingsTab === "account" && <AccountTab />}
-          {settingsTab === "security" && <SecurityTab />}
-          {settingsTab === "model" && (
-            <SettingsPanel
-              embedded
-              settings={settings}
-              onSettingsChange={onSettingsChange}
-              onKeysChange={onKeysChange}
-              options={optionsError ? null : options}
-              mics={mics}
-              disabled={fieldsDisabled}
-              onBack={closeSettings}
-              mode={mode}
-              configured={configured}
-              providerModels={providerModels}
-              hints={hints}
-              llmModel={llmModel}
-              tools={toolsState.tools}
-              onCredentialsChanged={refreshConfigured}
-            />
-          )}
-          {settingsTab === "tools" && (
-            <ToolsPanel
-              embedded
-              tools={toolsState.tools}
-              loading={toolsState.loading}
-              error={toolsState.error}
-              onChanged={onToolsChanged}
-              onBack={closeSettings}
-            />
-          )}
-        </SettingsShell>
+      {showTrace ? (
+        <TracePage lines={session.lines} onBack={() => setShowTrace(false)} />
+      ) : showSettings ? (
+        <SettingsPage
+          model={MODEL_NAME}
+          levels={LEVELS}
+          level={level}
+          onLevelChange={setLevel}
+          onBack={() => setShowSettings(false)}
+        />
       ) : (
         <ChatPanel
-          mode={mode}
-          onModeChange={handleModeChange}
-          connected={session.connected}
-          connecting={session.state === "connecting"}
-          state={session.state}
-          stateText={session.stateText}
-          statusLabel={session.statusLabel}
           lines={session.lines}
           lineCountLabel={session.lineCountLabel}
-          micMuted={session.micMuted}
-          onToggleMute={session.toggleMute}
-          onConnect={handleConnect}
-          onDisconnect={handleDisconnect}
-          onOpenSettings={() => openSettings("model")}
-          onOpenTools={() => openSettings("tools")}
-          modelChipLabel={modelChipLabel}
           onSendText={handleSendText}
-          onNewChat={handleNewChat}
+          replying={session.replying}
+          activity={session.activity}
           contextUsed={contextUsed}
           contextWindow={contextWindow}
-          replying={session.replying}
+          chatCostUsd={chatCostUsd}
+          model={MODEL_NAME}
+          levels={LEVELS}
+          level={level}
+          onLevelChange={setLevel}
+          folderName={workspace.folderName}
+          folderReady={workspace.ready}
+          onOpenFolder={workspace.openFolder}
+          folderPicking={workspace.picking}
+          folderError={workspace.error}
+          onOpenTrace={() => setShowTrace(true)}
+        />
+      )}
+      {pendingDelete && (
+        <ConfirmDialog
+          title={`Delete "${pendingDelete.title || "Untitled chat"}"?`}
+          body="This removes the chat, its messages and everything the agent remembered from it. It can't be undone."
+          confirmLabel="Delete"
+          danger
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setPendingDelete(null)}
         />
       )}
     </div>

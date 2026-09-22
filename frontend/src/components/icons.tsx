@@ -1,49 +1,35 @@
-import type { ConnState } from "@/lib/types";
-
-export function MicIcon({ className, dimmed }: { className?: string; dimmed?: boolean }) {
+export function AttachIcon({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
-      <path
-        opacity={dimmed ? 0.5 : 1}
-        d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"
-      />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
     </svg>
   );
 }
 
-export function SpeakingIcon({ className }: { className?: string }) {
+export function GearIcon({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
-      <rect x="4" y="10" width="2.5" height="4" rx="1" />
-      <rect x="9" y="6" width="2.5" height="12" rx="1" />
-      <rect x="14" y="3" width="2.5" height="18" rx="1" />
-      <rect x="19" y="8" width="2.5" height="8" rx="1" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   );
 }
 
-export function MutedIcon({ className }: { className?: string }) {
+export function GlobeIcon({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
-      <path d="M16.5 12a4.5 4.5 0 0 0-.2-1.3l-1.5 1.5v-.2H12.8L16.5 15.7A4.48 4.48 0 0 0 16.5 12ZM19 12a7 7 0 0 1-.68 3l1.45 1.45A8.96 8.96 0 0 0 21 12h-2ZM4.27 3 3 4.27l6 6V12a3 3 0 0 0 4.55 2.57l1.2 1.2A4.98 4.98 0 0 1 7 12H5a7 7 0 0 0 6 6.92V21h2v-2.08a6.96 6.96 0 0 0 2.61-.88L19.73 22 21 20.73 4.27 3ZM15 6a3 3 0 0 0-6 0v1.79l6 6V6Z" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z" />
     </svg>
   );
 }
 
-export function ErrorIcon({ className }: { className?: string }) {
+export function FolderIcon({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
-      <path d="M12 2 1 21h22L12 2Zm1 15h-2v2h2v-2Zm0-7h-2v5h2v-5Z" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
     </svg>
   );
-}
-
-export function StateIcon({ state, className }: { state: ConnState; className?: string }) {
-  if (state === "listening") return <MicIcon className={className} />;
-  if (state === "speaking") return <SpeakingIcon className={className} />;
-  if (state === "muted") return <MutedIcon className={className} />;
-  if (state === "error") return <ErrorIcon className={className} />;
-  return <MicIcon className={className} dimmed />;
 }
 
 export function BrandMark({ className }: { className?: string }) {
@@ -53,6 +39,14 @@ export function BrandMark({ className }: { className?: string }) {
         d="M43 31L31 40H5L7 35L12 31H29L32 35L40 11L45 7H50L43 31ZM43 5L38 9H21L18 5L10 29L5 33H0L7 9L19 0H45L43 5ZM24 13H35L29 31L26 27H15L21 9L24 13Z"
         fill="#297AFF"
       />
+    </svg>
+  );
+}
+
+export function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
     </svg>
   );
 }

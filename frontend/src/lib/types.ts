@@ -1,44 +1,25 @@
-export type SessionMode = "voice" | "text";
-
-export type VoiceInputMode = "vad" | "wake_word" | "push_to_talk";
-
-export type KeyProvider =
-  | ""
-  | "local"
-  | "openai"
-  | "azure"
-  | "anthropic"
-  | "gemini"
-  | "bedrock"
-  | "openrouter";
-
-export type ConnState =
-  | "idle"
-  | "connecting"
-  | "listening"
-  | "speaking"
-  | "muted"
-  | "error";
-
-export interface ToolStatus {
-  name: string;
-  label: string;
-  enabled: boolean;
-}
-
-export interface OptionsResponse {
-  tts: Record<string, string[]>;
-  llm_models: string[];
-  defaults: { tts_engine: string; llm_model: string };
-  provider: { name: string; model: string };
-  llm_configured: boolean;
-  tools: ToolStatus[];
-}
-
 export interface ToolCall {
   name: string;
   args?: Record<string, unknown>;
   result?: unknown;
+  round?: number;
+  // What this call added to the conversation: the growth in the next round's
+  // input. Exact when its round made one call; a share of that growth when it
+  // made several, which `cost_estimated` marks.
+  cost_tokens?: number | null;
+  cost_estimated?: boolean;
+}
+
+/** One model call within a turn. A turn with tool calls has several. */
+export interface Round {
+  index: number;
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  cache_read: number;
+  cache_creation: number;
+  delta: number | null; // growth over the previous round; null on the first
+  tool_calls: number;
 }
 
 export interface Usage {
@@ -47,31 +28,24 @@ export interface Usage {
   total_tokens?: number;
   context_window?: number;
   cost_usd?: number;
+  cache_read?: number;
+  cache_creation?: number;
+  // A breakdown of output_tokens, not an addition to it: hidden thinking,
+  // billed at the output rate.
+  reasoning_tokens?: number;
+  // The last round's input: how big the conversation actually is. Distinct
+  // from input_tokens, which sums every round and so overstates it.
+  context_tokens?: number;
+  model?: string | null;
+  finish_reason?: string | null;
+  reasoning_effort?: string;
   tool_calls?: ToolCall[];
+  rounds?: Round[];
 }
 
 export interface Latency {
   ttft: number;
   total: number;
-}
-
-export interface SessionSummary {
-  id: string;
-  mode: SessionMode;
-  turn_count: number;
-  title: string | null;
-  created_at: string;
-}
-
-export interface StoredTurn {
-  role: "user" | "assistant";
-  text: string;
-  usage?: Usage;
-}
-
-export interface SessionDetail {
-  session: { id: string; mode: SessionMode; created_at: string; title: string | null };
-  turns: StoredTurn[];
 }
 
 export interface TranscriptLine {
@@ -81,61 +55,3 @@ export interface TranscriptLine {
   usage?: Usage;
   latency?: Latency;
 }
-
-export interface ApiKeyFields {
-  localApiKey: string;
-  localBaseUrl: string;
-  openaiApiKey: string;
-  azureApiKey: string;
-  azureEndpoint: string;
-  azureDeployment: string;
-  anthropicApiKey: string;
-  geminiApiKey: string;
-  bedrockAccessKeyId: string;
-  bedrockSecretAccessKey: string;
-  bedrockRegion: string;
-  openrouterApiKey: string;
-}
-
-export const EMPTY_KEY_FIELDS: ApiKeyFields = {
-  localApiKey: "",
-  localBaseUrl: "",
-  openaiApiKey: "",
-  azureApiKey: "",
-  azureEndpoint: "",
-  azureDeployment: "",
-  anthropicApiKey: "",
-  geminiApiKey: "",
-  bedrockAccessKeyId: "",
-  bedrockSecretAccessKey: "",
-  bedrockRegion: "",
-  openrouterApiKey: "",
-};
-
-export interface Settings {
-  ttsEngine: string;
-  ttsVoice: string;
-  llmModel: string;
-  micDeviceId: string;
-  voiceInputMode: VoiceInputMode;
-  triggerWord: string;
-  vadThreshold: string;
-  vadMinSilenceMs: string;
-  vadSpeechPadMs: string;
-  provider: KeyProvider;
-  keys: ApiKeyFields;
-}
-
-export const DEFAULT_SETTINGS: Settings = {
-  ttsEngine: "",
-  ttsVoice: "",
-  llmModel: "",
-  micDeviceId: "",
-  voiceInputMode: "vad",
-  triggerWord: "",
-  vadThreshold: "0.5",
-  vadMinSilenceMs: "1200",
-  vadSpeechPadMs: "300",
-  provider: "",
-  keys: EMPTY_KEY_FIELDS,
-};
