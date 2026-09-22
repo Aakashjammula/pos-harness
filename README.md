@@ -105,8 +105,15 @@ full list. The ones you are most likely to change:
 
 ## Docker
 
-`docker-compose.yml` runs the backend and frontend as containers. It is for
-deploying this somewhere, **not** for daily use on your own machine: a
-container has no display, so the folder picker cannot open, and `execute`
-runs inside the container rather than on your computer. You get only the
-folder you mount.
+```bash
+WORKSPACE=C:/Users/me/projects docker compose up --build
+```
+
+One service, not two: the image builds the UI and the backend serves it, so
+there is nothing else to run.
+
+This is for deploying the app somewhere, **not** for daily use on your own
+machine. A container has no display, so the folder picker cannot open --
+`POST /fs/pick` answers 501 and you set the folder with `POS_ROOT_DIR`
+instead. `execute` runs inside the container rather than on your computer,
+and the agent sees only what `WORKSPACE` mounts.

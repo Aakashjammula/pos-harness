@@ -1,34 +1,66 @@
-# Build context is the repo root (see docker-compose.yml).
-FROM python:3.14-slim AS base
+# The backend, API only. Build context is the repo root, because the wheel
+# build needs frontend/ too (see hatch_build.py).
+#
+# This image is for deploying the app somewhere, not for daily local use:
+# a container has no display, so the native folder picker cannot open, and
+# `execute` runs inside the container rather than on your machine.
 
-# libsndfile/portaudio for sounddevice + onnxruntime's native deps.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libportaudio2 \
-    libsndfile1 \
-    && rm -rf /var/lib/apt/lists/*
+FROM node:24-alpine AS ui
+WORKDIR /src
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN cd frontend && npm ci
+COPY frontend ./frontend
+# output: 'export' -- plain files the backend serves, no Node at runtime.
+RUN cd frontend && npm run build
 
-RUN pip install --no-cache-dir uv
+
+FROM python:3.14-slim AS builder
+# Pinned rather than :latest, per Astral's Docker guide -- a moving uv is a
+# moving build.
+COPY --from=ghcr.io/astral-sh/uv:0.9.9 /uv /uvx /bin/
+
+# The cache and the target venv are on different filesystems once a cache
+# mount is involved, so hardlinking fails; copying silences the warning.
+ENV UV_LINK_MODE=copy
 
 WORKDIR /app
 
-COPY backend/pyproject.toml backend/uv.lock backend/README.md ./
-RUN uv sync --frozen --no-dev
+# Dependencies first, without the project: they change rarely, so this layer
+# is reused across source edits.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=backend/uv.lock,target=uv.lock \
+    --mount=type=bind,source=backend/pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=backend/README.md,target=README.md \
+    uv sync --frozen --no-install-project --no-dev --compile-bytecode
 
-COPY backend/src ./src
-RUN uv sync --frozen --no-dev
+COPY backend/ /app/
+# The UI is built in the `ui` stage above; drop it where the build hook
+# expects it so the hook finds it ready and skips running npm.
+COPY --from=ui /src/frontend/out /app/src/pos/web
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --compile-bytecode
 
-ENV PATH="/app/.venv/bin:$PATH"
 
-# Run as an unprivileged user. uid 1000 matches a typical host user, so model
-# files written into the bind-mounted ./models belong to you, not to root (which
-# would make them undeletable without sudo). The mount targets are created up
-# front so Docker doesn't create them as root.
-RUN useradd --create-home --uid 1000 app \
-    && mkdir -p /home/app/.cache/huggingface /home/app/nltk_data \
-    && chown -R app:app /app /home/app
+FROM python:3.14-slim
+
+# git because the agent shells out to it; the document skills need nothing
+# beyond what pip installed.
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# uid 1000 matches a typical host user, so files the agent writes into the
+# mounted workspace belong to you rather than to root.
+RUN useradd --create-home --uid 1000 app
+
+COPY --from=builder --chown=app:app /app /app
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    POS_DATA_DIR=/data \
+    POS_ROOT_DIR=/workspace
+
+RUN mkdir -p /data /workspace && chown app:app /data /workspace
 USER app
-ENV HOME=/home/app
+WORKDIR /app
 
 EXPOSE 8000
-
-CMD ["pos-server"]
+CMD ["uvicorn", "pos.app:app", "--host", "0.0.0.0", "--port", "8000"]

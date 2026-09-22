@@ -279,8 +279,19 @@ def delete_session(session_id: str):
 
 @app.post("/fs/pick")
 def pick_folder():
-    """Opens the native OS folder dialog; blocks until it's closed."""
-    return {"path": fs.pick_folder()}
+    """Opens the native OS folder dialog; blocks until it's closed.
+
+    Needs a desktop. In a container, or over SSH, there isn't one -- that
+    comes back as a 501 with an explanation rather than a crash, and the
+    folder has to be set with POS_ROOT_DIR instead.
+    """
+    try:
+        return {"path": fs.pick_folder()}
+    except fs.PickerUnavailableError as e:
+        raise HTTPException(
+            status_code=501,
+            detail=f"{e}. Set POS_ROOT_DIR instead, or run the app directly on your machine.",
+        ) from e
 
 
 @app.get("/usage")

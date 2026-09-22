@@ -1,15 +1,23 @@
-**/.git
-**/.venv
-**/__pycache__
+# Platform-specific and rebuilt inside the image -- Astral's Docker guide
+# calls out .venv specifically, since a host venv is not portable.
+**/.venv/
+**/node_modules/
+**/__pycache__/
 **/*.pyc
-**/.pytest_cache
-backend/assets
-frontend/node_modules
-frontend/.next
-.playwright-mcp
-pgdata
-models
-assets
+
+# Build output; the image builds its own.
+frontend/.next/
+frontend/out/
+backend/src/pos/web/
+backend/dist/
+
+# Local state and secrets. env_file passes .env in at run time instead.
+data/
 .env
-.env.*
-!.env.example
+**/.env
+*.db
+
+.git/
+docs/
+*.png
+*.jpg

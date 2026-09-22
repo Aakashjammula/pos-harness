@@ -1,73 +1,45 @@
-services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-pos}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pos}
-      POSTGRES_DB: ${POSTGRES_DB:-pos}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports:
-      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"   # loopback only: default creds are pos/pos
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pos} -d ${POSTGRES_DB:-pos}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+# Runs the app in a container.
+#
+# This is for deploying it somewhere, NOT for daily use on your own machine.
+# A container has no display, so the native folder picker cannot open, and
+# `execute` runs inside the container rather than on your computer. The agent
+# sees only what WORKSPACE mounts.
+#
+#   WORKSPACE=C:/Users/me/projects docker compose up --build
+#
+# One service, not two: the backend serves the built UI as well as the API
+# (see the `ui` stage in backend/Dockerfile), so there is no second server to
+# run and no CORS between them.
 
-  backend:
+services:
+  app:
     build:
       context: .
       dockerfile: backend/Dockerfile
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
+    env_file:
+      # Azure and Tavily credentials. Never baked into the image.
+      - backend/.env
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-pos}:${POSTGRES_PASSWORD:-pos}@postgres:5432/${POSTGRES_DB:-pos}
-      LOCAL_BASE_URL: ${LOCAL_BASE_URL:-}
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set - see .env.example}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set - see .env.example}
-      HF_HOME: /home/app/.cache/huggingface
-      NLTK_DATA: /home/app/nltk_data
-      PYTHONUNBUFFERED: "1"   # show model-load progress in `docker compose logs`
-      ALLOW_PRIVATE_LLM_URLS: ${ALLOW_PRIVATE_LLM_URLS:-false}
-      ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
-      LOG_CONVERSATIONS: ${LOG_CONVERSATIONS:-false}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
-      DB_POOL_MAX_SIZE: ${DB_POOL_MAX_SIZE:-10}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
-      MAIL_USERNAME: ${MAIL_USERNAME:-}
-      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
-      MAIL_FROM: ${MAIL_FROM:-}
-      MAIL_SERVER: ${MAIL_SERVER:-}
-      MAIL_PORT: ${MAIL_PORT:-587}
-      MAIL_TLS: ${MAIL_TLS:-true}
-      MAIL_SSL: ${MAIL_SSL:-false}
+      POS_DATA_DIR: /data
+      POS_ROOT_DIR: /workspace
     volumes:
-      # Model files live in the repo folder, not the container, so a
-      # recreated container reuses them instead of re-downloading (~1GB).
-      - ./models/huggingface:/home/app/.cache/huggingface
-      - ./models/nltk_data:/home/app/nltk_data
-      - ./assets:/app/assets:ro
+      # The folder the agent works in. Mount a parent directory to be able to
+      # switch between projects without editing this file.
+      - ${WORKSPACE:-./workspace}:/workspace
+      # Chats and checkpoints, kept outside the container so they survive a
+      # rebuild.
+      - pos-data:/data
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:8000:8000"   # loopback unless you set BIND_ADDRESS=0.0.0.0
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-  frontend:
-    build:
-      context: ./frontend
-    restart: unless-stopped
-    depends_on:
-      - backend
-    environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
-    ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:3000:3000"
+      # Loopback by default: this app has no authentication, and the agent can
+      # run shell commands. Set BIND_ADDRESS deliberately, if at all.
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/tools')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
-  pgdata:
+  pos-data:

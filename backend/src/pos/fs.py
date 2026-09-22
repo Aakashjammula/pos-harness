@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import sys
 import threading
-import tkinter as tk
-from tkinter import filedialog
+from typing import Any
+
+
+class PickerUnavailableError(RuntimeError):
+    """Raised when there is no desktop to open a dialog on."""
 
 
 def _fix_win_hidpi() -> None:
@@ -50,20 +53,57 @@ def pick_folder() -> str | None:
 
     Returns:
         The chosen absolute path, or None if the dialog was cancelled.
+
+    Raises:
+        PickerUnavailableError: When Tk is missing or there is no display --
+            a container, or a machine reached over SSH. The caller turns
+            this into a message telling you to set the folder another way.
     """
+    # Imported here, not at module scope: a slim container image has no Tk
+    # libraries, and importing tkinter there raises ImportError, which at
+    # module scope would take the whole server down rather than just this
+    # one endpoint.
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError as e:
+        msg = "no desktop available to open a folder dialog on"
+        raise PickerUnavailableError(msg) from e
+
     result: dict[str, str] = {}
+    failure: dict[str, BaseException] = {}
 
     def run() -> None:
         _fix_win_hidpi()  # before any Tk call, per CPython's own comment
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)  # otherwise it can open behind the browser
-        path = filedialog.askdirectory(title="Open folder")
-        root.destroy()
-        if path:
-            result["path"] = path
+        try:
+            _open(tk, filedialog, result)
+        except Exception as e:  # noqa: BLE001 -- re-raised on the calling thread
+            failure["error"] = e
 
     thread = threading.Thread(target=run)
     thread.start()
     thread.join()
+    if "error" in failure:
+        msg = "could not open a folder dialog on this machine"
+        raise PickerUnavailableError(msg) from failure["error"]
     return result.get("path")
+
+
+def _open(tk: Any, filedialog: Any, result: dict[str, str]) -> None:
+    """Shows the dialog and records what was chosen.
+
+    Runs on its own thread; see pick_folder. `tk` and `filedialog` are
+    passed in because they are imported there, lazily.
+
+    Args:
+        tk: The `tkinter` module.
+        filedialog: The `tkinter.filedialog` module.
+        result: Written to with key "path" if a folder was chosen.
+    """
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)  # otherwise it can open behind the browser
+    path = filedialog.askdirectory(title="Open folder")
+    root.destroy()
+    if path:
+        result["path"] = path
