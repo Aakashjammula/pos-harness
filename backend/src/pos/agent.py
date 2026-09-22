@@ -25,13 +25,39 @@ from pos.prompt import SYSTEM_PROMPT
 # Global skills, shared by every project -- backend/skills/ on disk, but
 # mounted at the virtual path below so the agent reaches them without the
 # project sandbox being opened up (see build_agent).
-SKILLS_DIR = Path(__file__).resolve().parent.parent.parent / "skills"
+_PACKAGE_DIR = Path(__file__).resolve().parent
+_REPO_BACKEND_DIR = _PACKAGE_DIR.parent.parent
+
+
+def _content_dir(name: str) -> Path:
+    """Locates a content folder in either layout.
+
+    Installed, `skills/` and `memory/` are inside the package (put there by
+    the wheel's force-include). In a checkout they sit beside `src/`, where
+    they are easier to edit. Prefer the packaged copy, since in an installed
+    app the repo layout does not exist at all.
+
+    Args:
+        name: The folder's name, e.g. "skills".
+
+    Returns:
+        The first of the two that exists; the packaged path otherwise, so
+        callers see a missing directory rather than a wrong one.
+    """
+    packaged = _PACKAGE_DIR / name
+    if packaged.is_dir():
+        return packaged
+    checkout = _REPO_BACKEND_DIR / name
+    return checkout if checkout.is_dir() else packaged
+
+
+SKILLS_DIR = _content_dir("skills")
 SKILLS_MOUNT = "/skills/"
 
 # AGENTS.md (agents.md spec): standing context, always in the prompt, unlike
 # skills which load on demand. Two layers -- a global file that applies
 # everywhere, then the open folder's own, which wins on conflicts.
-MEMORY_DIR = Path(__file__).resolve().parent.parent.parent / "memory"
+MEMORY_DIR = _content_dir("memory")
 MEMORY_MOUNT = "/memory/"
 MEMORY_SOURCES = [f"{MEMORY_MOUNT}AGENTS.md", "/AGENTS.md"]
 

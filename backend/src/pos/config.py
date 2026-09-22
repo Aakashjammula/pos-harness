@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -66,7 +67,7 @@ PRICE_LONG = PriceTier(
     output=_float_env("AZURE_OPENAI_PRICE_OUTPUT_LONG", 1.80),
 )
 
-# TODO: hardcoded until the folder-picker -> real-path problem is resolved
-# (the browser's File System Access API cannot hand the backend a real
-# filesystem path). See the backend design discussion.
-DEFAULT_ROOT_DIR = os.environ.get("POS_ROOT_DIR", r"C:\Users\VH0000543\Downloads\docs")
+# Where the agent works when a request carries no usable folder. Normally
+# the UI sends one -- picked through the native dialog -- so this is only
+# the fallback for a first run or a bad path.
+DEFAULT_ROOT_DIR = os.environ.get("POS_ROOT_DIR") or str(Path.home())

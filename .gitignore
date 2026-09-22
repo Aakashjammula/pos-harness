@@ -44,3 +44,7 @@ wheels/
 /models/
 # Supertonic TTS assets (own nested git+LFS repo)
 /assets/
+
+# Built UI, produced by hatch_build.py during the wheel build.
+/backend/src/pos/web/
+/frontend/out/

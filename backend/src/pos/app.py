@@ -33,6 +33,7 @@ from pos import agent as agent_mod
 from pos import config
 from pos import db
 from pos import fs
+from pos import http_headers
 from pos import prompt
 from pos import titles
 from pos import trace as trace_mod
@@ -82,14 +83,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(lifespan=lifespan)
 
-# Single local user, frontend and backend on different ports (:3000 / :8000)
-# during development -- without this the browser blocks every request.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# The built UI, when there is one. Packaged, `next build` output is copied
+# to src/pos/web/ and served from here, so the API and the UI share one
+# origin on one port. In development it's absent and the Next dev server
+# serves the UI on :3000 instead.
+WEB_DIR = Path(__file__).resolve().parent / "web"
+PACKAGED = WEB_DIR.is_dir()
+
+http_headers.add_security_headers(app)
+
+if PACKAGED:
+    # Path operations are matched first; the frontend only answers what no
+    # route claimed. `fallback` sends unknown paths to index.html so the
+    # client router can handle them.
+    app.frontend("/", directory=str(WEB_DIR), fallback="index.html")
+else:
+    # Development only: UI on :3000, API on :8000, so the browser has to be
+    # told the cross-origin calls are allowed. Packaged there is no second
+    # origin, so this is not added at all.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:3000"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 @app.post("/chat/stream")
