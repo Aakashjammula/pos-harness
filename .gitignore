@@ -20,10 +20,18 @@ wheels/
 
 # Ad-hoc screenshots/output from manual or Playwright-driven UI checks
 /.playwright-mcp/
-/*.png
+*.png
+*.jpg
+*.jpeg
+
+# Scratch notes and fetched reference docs -- useful locally, not part of the app
+/docs/
 
 # Postgres data volume (docker-compose)
 /pgdata/
+
+# Backend's local SQLite checkpoint db (session/memory storage)
+/data/
 
 # Frontend
 /frontend/node_modules/
