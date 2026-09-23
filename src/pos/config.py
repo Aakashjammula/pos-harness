@@ -54,39 +54,34 @@ def _optional_float_env(name: str) -> float | None:
 def _detect_provider() -> tuple[str, str | None]:
     """Works out which provider to use from the keys that are present.
 
-    POS_PROVIDER wins when set. Otherwise Azure is chosen when it has both
-    the endpoint and the key it needs, then OpenAI when its key is present.
-    Azure is checked first only because it needs two variables, so its
-    presence is the more deliberate signal.
+    Azure is chosen when it has both the endpoint and the key it needs,
+    then OpenAI when its key is present. Azure is checked first only
+    because it needs two variables, so its presence is the more deliberate
+    signal -- if both are set, delete the one you don't want.
 
     Returns:
         The provider name, and a description of what's missing -- None when
         the configuration is usable.
     """
-    azure = bool(os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"))
-    openai = bool(os.environ.get("OPENAI_API_KEY"))
-
-    chosen = os.environ.get("POS_PROVIDER")
-    if chosen:
-        if chosen == "azure_openai" and not azure:
-            missing = "AZURE_OPENAI_API_KEY" if os.environ.get("AZURE_OPENAI_ENDPOINT") else "AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY"
-            return chosen, f"POS_PROVIDER is azure_openai but {missing} is not set in .env"
-        if chosen == "openai" and not openai:
-            return chosen, "POS_PROVIDER is openai but OPENAI_API_KEY is not set in .env"
-        return chosen, None
-
-    if azure:
+    if os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"):
         return "azure_openai", None
-    if openai:
+    if os.environ.get("OPENAI_API_KEY"):
         return "openai", None
+
+    # Half-configured Azure is the likeliest mistake, so name the missing half.
+    if os.environ.get("AZURE_OPENAI_ENDPOINT"):
+        return "azure_openai", "AZURE_OPENAI_ENDPOINT is set but AZURE_OPENAI_API_KEY is not. Add it to .env."
+    if os.environ.get("AZURE_OPENAI_API_KEY"):
+        return "azure_openai", "AZURE_OPENAI_API_KEY is set but AZURE_OPENAI_ENDPOINT is not. Add it to .env."
+
     return "azure_openai", (
         "No provider configured. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY, "
         "or OPENAI_API_KEY, in .env -- see .env.example."
     )
 
 
-# Which provider to call, as `init_chat_model` names them. Detected from the
-# keys present unless POS_PROVIDER says otherwise.
+# Which provider to call, as `init_chat_model` names them. There is nothing
+# to configure: it follows from which keys exist.
 PROVIDER, CONFIG_ERROR = _detect_provider()
 
 # The model to use. On Azure this is a *deployment* name, chosen by whoever

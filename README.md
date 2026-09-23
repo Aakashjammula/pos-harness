@@ -98,7 +98,7 @@ full list. The ones you are most likely to change:
 
 | | |
 |---|---|
-| `POS_PROVIDER` | `azure_openai` or `openai` |
+| `AZURE_OPENAI_*` / `OPENAI_API_KEY` | whichever you set decides the provider |
 | `POS_MODEL` | the model, or on Azure the deployment name |
 | `POS_MODELS` | comma-separated, to offer a picker |
 | `TAVILY_API_KEY` | enables web search |
