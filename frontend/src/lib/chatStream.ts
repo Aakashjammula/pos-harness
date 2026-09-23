@@ -16,7 +16,10 @@ export interface ChatHandlers {
   onActivity: (id: string, tool: string, args: Record<string, unknown>) => void;
   onActivityResult: (id: string, result: string) => void;
   onDone: (d: ChatDone) => void;
-  onTitle: (title: string) => void;
+  /** `usage` is the turn's totals re-stated to include the title call,
+   * which is billed but happens after `done`. Null when titling produced
+   * nothing. */
+  onTitle: (title: string | null, usage: Usage | null) => void;
   onError: (message: string) => void;
 }
 
@@ -48,7 +51,7 @@ function dispatch(event: string, d: Record<string, unknown>, h: ChatHandlers): v
     h.onActivity(d.id as string, d.tool as string, (d.args as Record<string, unknown>) ?? {});
   else if (event === "activity_result") h.onActivityResult(d.id as string, (d.result as string) ?? "");
   else if (event === "done") h.onDone(d as unknown as ChatDone);
-  else if (event === "title") h.onTitle(d.title as string);
+  else if (event === "title") h.onTitle((d.title as string) ?? null, (d.usage as Usage) ?? null);
   else if (event === "error") h.onError((d.message as string) || "Something went wrong.");
 }
 

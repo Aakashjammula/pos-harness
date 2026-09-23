@@ -23,8 +23,8 @@ _SYSTEM = (
 _title_model = None  # built lazily -- see generate()
 
 
-def generate(user_text: str, bot_text: str) -> str | None:
-    """Returns a short title for one exchange, or None if generation fails.
+def generate(user_text: str, bot_text: str) -> tuple[str | None, dict | None]:
+    """Returns a short title for one exchange, and what it cost.
 
     The exchange is fenced off and the model is told to treat it as data
     to summarize, not instructions to follow -- otherwise a crafted user
@@ -35,11 +35,27 @@ def generate(user_text: str, bot_text: str) -> str | None:
         bot_text: The assistant's reply to it.
 
     Returns:
-        A short title, or None if the call failed or returned nothing.
+        The title -- or None if the call failed or returned nothing -- and
+        its usage, so the caller can add it to the turn's totals. This is a
+        real billed request, and leaving it out made the app's usage figures
+        drift below the provider's by one call per new chat.
     """
     global _title_model
     if _title_model is None:
-        _title_model = init_chat_model(f"azure_openai:{config.MODEL_NAME}", max_tokens=30, temperature=0)
+        # The configured provider, not a hardcoded one: POS_MODEL may name
+        # openai, and this call has to go wherever the chat went.
+        provider, name = config.split_model(config.MODEL_NAME)
+        _title_model = init_chat_model(
+            f"{provider}:{name}",
+            max_tokens=30,
+            # No thinking: a title needs none, and reasoning tokens come out
+            # of max_tokens before any visible text does -- with effort left
+            # on, a 30-token budget was spent entirely on reasoning and the
+            # title came back empty.
+            reasoning_effort="none",
+            use_responses_api=True,
+            output_version="responses/v1",
+        )
 
     exchange = f"<conversation>\nUser: {user_text}\nAssistant: {bot_text}\n</conversation>"
     try:
@@ -51,7 +67,7 @@ def generate(user_text: str, bot_text: str) -> str | None:
             ),
         ])
     except Exception:  # noqa: BLE001 -- a failed title is not worth failing the chat over
-        return None
+        return None, None
 
-    title = response.content.strip().strip('"').strip("'") if isinstance(response.content, str) else ""
-    return title or None
+    title = response.text.strip().strip('"').strip("'")
+    return (title or None), (response.usage_metadata or None)

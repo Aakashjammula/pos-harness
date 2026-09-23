@@ -66,6 +66,36 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _add_title_usage(usage: dict, title_usage: dict, spec: str) -> dict:
+    """Folds the title call's tokens into a turn's usage.
+
+    Args:
+        usage: The turn's usage, as built by trace.build_trace.
+        title_usage: `usage_metadata` from the title call.
+        spec: The model as configured, for pricing the extra tokens.
+
+    Returns:
+        A new usage dict. `context_tokens` is left alone -- titling is a
+        separate conversation and does not make this thread any bigger.
+    """
+    details = title_usage.get("input_token_details") or {}
+    extra_in = title_usage.get("input_tokens") or 0
+    extra_out = title_usage.get("output_tokens") or 0
+    read = details.get("cache_read") or 0
+    written = details.get("cache_creation") or 0
+
+    merged = dict(usage)
+    merged["input_tokens"] = usage.get("input_tokens", 0) + extra_in
+    merged["output_tokens"] = usage.get("output_tokens", 0) + extra_out
+    merged["total_tokens"] = merged["input_tokens"] + merged["output_tokens"]
+    merged["cache_read"] = usage.get("cache_read", 0) + read
+    merged["cache_creation"] = usage.get("cache_creation", 0) + written
+    merged["cost_usd"] = usage.get("cost_usd", 0.0) + pricing.cost_usd(
+        spec, extra_in, extra_out, read, written
+    )
+    return merged
+
+
 def _resolve_root_dir(folder: str | None) -> str | None:
     """The agent's filesystem root for one request.
 
@@ -247,11 +277,24 @@ async def chat_stream(body: ChatBody):
             yield _sse("done", payload)
 
             if new_session:
-                title = titles.generate(text, full_text)
+                title, title_usage = titles.generate(text, full_text)
                 if title:
                     conn.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, thread_id))
                     conn.commit()
-                    yield _sse("title", {"title": title})
+                # Titling is a real billed request. It runs after `done`, so
+                # its tokens are folded into the turn that triggered it and
+                # sent along for the UI to add -- otherwise the app's totals
+                # sit one call below the provider's on every new chat.
+                merged = None
+                if title_usage:
+                    merged = _add_title_usage(payload["usage"], title_usage, body.model or config.MODEL_NAME)
+                    conn.execute(
+                        "UPDATE turns SET usage_json = ? WHERE id = (SELECT MAX(id) FROM turns WHERE thread_id = ?)",
+                        (json.dumps(merged), thread_id),
+                    )
+                    conn.commit()
+                if title or merged:
+                    yield _sse("title", {"title": title, "usage": merged})
         finally:
             conn.close()
 

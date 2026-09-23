@@ -119,7 +119,15 @@ export function useChatSession() {
             };
             patchLine(botId, (l) => ({ ...l, text: d.text, usage }));
           },
-          onTitle: () => setHistoryVersion((v) => v + 1), // the sidebar's row label just changed
+          onTitle: (_title, titleUsage) => {
+            setHistoryVersion((v) => v + 1); // the sidebar's row label just changed
+            // Titling is its own billed request, made after `done`. The
+            // backend re-states the turn's totals with it folded in, so the
+            // figure on screen matches what was stored.
+            if (titleUsage) {
+              patchLine(botId, (l) => ({ ...l, usage: { ...l.usage, ...titleUsage } }));
+            }
+          },
           onError: (message) => {
             // Drop the empty bubble if nothing had arrived; keep partial text if it had.
             setLines((prev) => prev.filter((l) => l.id !== botId || l.text !== ""));
