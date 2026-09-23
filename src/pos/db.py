@@ -36,9 +36,9 @@ def _data_dir() -> Path:
     if override:
         return Path(override)
 
-    # .../backend/src/pos/db.py -> repo_root. Only a checkout has this shape.
-    repo_root = Path(__file__).resolve().parent.parent.parent.parent
-    if (repo_root / "backend" / "pyproject.toml").is_file():
+    # .../src/pos/db.py -> repo_root. Only a checkout has this shape.
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    if (repo_root / "pyproject.toml").is_file():
         return repo_root / "data"
 
     if sys.platform == "win32":

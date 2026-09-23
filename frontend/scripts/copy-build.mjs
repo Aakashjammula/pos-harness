@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const out = resolve(here, "..", "out");
-const target = resolve(here, "..", "..", "backend", "src", "pos", "static");
+const target = resolve(here, "..", "..", "src", "pos", "static");
 
 if (!existsSync(out)) {
   console.error(`No build found at ${out}.\nRun \`next build\` first -- or use \`npm run build:app\`, which does both.`);

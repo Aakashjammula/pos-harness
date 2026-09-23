@@ -7,19 +7,18 @@
 #
 #   WORKSPACE=C:/Users/me/projects docker compose up --build
 #
-# One service, not two: the backend serves the built UI as well as the API
-# (see the `ui` stage in backend/Dockerfile), so there is no second server to
-# run and no CORS between them.
+# One service: the backend serves the built UI as well as the API, so there
+# is no second server to run and no CORS between them.
 
 services:
   app:
     build:
       context: .
-      dockerfile: backend/Dockerfile
+      dockerfile: Dockerfile
     restart: unless-stopped
     env_file:
       # Azure and Tavily credentials. Never baked into the image.
-      - backend/.env
+      - .env
     environment:
       POS_DATA_DIR: /data
       POS_ROOT_DIR: /workspace

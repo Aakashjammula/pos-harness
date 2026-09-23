@@ -22,11 +22,11 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from pos import config
 from pos.prompt import SYSTEM_PROMPT
 
-# Global skills, shared by every project -- backend/skills/ on disk, but
+# Global skills, shared by every project -- skills/ at the repo root, but
 # mounted at the virtual path below so the agent reaches them without the
 # project sandbox being opened up (see build_agent).
 _PACKAGE_DIR = Path(__file__).resolve().parent
-_REPO_BACKEND_DIR = _PACKAGE_DIR.parent.parent
+_REPO_ROOT = _PACKAGE_DIR.parent.parent
 
 
 def _content_dir(name: str) -> Path:
@@ -47,7 +47,7 @@ def _content_dir(name: str) -> Path:
     packaged = _PACKAGE_DIR / name
     if packaged.is_dir():
         return packaged
-    checkout = _REPO_BACKEND_DIR / name
+    checkout = _REPO_ROOT / name
     return checkout if checkout.is_dir() else packaged
 
 

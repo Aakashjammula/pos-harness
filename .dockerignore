@@ -8,8 +8,7 @@
 # Build output; the image builds its own.
 frontend/.next/
 frontend/out/
-backend/src/pos/web/
-backend/dist/
+dist/
 
 # Local state and secrets. env_file passes .env in at run time instead.
 data/

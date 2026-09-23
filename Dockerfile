@@ -1,7 +1,7 @@
 # Build context is the repo root.
 #
 # There is no Node stage: the UI is built ahead of time with
-# `npm run build:app` and committed to backend/src/pos/static/, so this image
+# `npm run build:app` and committed to src/pos/static/, so this image
 # only has to install Python dependencies and copy the source.
 #
 # This image is for deploying the app somewhere, not for daily local use:
@@ -22,12 +22,12 @@ WORKDIR /app
 # Dependencies first, without the project: they change rarely, so this layer
 # is reused across source edits.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=backend/uv.lock,target=uv.lock \
-    --mount=type=bind,source=backend/pyproject.toml,target=pyproject.toml \
-    --mount=type=bind,source=backend/README.md,target=README.md \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=README.md,target=README.md \
     uv sync --frozen --no-install-project --no-dev --compile-bytecode
 
-COPY backend/ /app/
+COPY . /app/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --compile-bytecode
 

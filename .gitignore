@@ -10,7 +10,7 @@ wheels/
 .venv
 
 # Local model assets (766MB, own nested .git+LFS repo — never commit this)
-/backend/assets/
+/assets/
 
 # Downloaded pretrained wake-word classifier models (auto-fetched on first use)
 /.cache/

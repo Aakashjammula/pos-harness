@@ -50,7 +50,7 @@ entered through the UI.
 One server, always:
 
 ```bash
-cd backend && uv run uvicorn pos.app:app --reload --port 8000
+uv run uvicorn pos.app:app --reload --port 8000
 ```
 
 That serves the API *and* the UI. There is no second process.
@@ -79,13 +79,13 @@ command instead of two.
 
 | | |
 |---|---|
-| `backend/src/pos/app.py` | the endpoints |
-| `backend/src/pos/agent.py` | how the agent is assembled |
-| `backend/src/pos/prompt.py` | the system prompt |
-| `backend/src/pos/trace.py` | per-round and per-tool token accounting |
-| `backend/src/pos/static/` | the built UI, committed |
-| `backend/skills/` | the global skills |
-| `backend/memory/AGENTS.md` | global standing instructions |
+| `src/pos/app.py` | the endpoints |
+| `src/pos/agent.py` | how the agent is assembled |
+| `src/pos/prompt.py` | the system prompt |
+| `src/pos/trace.py` | per-round and per-tool token accounting |
+| `src/pos/static/` | the built UI, committed |
+| `skills/` | the global skills |
+| `memory/AGENTS.md` | global standing instructions |
 | `frontend/src/components/` | the UI |
 
 Your chats live in SQLite — `data/checkpoint.db` in a checkout, or your OS
