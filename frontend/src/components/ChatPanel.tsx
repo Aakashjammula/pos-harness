@@ -8,6 +8,7 @@ import { PlusMenu } from "./PlusMenu";
 import { FolderIcon } from "./icons";
 import { ContextMeter } from "./ContextMeter";
 import { Markdown } from "./Markdown";
+import { ActivityTrail } from "./ActivityTrail";
 
 interface ChatPanelProps {
   lines: TranscriptLine[];
@@ -176,9 +177,14 @@ export function ChatPanel({
                         className={`break-words text-[15px] leading-relaxed ${
                           isYou
                             ? "max-w-[80%] whitespace-pre-wrap rounded-[18px] bg-user-bubble px-4 py-2.5"
-                            : "max-w-full"
+                            : "grid w-full max-w-full gap-3"
                         }`}
                       >
+                        {/* What it did on the way to this answer: its own
+                            commentary, and each batch of tool calls. */}
+                        {!isYou && (
+                          <ActivityTrail rounds={line.usage?.rounds} toolCalls={line.usage?.tool_calls} />
+                        )}
                         {/* Only the assistant writes markdown. Your own
                             message stays literal -- a line starting with
                             "#" or "-" is text you typed, not a heading. */}

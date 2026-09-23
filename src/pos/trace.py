@@ -132,6 +132,10 @@ def build_trace(new_messages: list[Any], reasoning_effort: str, model_spec: str 
             "cache_creation": details.get("cache_creation") or 0,
             "delta": None if previous is None else round_input - previous,
             "tool_calls": len(msg.tool_calls),
+            # What the model said in this round, before its tool calls ran.
+            # The transcript keeps one blob of text per turn, so this is the
+            # only place the commentary between tool batches survives.
+            "text": msg.text or "",
         })
 
     final = ai_messages[-1] if ai_messages else None

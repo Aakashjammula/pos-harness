@@ -20,6 +20,8 @@ export interface Round {
   cache_creation: number;
   delta: number | null; // growth over the previous round; null on the first
   tool_calls: number;
+  /** What the model said in this round, before its tool calls ran. */
+  text: string;
 }
 
 export interface Usage {
