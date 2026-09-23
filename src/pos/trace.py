@@ -140,7 +140,14 @@ def build_trace(new_messages: list[Any], reasoning_effort: str, model_spec: str 
 
     final = ai_messages[-1] if ai_messages else None
     model = final.response_metadata.get("model_name") if final else None
-    finish_reason = final.response_metadata.get("finish_reason") if final else None
+    # The Responses API reports `status` ("completed", "incomplete") where
+    # Chat Completions reported `finish_reason`. Read both so the field keeps
+    # meaning something whichever API answered.
+    finish_reason = (
+        final.response_metadata.get("finish_reason") or final.response_metadata.get("status")
+        if final
+        else None
+    )
 
     # `input_tokens` above is the sum over every round, which is what the turn
     # cost -- but it is not how big the conversation is. Each round resends the

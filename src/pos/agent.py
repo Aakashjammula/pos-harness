@@ -210,7 +210,17 @@ def build_agent(
     # POS_MODELS uses -- so a model can name its own provider and one .env
     # can hold keys for both.
     provider, name = config.split_model(model_name or config.MODEL_NAME)
-    model = init_chat_model(f"{provider}:{name}")
+    # The Responses API, not Chat Completions. Azure's own docs say the
+    # gpt-5.6 and later models "support the Chat Completions API and function
+    # tools, but not both at the same time unless reasoning_effort is none",
+    # and the API enforces it: every tool-calling turn fails with
+    # "Function tools with reasoning_effort are not supported ... use
+    # /v1/responses". This agent is nothing but tools, so Responses it is.
+    model = init_chat_model(
+        f"{provider}:{name}",
+        use_responses_api=True,
+        output_version="responses/v1",
+    )
 
     # The project folder stays sandboxed (virtual_mode), and the global
     # skills folder is mounted at /skills/ rather than being copied into
