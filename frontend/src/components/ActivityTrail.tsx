@@ -80,25 +80,31 @@ function GroupRow({ group: g }: { group: Group }) {
   const diffs = g.calls.map(diffOf).filter(Boolean);
 
   return (
-    <div className="rounded-lg border border-border">
+    <div className="min-w-0">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-baseline gap-2 px-3 py-1.5 text-left text-[12.5px] text-text-muted hover:text-text"
+        className="flex w-full min-w-0 items-baseline gap-1.5 rounded py-0.5 text-left text-[12.5px] text-text-faint hover:text-text-muted"
       >
+        <span className="shrink-0 text-[9px] leading-none">{open ? "▾" : "▸"}</span>
         <span className="min-w-0 flex-1 truncate">{summarise(g)}</span>
-        {diffs.length > 0 && <span className="shrink-0 font-mono text-[11px] text-text-faint">{diffs.join(" ")}</span>}
-        <span className="shrink-0 text-[10px] text-text-faint">{open ? "▾" : "▸"}</span>
+        {diffs.length > 0 && (
+          <span className="shrink-0 font-mono text-[11px] text-text-faint">{diffs.join(" ")}</span>
+        )}
       </button>
 
       {open && (
-        <div className="grid gap-1.5 border-t border-border px-3 py-2">
+        <div className="grid min-w-0 gap-1 border-l border-border pt-1 pb-0.5 pl-3">
           {g.calls.map((call, i) => (
-            <div key={i} className="grid gap-0.5">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="min-w-0 truncate font-mono text-[11.5px] text-text-muted">{subject(call)}</span>
-                {diffOf(call) && <span className="shrink-0 font-mono text-[11px] text-text-faint">{diffOf(call)}</span>}
+            <div key={i} className="grid min-w-0 gap-0.5">
+              <div className="flex min-w-0 items-baseline justify-between gap-2">
+                <span className="min-w-0 truncate font-mono text-[11.5px] text-text-muted" title={subject(call)}>
+                  {subject(call)}
+                </span>
+                {diffOf(call) && (
+                  <span className="shrink-0 font-mono text-[11px] text-text-faint">{diffOf(call)}</span>
+                )}
               </div>
               {call.cost_tokens != null && (
                 <span className="font-mono text-[10.5px] text-text-faint">
@@ -130,7 +136,7 @@ export function ActivityTrail({ rounds, toolCalls }: ActivityTrailProps) {
   // fall back to every tool group followed by the whole reply.
   if (!rounds || rounds.length === 0) {
     return (
-      <div className="grid gap-1.5">
+      <div className="grid min-w-0 gap-0.5">
         {group(calls).map((g, i) => (
           <GroupRow key={i} group={g} />
         ))}
@@ -139,16 +145,16 @@ export function ActivityTrail({ rounds, toolCalls }: ActivityTrailProps) {
   }
 
   return (
-    <div className="grid gap-2">
+    <div className="grid min-w-0 gap-2.5">
       {rounds.map((round) => {
         const mine = calls.filter((c) => (c.round ?? 0) === round.index);
         const isLast = round.index === rounds[rounds.length - 1].index;
         return (
-          <div key={round.index} className="grid gap-1.5">
+          <div key={round.index} className="grid min-w-0 gap-1">
             {/* The last round's text is the reply itself, rendered by the
                 transcript -- showing it here too would duplicate it. */}
             {round.text && !isLast && (
-              <p className="m-0 text-[14px] leading-relaxed text-text-muted">{round.text}</p>
+              <p className="m-0 text-[15px] leading-relaxed text-text">{round.text}</p>
             )}
             {group(mine).map((g, i) => (
               <GroupRow key={i} group={g} />

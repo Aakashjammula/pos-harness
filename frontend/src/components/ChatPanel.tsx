@@ -34,6 +34,19 @@ interface ChatPanelProps {
   onOpenTrace: () => void;
 }
 
+/** The part of a reply that belongs in the bubble.
+ *
+ * `line.text` accumulates every round's tokens, so on a turn whose earlier
+ * rounds the activity trail has already printed, only the last round's text
+ * is left to show. Without rounds -- an older turn, or one still streaming
+ * -- it is all of it.
+ */
+function finalText(line: TranscriptLine): string {
+  const rounds = line.usage?.rounds;
+  if (!rounds || rounds.length < 2) return line.text;
+  return rounds[rounds.length - 1].text || line.text;
+}
+
 export function ChatPanel({
   lines,
   lineCountLabel,
@@ -177,7 +190,9 @@ export function ChatPanel({
                         className={`break-words text-[15px] leading-relaxed ${
                           isYou
                             ? "max-w-[80%] whitespace-pre-wrap rounded-[18px] bg-user-bubble px-4 py-2.5"
-                            : "grid w-full max-w-full gap-3"
+                            : // min-w-0 so a long command inside the trail clips
+                              // rather than stretching the whole transcript.
+                              "grid w-full min-w-0 gap-3"
                         }`}
                       >
                         {/* What it did on the way to this answer: its own
@@ -187,8 +202,11 @@ export function ChatPanel({
                         )}
                         {/* Only the assistant writes markdown. Your own
                             message stays literal -- a line starting with
-                            "#" or "-" is text you typed, not a heading. */}
-                        {isYou ? line.text : <Markdown>{line.text}</Markdown>}
+                            "#" or "-" is text you typed, not a heading.
+                            `line.text` is every round's tokens concatenated,
+                            so when the trail has already shown the earlier
+                            rounds only the last one belongs here. */}
+                        {isYou ? line.text : <Markdown>{finalText(line)}</Markdown>}
                       </span>
                     )}
                   </div>
