@@ -10,6 +10,7 @@ needs that the checkpointer doesn't track.
 from __future__ import annotations
 
 import os
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -75,6 +76,25 @@ CREATE TABLE IF NOT EXISTS turns (
 );
 
 CREATE INDEX IF NOT EXISTS idx_turns_thread_id ON turns (thread_id);
+
+-- What a deleted chat cost, without the chat.
+--
+-- Deleting a conversation should remove the conversation, not the record of
+-- what was spent on it: the provider still billed for it, so a usage page
+-- that forgets is simply wrong. One row per day and model, holding counts
+-- only -- no messages, no tool results, nothing readable.
+CREATE TABLE IF NOT EXISTS usage_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    day TEXT NOT NULL,
+    model TEXT,
+    turns INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read INTEGER NOT NULL DEFAULT 0,
+    cache_creation INTEGER NOT NULL DEFAULT 0,
+    cost REAL NOT NULL DEFAULT 0
+);
 """
 
 
@@ -92,11 +112,59 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
-def delete_session(session_id: str) -> bool:
-    """Removes a session and its stored turns.
+def _ledger_session(conn: sqlite3.Connection, session_id: str) -> None:
+    """Rolls a session's usage into the ledger before its turns go.
 
-    The LangGraph checkpoint for the same thread is deleted separately, by
-    the caller, since it belongs to the checkpointer rather than to us.
+    Grouped by day and model, so a long chat becomes a handful of rows
+    rather than one per message, and nothing readable survives.
+
+    Args:
+        conn: An open connection, inside the caller's transaction.
+        session_id: The session about to be deleted.
+    """
+    rows = conn.execute(
+        """SELECT model, usage_json, created_at FROM turns
+           WHERE thread_id = ? AND role = 'assistant' AND usage_json IS NOT NULL""",
+        (session_id,),
+    ).fetchall()
+
+    buckets: dict[tuple[str, str], dict[str, float]] = {}
+    for row in rows:
+        try:
+            usage = json.loads(row["usage_json"])
+        except (TypeError, ValueError):
+            continue
+        key = ((row["created_at"] or "")[:10], row["model"] or "unknown")
+        bucket = buckets.setdefault(
+            key,
+            {"turns": 0, "input": 0, "output": 0, "total": 0, "read": 0, "written": 0, "cost": 0.0},
+        )
+        bucket["turns"] += 1
+        bucket["input"] += usage.get("input_tokens") or 0
+        bucket["output"] += usage.get("output_tokens") or 0
+        bucket["total"] += usage.get("total_tokens") or 0
+        bucket["read"] += usage.get("cache_read") or 0
+        bucket["written"] += usage.get("cache_creation") or 0
+        bucket["cost"] += usage.get("cost_usd") or 0.0
+
+    conn.executemany(
+        """INSERT INTO usage_ledger
+           (day, model, turns, input_tokens, output_tokens, total_tokens, cache_read, cache_creation, cost)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        [
+            (day, model, b["turns"], b["input"], b["output"], b["total"], b["read"], b["written"], b["cost"])
+            for (day, model), b in buckets.items()
+        ],
+    )
+
+
+def delete_session(session_id: str) -> bool:
+    """Removes a session and its stored turns, keeping what it cost.
+
+    The conversation goes; the spend stays, as ledger rows (see
+    `_ledger_session`). The LangGraph checkpoint for the same thread is
+    deleted separately, by the caller, since it belongs to the checkpointer
+    rather than to us.
 
     Args:
         session_id: The session (and thread) id to remove.
@@ -105,6 +173,21 @@ def delete_session(session_id: str) -> bool:
         True if a session row was actually deleted.
     """
     with connect() as conn:
+        _ledger_session(conn, session_id)
         conn.execute("DELETE FROM turns WHERE thread_id = ?", (session_id,))
         cursor = conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         return cursor.rowcount > 0
+
+
+def clear_ledger() -> int:
+    """Empties the deleted-chat ledger.
+
+    Totals only ever grow otherwise, with no way to start again. Surviving
+    chats are untouched -- this clears only the record of deleted ones.
+
+    Returns:
+        How many ledger rows were removed.
+    """
+    with connect() as conn:
+        cursor = conn.execute("DELETE FROM usage_ledger")
+        return cursor.rowcount

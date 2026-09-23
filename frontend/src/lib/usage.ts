@@ -34,6 +34,15 @@ export interface UsageSummary {
   };
   by_day: DayUsage[];
   by_model: ModelUsage[];
+  /** What chats you have since deleted cost. Included in `totals` -- the
+   * provider billed for them -- and broken out so the figure is explained. */
+  deleted: { turns: number; input: number; output: number; cost: number };
+}
+
+export async function clearDeletedUsage(): Promise<number> {
+  const res = await fetch(`${API_URL}/usage/deleted`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`DELETE /usage/deleted failed: ${res.status}`);
+  return (await res.json()).cleared;
 }
 
 export async function fetchUsage(range: string): Promise<UsageSummary> {

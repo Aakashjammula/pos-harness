@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatTokens } from "@/lib/format";
-import { fetchUsage, type UsageSummary } from "@/lib/usage";
+import { clearDeletedUsage, fetchUsage, type UsageSummary } from "@/lib/usage";
 
 // Two series (input vs output tokens). Both colors are already in this app's
 // design system, and the pair was checked with the palette validator: it
@@ -185,6 +185,28 @@ export function UsageDashboard() {
             {formatTokens(data.totals.cache_read)} tokens served from cache
             {data.favorite_model ? ` · mostly ${data.favorite_model}` : ""}
           </div>
+          {data.deleted?.turns > 0 && (
+            // Deleting a chat removes the conversation, not the record of
+            // what it cost -- otherwise this page would drift below the
+            // provider's bill by however much has been deleted.
+            <div className="flex items-baseline justify-between gap-3 text-[11.5px] text-text-faint">
+              <span>
+                Includes {formatTokens(data.deleted.input + data.deleted.output)} tokens (
+                ${data.deleted.cost.toFixed(4)}) from {data.deleted.turns} message
+                {data.deleted.turns === 1 ? "" : "s"} in deleted chats
+              </span>
+              <button
+                type="button"
+                onClick={async () => {
+                  await clearDeletedUsage();
+                  setData(await fetchUsage(range));
+                }}
+                className="shrink-0 underline underline-offset-2 hover:text-text-muted"
+              >
+                Forget
+              </button>
+            </div>
+          )}
         </>
       ) : (
         <>

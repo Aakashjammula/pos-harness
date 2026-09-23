@@ -9,7 +9,9 @@
                        `error {message}`.
   GET  /sessions       List past sessions, newest first.
   GET  /sessions/{id}  One session's stored turns.
-  DEL  /sessions/{id}  Delete a session, its turns, and its memory.
+  DEL  /sessions/{id}  Delete a session, its turns, and its memory. What
+                       it cost is kept, without the conversation.
+  DEL  /usage/deleted  Forget what deleted chats cost.
   POST /fs/pick        Opens the native OS folder dialog, blocks until
                        closed, returns the chosen path (or none).
 
@@ -385,6 +387,16 @@ def pick_folder():
 def get_usage(range: str = "all"):  # noqa: A002 -- matches the query param's name
     """Aggregated usage stats for the settings dashboard."""
     return usage.summary(range)
+
+
+@app.delete("/usage/deleted")
+def clear_deleted_usage():
+    """Forgets what deleted chats cost.
+
+    Without this the deleted-chat total only ever grows, with no way to
+    start counting again. Surviving chats are untouched.
+    """
+    return {"cleared": db.clear_ledger()}
 
 
 @app.get("/tools")

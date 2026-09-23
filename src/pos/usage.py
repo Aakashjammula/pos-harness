@@ -1,7 +1,10 @@
 """Usage statistics, aggregated from the turns already stored per chat.
 
 Nothing extra is recorded for this -- every number here comes from the
-`turns` and `sessions` rows that `/chat/stream` already writes.
+`turns` and `sessions` rows that `/chat/stream` already writes, plus the
+`usage_ledger` rows left behind by chats that have since been deleted. The
+provider billed for those too, so leaving them out would make this page
+disagree with the bill by however much has been deleted.
 """
 
 from __future__ import annotations
@@ -34,6 +37,20 @@ def _usage_rows(conn, since: str | None) -> list[dict]:
     return rows
 
 
+def _ledger_rows(conn, since: str | None) -> list[dict]:
+    """Deleted chats' usage in range, shaped like `_usage_rows` output.
+
+    The ledger holds one row per day and model rather than per turn, so its
+    `turns` count is carried through rather than being one per row.
+    """
+    sql = "SELECT day, model, turns, input_tokens, output_tokens, total_tokens, cache_read, cache_creation, cost FROM usage_ledger"
+    params: tuple = ()
+    if since:
+        sql += " WHERE day >= date('now', ?)"
+        params = (since,)
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
 def summary(range_key: str = "all") -> dict:
     """Aggregate usage for one time range.
 
@@ -49,6 +66,7 @@ def summary(range_key: str = "all") -> dict:
     conn = db.connect()
     try:
         rows = _usage_rows(conn, since)
+        ledger = _ledger_rows(conn, since)
 
         session_sql = "SELECT COUNT(*) FROM sessions"
         session_params: tuple = ()
@@ -90,6 +108,32 @@ def summary(range_key: str = "all") -> dict:
         if hour.isdigit():
             hours[int(hour)] += 1
 
+    # Deleted chats. Counted in the totals, the day series and the per-model
+    # breakdown -- the money was spent -- but they contribute no hour, since
+    # the ledger keeps only the day.
+    deleted = {"turns": 0, "input": 0, "output": 0, "cost": 0.0}
+    for row in ledger:
+        inp, out = row["input_tokens"], row["output_tokens"]
+        model = row["model"] or "unknown"
+
+        totals["input"] += inp
+        totals["output"] += out
+        totals["total"] += row["total_tokens"]
+        totals["cost"] += row["cost"]
+        totals["cache_read"] += row["cache_read"]
+        totals["cache_creation"] += row["cache_creation"]
+
+        for bucket in (by_day[row["day"]], by_model[model]):
+            bucket["input"] += inp
+            bucket["output"] += out
+            bucket["messages"] += row["turns"]
+            bucket["cost"] += row["cost"]
+
+        deleted["turns"] += row["turns"]
+        deleted["input"] += inp
+        deleted["output"] += out
+        deleted["cost"] += row["cost"]
+
     model_total = sum(m["input"] + m["output"] for m in by_model.values()) or 1
     models = sorted(
         (
@@ -107,7 +151,10 @@ def summary(range_key: str = "all") -> dict:
     return {
         "range": range_key if range_key in RANGES else "all",
         "sessions": sessions,
-        "messages": len(rows),
+        "messages": len(rows) + deleted["turns"],
+        # Shown as its own line, so a total that includes chats you can no
+        # longer open is explained rather than mysterious.
+        "deleted": deleted,
         "active_days": len(by_day),
         "peak_hour": hours.most_common(1)[0][0] if hours else None,
         "favorite_model": models[0]["model"] if models else None,
