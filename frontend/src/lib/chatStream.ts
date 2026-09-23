@@ -13,7 +13,8 @@ export interface ChatDone {
 export interface ChatHandlers {
   onSession: (id: string) => void;
   onToken: (text: string) => void;
-  onActivity: (tool: string, args: Record<string, unknown>) => void;
+  onActivity: (id: string, tool: string, args: Record<string, unknown>) => void;
+  onActivityResult: (id: string, result: string) => void;
   onDone: (d: ChatDone) => void;
   onTitle: (title: string) => void;
   onError: (message: string) => void;
@@ -43,7 +44,9 @@ export function parseSseBlock(block: string): { event: string; data: unknown } |
 function dispatch(event: string, d: Record<string, unknown>, h: ChatHandlers): void {
   if (event === "session") h.onSession(d.id as string);
   else if (event === "token") h.onToken(d.text as string);
-  else if (event === "activity") h.onActivity(d.tool as string, (d.args as Record<string, unknown>) ?? {});
+  else if (event === "activity")
+    h.onActivity(d.id as string, d.tool as string, (d.args as Record<string, unknown>) ?? {});
+  else if (event === "activity_result") h.onActivityResult(d.id as string, (d.result as string) ?? "");
   else if (event === "done") h.onDone(d as unknown as ChatDone);
   else if (event === "title") h.onTitle(d.title as string);
   else if (event === "error") h.onError((d.message as string) || "Something went wrong.");

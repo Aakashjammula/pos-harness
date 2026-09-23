@@ -89,6 +89,9 @@ function GroupRow({ group: g }: { group: Group }) {
       >
         <span className="shrink-0 text-[9px] leading-none">{open ? "▾" : "▸"}</span>
         <span className="min-w-0 flex-1 truncate">{summarise(g)}</span>
+        {g.calls.some((c) => c.pending) && (
+          <span className="shrink-0 animate-pulse text-[11px] text-text-faint">running…</span>
+        )}
         {diffs.length > 0 && (
           <span className="shrink-0 font-mono text-[11px] text-text-faint">{diffs.join(" ")}</span>
         )}

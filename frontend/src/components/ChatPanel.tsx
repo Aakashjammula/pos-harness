@@ -198,7 +198,12 @@ export function ChatPanel({
                         {/* What it did on the way to this answer: its own
                             commentary, and each batch of tool calls. */}
                         {!isYou && (
-                          <ActivityTrail rounds={line.usage?.rounds} toolCalls={line.usage?.tool_calls} />
+                          <ActivityTrail
+                            rounds={line.usage?.rounds}
+                            // While streaming there is no stored trace yet, so
+                            // the rows come from what has been announced so far.
+                            toolCalls={line.usage?.tool_calls ?? line.liveCalls}
+                          />
                         )}
                         {/* Only the assistant writes markdown. Your own
                             message stays literal -- a line starting with

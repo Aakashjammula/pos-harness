@@ -8,6 +8,8 @@ export interface ToolCall {
   // made several, which `cost_estimated` marks.
   cost_tokens?: number | null;
   cost_estimated?: boolean;
+  /** Set while a call is in flight, cleared when its result arrives. */
+  pending?: boolean;
 }
 
 /** One model call within a turn. A turn with tool calls has several. */
@@ -54,6 +56,9 @@ export interface TranscriptLine {
   id: string;
   who: "you" | "bot" | "system" | "error";
   text: string;
+  /** Tool calls seen while the reply is still streaming. Replaced by
+   * `usage.tool_calls` once the turn finishes. */
+  liveCalls?: ToolCall[];
   usage?: Usage;
   latency?: Latency;
 }

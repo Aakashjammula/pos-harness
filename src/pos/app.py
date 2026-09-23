@@ -3,6 +3,7 @@
   POST /chat/stream    Send a message, stream the reply back as
                        server-sent events: `session {id}`, `token {text}`,
                        `title {title}` (once, after the first reply),
+                       `activity_result {id, result}`,
                        `done {text, model, finish_reason,
                        reasoning_effort, usage, tool_calls}`,
                        `error {message}`.
@@ -27,6 +28,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from langchain.messages import ToolMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from pydantic import BaseModel
 
@@ -42,6 +44,11 @@ from pos import prompt
 from pos import titles
 from pos import trace as trace_mod
 from pos import usage
+
+
+# Enough of a tool's output to recognise it mid-stream; the full result is
+# in the turn's stored trace.
+TOOL_PREVIEW_CHARS = 300
 
 
 class ChatBody(BaseModel):
@@ -168,8 +175,31 @@ async def chat_stream(body: ChatBody):
 
             full_text = ""
             seen_calls: set[str] = set()
+            seen_results: set[str] = set()
             try:
-                for message in stream.messages:
+                # Two projections, merged in arrival order. Tool *calls* show up
+                # in `messages`, but their *results* only ever appear in the
+                # state, so listening to messages alone means the UI learns
+                # what a tool returned when the turn is already over.
+                for projection, item in stream.interleave("messages", "values"):
+                    if projection == "values":
+                        # The whole state each time, so dedupe by call id.
+                        for message in item.get("messages") or []:
+                            if not isinstance(message, ToolMessage):
+                                continue
+                            if message.tool_call_id in seen_results:
+                                continue
+                            seen_results.add(message.tool_call_id)
+                            yield _sse(
+                                "activity_result",
+                                {
+                                    "id": message.tool_call_id,
+                                    "result": str(message.content)[:TOOL_PREVIEW_CHARS],
+                                },
+                            )
+                        continue
+
+                    message = item
                     # Tool calls repeat on every chunk as the message accumulates,
                     # so announce each one only the first time its id appears --
                     # this is what turns the silent "thinking" dots into
@@ -178,7 +208,10 @@ async def chat_stream(body: ChatBody):
                         call_id = call.get("id")
                         if call_id and call_id not in seen_calls:
                             seen_calls.add(call_id)
-                            yield _sse("activity", {"tool": call.get("name"), "args": call.get("args") or {}})
+                            yield _sse(
+                                "activity",
+                                {"id": call_id, "tool": call.get("name"), "args": call.get("args") or {}},
+                            )
                     for delta in message.text:
                         full_text += delta
                         yield _sse("token", {"text": delta})

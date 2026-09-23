@@ -26,6 +26,9 @@ export function useChatSession() {
   const [lineCountLabel, setLineCountLabel] = useState("");
   const [replying, setReplying] = useState(false);
   const [activity, setActivity] = useState<string | null>(null); // what it's doing right now
+  // Call ids in the order they were announced, so a result can be matched
+  // back to its row. Reset per turn.
+  const liveIds = useRef<string[]>([]);
   const [historyVersion, setHistoryVersion] = useState(0);
   const [threadId, setThreadIdState] = useState<string | null>(null);
   const threadIdRef = useRef<string | null>(null);
@@ -59,6 +62,7 @@ export function useChatSession() {
       const botId = nextLineId();
       setLines((prev) => [...prev, { id: botId, who: "bot", text: "" }]);
 
+      liveIds.current = [];
       const controller = new AbortController();
       abortRef.current = controller;
       setReplying(true);
@@ -82,11 +86,28 @@ export function useChatSession() {
             setActivity(null); // text arriving means the tool work is done
             patchLine(botId, (l) => ({ ...l, text: l.text + piece }));
           },
-          onActivity: (tool, args) => {
+          onActivity: (id, tool, args) => {
             // Show the most telling argument (a path, a query) rather than
             // the whole blob -- this is a one-line status, not a trace.
             const detail = args.file_path ?? args.path ?? args.query ?? args.command ?? "";
             setActivity(detail ? `${tool} ${String(detail)}` : tool);
+            // And add it to the reply's own list, so the activity trail
+            // builds up as the turn runs rather than appearing at the end.
+            patchLine(botId, (l) => ({
+              ...l,
+              liveCalls: [...(l.liveCalls ?? []), { name: tool, args, pending: true }],
+            }));
+            liveIds.current.push(id);
+          },
+          onActivityResult: (id, result) => {
+            const index = liveIds.current.indexOf(id);
+            if (index < 0) return;
+            patchLine(botId, (l) => ({
+              ...l,
+              liveCalls: (l.liveCalls ?? []).map((c, i) =>
+                i === index ? { ...c, result, pending: false } : c
+              ),
+            }));
           },
           onDone: (d) => {
             const usage: Usage = {
