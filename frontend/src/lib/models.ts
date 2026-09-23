@@ -22,6 +22,8 @@ export interface ModelList {
   provider: string;
   default: string;
   models: ModelInfo[];
+  /** Null when the backend is usable; otherwise names what to set in .env. */
+  config_error: string | null;
 }
 
 export async function fetchModels(): Promise<ModelList> {

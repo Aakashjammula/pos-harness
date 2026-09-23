@@ -29,6 +29,7 @@ interface ChatPanelProps {
   onOpenFolder: () => void;
   folderPicking: boolean; // the native OS dialog is open, waiting on you
   folderError: string | null;
+  configError: string | null; // provider not set up; chatting will fail
   onOpenTrace: () => void;
 }
 
@@ -52,6 +53,7 @@ export function ChatPanel({
   onOpenFolder,
   folderPicking,
   folderError,
+  configError,
   onOpenTrace,
 }: ChatPanelProps) {
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -244,6 +246,11 @@ export function ChatPanel({
           {folderError && (
             <span role="alert" className="text-[12px] text-danger">
               {folderError}
+            </span>
+          )}
+          {configError && (
+            <span role="alert" className="text-[12px] text-danger">
+              {configError}
             </span>
           )}
         </div>

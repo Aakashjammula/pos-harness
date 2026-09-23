@@ -51,10 +51,43 @@ def _optional_float_env(name: str) -> float | None:
     return float(raw) if raw else None
 
 
-# Which provider to call, as `init_chat_model` names them: "azure_openai" or
-# "openai". Anything else LangChain supports will be passed through, but only
-# these two are tested.
-PROVIDER = os.environ.get("POS_PROVIDER", "azure_openai")
+def _detect_provider() -> tuple[str, str | None]:
+    """Works out which provider to use from the keys that are present.
+
+    POS_PROVIDER wins when set. Otherwise Azure is chosen when it has both
+    the endpoint and the key it needs, then OpenAI when its key is present.
+    Azure is checked first only because it needs two variables, so its
+    presence is the more deliberate signal.
+
+    Returns:
+        The provider name, and a description of what's missing -- None when
+        the configuration is usable.
+    """
+    azure = bool(os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"))
+    openai = bool(os.environ.get("OPENAI_API_KEY"))
+
+    chosen = os.environ.get("POS_PROVIDER")
+    if chosen:
+        if chosen == "azure_openai" and not azure:
+            missing = "AZURE_OPENAI_API_KEY" if os.environ.get("AZURE_OPENAI_ENDPOINT") else "AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY"
+            return chosen, f"POS_PROVIDER is azure_openai but {missing} is not set in .env"
+        if chosen == "openai" and not openai:
+            return chosen, "POS_PROVIDER is openai but OPENAI_API_KEY is not set in .env"
+        return chosen, None
+
+    if azure:
+        return "azure_openai", None
+    if openai:
+        return "openai", None
+    return "azure_openai", (
+        "No provider configured. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY, "
+        "or OPENAI_API_KEY, in .env -- see .env.example."
+    )
+
+
+# Which provider to call, as `init_chat_model` names them. Detected from the
+# keys present unless POS_PROVIDER says otherwise.
+PROVIDER, CONFIG_ERROR = _detect_provider()
 
 # The model to use. On Azure this is a *deployment* name, chosen by whoever
 # created it, so it only matches a catalogue entry when they used the

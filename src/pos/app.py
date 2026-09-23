@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from pos import agent as agent_mod
 from pos import config
 from pos import db
+from pos import errors
 from pos import fs
 from pos import http_headers
 from pos import models as models_mod
@@ -114,6 +115,12 @@ async def chat_stream(body: ChatBody):
     async def events() -> AsyncIterator[str]:
         yield _sse("session", {"id": thread_id})
 
+        if config.CONFIG_ERROR:
+            # No point calling a provider we know isn't set up; say what to
+            # fix rather than letting the SDK fail obscurely.
+            yield _sse("error", {"message": config.CONFIG_ERROR})
+            return
+
         conn = db.connect()
         try:
             if new_session:
@@ -132,9 +139,13 @@ async def chat_stream(body: ChatBody):
             )
             conn.commit()
 
-            agent = agent_mod.build_agent(
-                app.state.checkpointer, root_dir=root_dir, model_name=body.model
-            )
+            try:
+                agent = agent_mod.build_agent(
+                    app.state.checkpointer, root_dir=root_dir, model_name=body.model
+                )
+            except Exception as e:  # noqa: BLE001 -- a bad key fails here, before any call
+                yield _sse("error", {"message": errors.explain(e, body.model or config.MODEL_NAME)})
+                return
             cfg = {"configurable": {"thread_id": thread_id}}
             # Messages the thread already had, so we can tell which ones
             # THIS call adds (see the backend design discussion: a fresh
@@ -149,7 +160,7 @@ async def chat_stream(body: ChatBody):
                     reasoning_effort=body.reasoning_effort.lower(),
                 )
             except Exception as e:  # noqa: BLE001 -- reported as an error event
-                yield _sse("error", {"message": str(e)[:300] or type(e).__name__})
+                yield _sse("error", {"message": errors.explain(e, body.model or config.MODEL_NAME)})
                 return
 
             full_text = ""
@@ -169,7 +180,7 @@ async def chat_stream(body: ChatBody):
                         full_text += delta
                         yield _sse("token", {"text": delta})
             except Exception as e:  # noqa: BLE001 -- mid-stream failure
-                yield _sse("error", {"message": str(e)[:300] or type(e).__name__})
+                yield _sse("error", {"message": errors.explain(e, body.model or config.MODEL_NAME)})
                 return
 
             final_state = stream.output
@@ -327,7 +338,13 @@ def list_models():
                 "long_threshold": plan.long_threshold,
             },
         })
-    return {"provider": config.PROVIDER, "default": config.MODEL_NAME, "models": out}
+    return {
+        "provider": config.PROVIDER,
+        "default": config.MODEL_NAME,
+        "models": out,
+        # None when the app is usable; a sentence naming what to set otherwise.
+        "config_error": config.CONFIG_ERROR,
+    }
 
 
 @app.get("/system-prompt")

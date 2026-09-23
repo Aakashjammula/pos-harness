@@ -26,6 +26,8 @@ export default function Home() {
   // from the backend's .env; everything else is looked up there.
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState("");
+  // Set when the backend has no usable provider credentials.
+  const [configError, setConfigError] = useState<string | null>(null);
 
   // Every folder's chats, not just the open one -- the sidebar groups them
   // by folder, so picking a chat also says which folder it belongs to.
@@ -50,9 +52,10 @@ export default function Home() {
          
         setModels(d.models);
         setModel(d.default);
+        setConfigError(d.config_error);
       })
       .catch(() => {
-        // Backend down: leave the picker empty rather than inventing a name.
+        if (!cancelled) setConfigError("Can't reach the backend. Is it running?");
       });
     return () => {
       cancelled = true;
@@ -176,6 +179,7 @@ export default function Home() {
           onOpenFolder={workspace.openFolder}
           folderPicking={workspace.picking}
           folderError={workspace.error}
+          configError={configError}
           onOpenTrace={() => setShowTrace(true)}
         />
       )}
