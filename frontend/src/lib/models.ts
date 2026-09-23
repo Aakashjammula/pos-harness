@@ -8,7 +8,11 @@ export interface ModelRates {
 }
 
 export interface ModelInfo {
+  /** As configured -- may carry its provider, e.g. "openai:gpt-5". */
   name: string;
+  provider: string;
+  /** Why it can't be called (its provider's key is missing), or null. */
+  error: string | null;
   context_window: number | null;
   max_output: number | null;
   reasoning: boolean;

@@ -115,10 +115,12 @@ async def chat_stream(body: ChatBody):
     async def events() -> AsyncIterator[str]:
         yield _sse("session", {"id": thread_id})
 
-        if config.CONFIG_ERROR:
-            # No point calling a provider we know isn't set up; say what to
-            # fix rather than letting the SDK fail obscurely.
-            yield _sse("error", {"message": config.CONFIG_ERROR})
+        # No point calling a provider we know isn't set up; say what to fix
+        # rather than letting the SDK fail obscurely. Checked per model,
+        # since POS_MODELS may name one whose keys are absent.
+        unusable = config.model_error(body.model or config.MODEL_NAME)
+        if unusable:
+            yield _sse("error", {"message": unusable})
             return
 
         conn = db.connect()
@@ -185,7 +187,11 @@ async def chat_stream(body: ChatBody):
 
             final_state = stream.output
             new_messages = final_state["messages"][prior_count:]
-            payload = trace_mod.build_trace(new_messages, reasoning_effort=body.reasoning_effort.lower())
+            payload = trace_mod.build_trace(
+                new_messages,
+                reasoning_effort=body.reasoning_effort.lower(),
+                model_spec=body.model or config.MODEL_NAME,
+            )
             payload["text"] = full_text
 
             conn.execute(
@@ -319,15 +325,21 @@ def list_models():
     """The models the UI can offer, with what each costs and holds.
 
     Azure cannot list a resource's deployments with an API key alone, so
-    the names come from POS_MODELS in `.env`. Everything else -- context
-    window, per-token rates, whether it reasons -- is looked up.
+    the names come from POS_MODELS in `.env`, each optionally prefixed with
+    its provider. Everything else -- context window, per-token rates,
+    whether it reasons -- is looked up.
     """
     out = []
-    for name in config.MODEL_NAMES:
-        info = models_mod.lookup(config.PROVIDER, name)
-        plan = pricing.plan_for(name)
+    for spec in config.MODEL_SPECS:
+        provider, name = config.split_model(spec)
+        info = models_mod.lookup(provider, name)
+        plan = pricing.plan_for(spec)
         out.append({
-            "name": name,
+            "name": spec,
+            "provider": provider,
+            # Why it can't be called, if it can't -- POS_MODELS may name a
+            # provider this .env has no keys for.
+            "error": config.model_error(spec),
             "context_window": plan.context_window,
             "max_output": info.max_output,
             "reasoning": info.reasoning,

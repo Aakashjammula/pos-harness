@@ -88,8 +88,9 @@ def explain(error: BaseException, model: str | None = None) -> str:
         the failure isn't one of the known ones -- an unfamiliar error is
         better shown than swallowed.
     """
-    key_var = "AZURE_OPENAI_API_KEY" if config.PROVIDER == "azure_openai" else "OPENAI_API_KEY"
-    fields = {"model": model or config.MODEL_NAME, "key_var": key_var}
+    spec = model or config.MODEL_NAME
+    provider, name = config.split_model(spec)
+    fields = {"model": name, "key_var": config.KEY_VARIABLES.get(provider, "the provider's API key")}
 
     status = _status_of(error)
     text = str(error).lower()

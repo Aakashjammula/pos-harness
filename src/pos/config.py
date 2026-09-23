@@ -80,9 +80,41 @@ def _detect_provider() -> tuple[str, str | None]:
     )
 
 
-# Which provider to call, as `init_chat_model` names them. There is nothing
-# to configure: it follows from which keys exist.
+# The provider used when a model name doesn't name one itself. Follows from
+# which keys exist; there is nothing to configure.
 PROVIDER, CONFIG_ERROR = _detect_provider()
+
+# Which providers this .env can actually reach.
+AVAILABLE_PROVIDERS = {
+    name
+    for name, ready in (
+        ("azure_openai", bool(os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"))),
+        ("openai", bool(os.environ.get("OPENAI_API_KEY"))),
+    )
+    if ready
+}
+
+KEY_VARIABLES = {"azure_openai": "AZURE_OPENAI_API_KEY", "openai": "OPENAI_API_KEY"}
+
+
+def split_model(spec: str) -> tuple[str, str]:
+    """Splits a model specification into its provider and model name.
+
+    `init_chat_model` already understands "<provider>:<model>", so naming
+    the provider in the model is the cheapest way to let one .env hold keys
+    for both and switch between them from the picker. A bare name means
+    whichever provider the keys point at.
+
+    Args:
+        spec: "openai:gpt-5", "azure_openai:my-deployment", or "gpt-5".
+
+    Returns:
+        (provider, model name).
+    """
+    provider, separator, name = spec.partition(":")
+    if separator and provider in KEY_VARIABLES:
+        return provider, name
+    return PROVIDER, spec
 
 # The model to use. On Azure this is a *deployment* name, chosen by whoever
 # created it, so it only matches a catalogue entry when they used the
@@ -94,10 +126,10 @@ MODEL_NAME = (
     or "gpt-5.6-luna"
 )
 
-# Models offered in the UI's picker. Azure cannot list deployments with an
-# API key alone, so they are named here; leave it unset for just the one
-# above.
-MODEL_NAMES = [m.strip() for m in os.environ.get("POS_MODELS", "").split(",") if m.strip()] or [MODEL_NAME]
+# Models offered in the UI's picker, each optionally prefixed with its
+# provider ("openai:gpt-5"). Azure cannot list deployments with an API key
+# alone, so they are named here; leave it unset for just the one above.
+MODEL_SPECS = [m.strip() for m in os.environ.get("POS_MODELS", "").split(",") if m.strip()] or [MODEL_NAME]
 
 MAX_OUTPUT_TOKENS = _int_env("AZURE_OPENAI_MAX_OUTPUT_TOKENS", 128_000)
 
@@ -124,3 +156,23 @@ PRICE_LONG_OVERRIDE = {
 # the UI sends one -- picked through the native dialog -- so this is only
 # the fallback for a first run or a bad path.
 DEFAULT_ROOT_DIR = os.environ.get("POS_ROOT_DIR") or str(Path.home())
+
+
+def model_error(spec: str) -> str | None:
+    """Why this model can't be called, or None when it can.
+
+    A model may name a provider whose keys are absent -- POS_MODELS can
+    list both providers while .env only has one set of keys.
+
+    Args:
+        spec: The model as configured.
+
+    Returns:
+        A sentence naming what to set, or None.
+    """
+    provider, _ = split_model(spec)
+    if provider in AVAILABLE_PROVIDERS:
+        return None
+    if not AVAILABLE_PROVIDERS:
+        return CONFIG_ERROR
+    return f"{spec} needs {KEY_VARIABLES[provider]} in .env."

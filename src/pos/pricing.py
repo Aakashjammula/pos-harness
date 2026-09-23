@@ -53,20 +53,27 @@ def _apply(rates: models.Rates, override: dict[str, float | None]) -> models.Rat
 
 
 @functools.lru_cache(maxsize=32)
-def plan_for(model: str) -> Plan:
+def plan_for(spec: str, reported: str | None = None) -> Plan:
     """Everything needed to price and size one model.
 
     Cached: the catalogue itself is already cached on disk, and this saves
     re-deriving the same answer on every turn.
 
     Args:
-        model: The model or deployment name.
+        spec: The model as configured -- "openai:gpt-5", or a bare name for
+            whichever provider the keys point at. Its provider decides which
+            price table is read, since the two differ.
+        reported: The model id the reply carried, tried when `spec`'s name
+            is an Azure deployment the catalogue has never heard of.
 
     Returns:
         A Plan. `known` is False when the model is unrecognised and nothing
         in `.env` filled the gap.
     """
-    info = models.lookup(config.PROVIDER, model)
+    provider, name = config.split_model(spec)
+    info = models.lookup(provider, name)
+    if info.short is None and reported:
+        info = models.lookup(provider, reported)
     short = info.short or _UNKNOWN
     long_rates = info.long or short
 
@@ -87,7 +94,7 @@ def plan_for(model: str) -> Plan:
 
 
 def cost_usd(
-    model: str,
+    spec: str,
     input_tokens: int,
     output_tokens: int,
     cache_read: int,
@@ -96,7 +103,7 @@ def cost_usd(
     """Computes the USD cost of one model call.
 
     Args:
-        model: The model or deployment name, used to look up its rates.
+        spec: The model as configured, used to look up its rates.
         input_tokens: Total input tokens for the call, as reported in
             `usage_metadata["input_tokens"]`. Includes `cache_read` and
             `cache_creation` tokens -- they are not additional.
@@ -108,7 +115,7 @@ def cost_usd(
         The call's cost in US dollars, or 0.0 for a model whose rates are
         unknown.
     """
-    plan = plan_for(model)
+    plan = plan_for(spec)
     over_threshold = plan.long_threshold is not None and input_tokens > plan.long_threshold
     rates = plan.long if over_threshold else plan.short
     uncached = input_tokens - cache_read - cache_creation

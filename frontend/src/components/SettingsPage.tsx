@@ -70,17 +70,26 @@ export function SettingsPage({
         <div className="grid max-w-[620px] gap-4">
           <Section
             title="Model"
-            description="Names come from POS_MODELS in the backend's .env. Rates and limits are looked up."
+            description="Names come from POS_MODELS in the backend's .env, each able to name its own provider. Rates and limits are looked up."
           >
-            {models.length > 1 ? (
+            {models.filter((m) => !m.error).length > 1 ? (
               <Dropdown
                 value={model}
-                options={models.map((m) => m.name)}
+                options={models.filter((m) => !m.error).map((m) => m.name)}
                 onChange={onModelChange}
                 triggerClassName="text-text"
               />
             ) : (
               <span className="text-[13px] font-medium text-text">{model || "—"}</span>
+            )}
+            {models.some((m) => m.error) && (
+              <ul className="m-0 grid list-none gap-1 p-0 text-[11.5px] text-text-faint">
+                {models
+                  .filter((m) => m.error)
+                  .map((m) => (
+                    <li key={m.name}>{m.error}</li>
+                  ))}
+              </ul>
             )}
             {selected && (
               <div className="grid gap-1 text-[12px]">

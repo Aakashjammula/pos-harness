@@ -76,7 +76,7 @@ def _split_delta(delta: int, results: list[ToolMessage | None]) -> list[int]:
     return shares
 
 
-def build_trace(new_messages: list[Any], reasoning_effort: str) -> dict:
+def build_trace(new_messages: list[Any], reasoning_effort: str, model_spec: str | None = None) -> dict:
     """Builds the trace payload for the messages a single turn produced.
 
     Args:
@@ -86,6 +86,9 @@ def build_trace(new_messages: list[Any], reasoning_effort: str) -> dict:
             not just the final answer.
         reasoning_effort: The `reasoning_effort` value this turn was
             called with.
+        model_spec: The model as configured, e.g. "openai:gpt-5". Prices
+            differ between providers, so the rates come from this rather
+            than from the model id the reply reported.
 
     Returns:
         A dict with `model`, `finish_reason`, `reasoning_effort`, `usage`
@@ -141,6 +144,11 @@ def build_trace(new_messages: list[Any], reasoning_effort: str) -> dict:
     # stands. A turn with 11 rounds bills ~121k while the thread is ~17k.
     context_tokens = (final.usage_metadata or {}).get("input_tokens") or 0 if final else 0
 
+    # Prices are per provider, so they follow the configured spec, not the
+    # model id the reply reported -- the same model costs differently on
+    # Azure and on OpenAI.
+    spec = model_spec or config.MODEL_NAME
+
     # A round's tool calls are paid for by the *next* round, which is the one
     # that has to carry their results. One tool in a round gets the whole
     # delta exactly; several share it, split by result size.
@@ -179,12 +187,12 @@ def build_trace(new_messages: list[Any], reasoning_effort: str) -> dict:
             "reasoning_tokens": reasoning_tokens,
             "context_tokens": context_tokens,
             "cost_usd": pricing.cost_usd(
-                model or config.MODEL_NAME, input_tokens, output_tokens, cache_read, cache_creation
+                spec, input_tokens, output_tokens, cache_read, cache_creation
             ),
             # The model's own limit, to compare `context_tokens` against.
             # `model` here is the versioned id the reply reported; the
             # catalogue lookup strips the date to find it.
-            "context_window": pricing.plan_for(model or config.MODEL_NAME).context_window,
+            "context_window": pricing.plan_for(spec, model).context_window,
             "rounds": rounds,
         },
         "tool_calls": tool_calls,

@@ -100,7 +100,7 @@ full list. The ones you are most likely to change:
 |---|---|
 | `AZURE_OPENAI_*` / `OPENAI_API_KEY` | whichever you set decides the provider |
 | `POS_MODEL` | the model, or on Azure the deployment name |
-| `POS_MODELS` | comma-separated, to offer a picker |
+| `POS_MODELS` | comma-separated, to offer a picker; prefix with `openai:` or `azure_openai:` to mix providers |
 | `TAVILY_API_KEY` | enables web search |
 | `POS_ROOT_DIR` | the folder used when none has been picked |
 

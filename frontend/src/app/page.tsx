@@ -169,7 +169,7 @@ export default function Home() {
           contextWindow={contextWindow}
           chatCostUsd={chatCostUsd}
           model={model}
-          models={models.map((m) => m.name)}
+          models={models.filter((m) => !m.error).map((m) => m.name)}
           onModelChange={setModel}
           levels={LEVELS}
           level={level}

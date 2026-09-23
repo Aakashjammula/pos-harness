@@ -206,9 +206,11 @@ def build_agent(
     Returns:
         A compiled LangGraph agent, ready to `.stream_events(...)`.
     """
-    # "<provider>:<model>" is init_chat_model's own form, so switching
-    # provider is a config change rather than a code path.
-    model = init_chat_model(f"{config.PROVIDER}:{model_name or config.MODEL_NAME}")
+    # "<provider>:<model>" is init_chat_model's own form, and the same form
+    # POS_MODELS uses -- so a model can name its own provider and one .env
+    # can hold keys for both.
+    provider, name = config.split_model(model_name or config.MODEL_NAME)
+    model = init_chat_model(f"{provider}:{name}")
 
     # The project folder stays sandboxed (virtual_mode), and the global
     # skills folder is mounted at /skills/ rather than being copied into
