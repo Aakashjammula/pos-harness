@@ -158,6 +158,20 @@ PRICE_LONG_OVERRIDE = {
 DEFAULT_ROOT_DIR = os.environ.get("POS_ROOT_DIR") or str(Path.home())
 
 
+def azure_specs() -> list[str]:
+    """The Azure models to offer -- the ones named in .env.
+
+    Azure cannot list a resource's deployments from an API key, and a
+    deployment's name is whatever its creator chose, so there is nothing to
+    discover. OpenAI models are not included here; they are listed from the
+    key itself (see models.openai_models).
+
+    Returns:
+        Specs whose provider is Azure, with the prefix left as written.
+    """
+    return [spec for spec in MODEL_SPECS if split_model(spec)[0] == "azure_openai"]
+
+
 def model_error(spec: str) -> str | None:
     """Why this model can't be called, or None when it can.
 

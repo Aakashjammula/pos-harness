@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -329,8 +330,22 @@ def list_models():
     its provider. Everything else -- context window, per-token rates,
     whether it reasons -- is looked up.
     """
+    # Azure: whatever .env names, because a deployment name is unknowable
+    # from outside. OpenAI: everything the key can reach, because it will
+    # say. Either list can be empty.
+    specs = list(config.azure_specs())
+    listing_error = None
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if openai_key:
+        ids, listing_error = models_mod.openai_models(openai_key)
+        specs += [f"openai:{model_id}" for model_id in ids]
+        # A model named explicitly in .env that the listing missed, e.g. a
+        # fine-tune, should still be offered.
+        named = [s for s in config.MODEL_SPECS if config.split_model(s)[0] == "openai"]
+        specs += [s for s in named if s not in specs]
+
     out = []
-    for spec in config.MODEL_SPECS:
+    for spec in specs:
         provider, name = config.split_model(spec)
         info = models_mod.lookup(provider, name)
         plan = pricing.plan_for(spec)
@@ -355,7 +370,7 @@ def list_models():
         "default": config.MODEL_NAME,
         "models": out,
         # None when the app is usable; a sentence naming what to set otherwise.
-        "config_error": config.CONFIG_ERROR,
+        "config_error": config.CONFIG_ERROR or listing_error,
     }
 
 

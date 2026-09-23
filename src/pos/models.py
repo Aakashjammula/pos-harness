@@ -199,3 +199,55 @@ def lookup(provider: str, name: str) -> ModelInfo:
         long_threshold=threshold,
         reasoning=bool(entry.get("reasoning")),
     )
+
+
+OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
+_openai_cache: tuple[float, list[str], str | None] | None = None
+
+
+def openai_models(api_key: str) -> tuple[list[str], str | None]:
+    """The chat models an OpenAI key can reach.
+
+    OpenAI, unlike Azure, will list what the key has access to -- so there
+    is nothing for the user to type. The raw list also contains embeddings,
+    audio and image models, so it is intersected with the catalogue's chat
+    entries: that both filters it and guarantees every name returned has
+    rates and a context window to show.
+
+    Cached in memory for the process's lifetime plus a TTL, since it barely
+    changes and a chat request should not wait on it.
+
+    Args:
+        api_key: The OpenAI key.
+
+    Returns:
+        Sorted model ids, and a message if the call failed.
+    """
+    global _openai_cache
+    if _openai_cache and time.time() - _openai_cache[0] < CACHE_TTL_SECONDS:
+        return _openai_cache[1], _openai_cache[2]
+
+    request = urllib.request.Request(
+        OPENAI_MODELS_URL,
+        headers={"Authorization": f"Bearer {api_key}", "User-Agent": "pos-harness"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = json.loads(response.read())
+    except urllib.error.HTTPError as e:
+        message = (
+            "OpenAI rejected the API key. Check OPENAI_API_KEY in .env."
+            if e.code in (401, 403)
+            else f"Could not list OpenAI models (HTTP {e.code})."
+        )
+        _openai_cache = (time.time(), [], message)
+        return [], message
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
+        message = f"Could not reach OpenAI to list models ({e})."
+        _openai_cache = (time.time(), [], message)
+        return [], message
+
+    known = (catalogue().get("openai") or {}).get("models") or {}
+    ids = sorted(m["id"] for m in payload.get("data", []) if m.get("id") in known)
+    _openai_cache = (time.time(), ids, None)
+    return ids, None
