@@ -17,6 +17,7 @@ Single local user: no auth, no per-user isolation.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -33,6 +34,8 @@ from pos import config
 from pos import db
 from pos import fs
 from pos import http_headers
+from pos import models as models_mod
+from pos import pricing
 from pos import prompt
 from pos import titles
 from pos import trace as trace_mod
@@ -46,6 +49,7 @@ class ChatBody(BaseModel):
     thread_id: str | None = None
     folder: str | None = None
     reasoning_effort: str = "medium"
+    model: str | None = None
 
 
 def _sse(event: str, data: dict) -> str:
@@ -128,7 +132,9 @@ async def chat_stream(body: ChatBody):
             )
             conn.commit()
 
-            agent = agent_mod.build_agent(app.state.checkpointer, root_dir=root_dir)
+            agent = agent_mod.build_agent(
+                app.state.checkpointer, root_dir=root_dir, model_name=body.model
+            )
             cfg = {"configurable": {"thread_id": thread_id}}
             # Messages the thread already had, so we can tell which ones
             # THIS call adds (see the backend design discussion: a fresh
@@ -295,6 +301,33 @@ def list_tools():
         "skills": agent_mod.available_skills(),
         "model": config.MODEL_NAME,
     }
+
+
+@app.get("/models")
+def list_models():
+    """The models the UI can offer, with what each costs and holds.
+
+    Azure cannot list a resource's deployments with an API key alone, so
+    the names come from POS_MODELS in `.env`. Everything else -- context
+    window, per-token rates, whether it reasons -- is looked up.
+    """
+    out = []
+    for name in config.MODEL_NAMES:
+        info = models_mod.lookup(config.PROVIDER, name)
+        plan = pricing.plan_for(name)
+        out.append({
+            "name": name,
+            "context_window": plan.context_window,
+            "max_output": info.max_output,
+            "reasoning": info.reasoning,
+            "known": plan.known,
+            "rates": {
+                "short": dataclasses.asdict(plan.short),
+                "long": dataclasses.asdict(plan.long),
+                "long_threshold": plan.long_threshold,
+            },
+        })
+    return {"provider": config.PROVIDER, "default": config.MODEL_NAME, "models": out}
 
 
 @app.get("/system-prompt")

@@ -24,6 +24,7 @@ export interface ChatRequest {
   thread_id: string | null;
   folder: string | null;
   reasoning_effort: string;
+  model: string | null;
 }
 
 /** Parse one SSE block ("event: x\ndata: {...}") into its name and JSON data.

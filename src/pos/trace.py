@@ -178,9 +178,13 @@ def build_trace(new_messages: list[Any], reasoning_effort: str) -> dict:
             "cache_creation": cache_creation,
             "reasoning_tokens": reasoning_tokens,
             "context_tokens": context_tokens,
-            "cost_usd": pricing.cost_usd(input_tokens, output_tokens, cache_read, cache_creation),
-            # The model's limit, to compare `context_tokens` against.
-            "context_window": config.CONTEXT_WINDOW,
+            "cost_usd": pricing.cost_usd(
+                model or config.MODEL_NAME, input_tokens, output_tokens, cache_read, cache_creation
+            ),
+            # The model's own limit, to compare `context_tokens` against.
+            # `model` here is the versioned id the reply reported; the
+            # catalogue lookup strips the date to find it.
+            "context_window": pricing.plan_for(model or config.MODEL_NAME).context_window,
             "rounds": rounds,
         },
         "tool_calls": tool_calls,

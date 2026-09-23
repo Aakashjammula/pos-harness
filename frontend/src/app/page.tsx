@@ -4,16 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import { useChatSession } from "@/hooks/useChatSession";
 import { useWorkspaceFolder } from "@/hooks/useWorkspaceFolder";
 import { deleteSession, fetchSession, fetchSessions, type SessionSummary } from "@/lib/sessions";
+import { fetchModels, type ModelInfo } from "@/lib/models";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/ChatPanel";
 import { SettingsPage } from "@/components/SettingsPage";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { TracePage } from "@/components/TracePage";
 
-// Fixed for now -- one Azure deployment, read from the backend's own .env,
-// not something picked from a list (see the backend design discussion:
-// no /models endpoint, so nothing here to choose between).
-const MODEL_NAME = "gpt-5.6-luna";
 const LEVELS = ["Low", "Medium", "High"];
 
 export default function Home() {
@@ -25,6 +22,10 @@ export default function Home() {
   // The chat awaiting a delete confirmation; null when no dialog is open.
   const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
   const [showTrace, setShowTrace] = useState(false);
+  // The models the backend can call, and which one is selected. Names come
+  // from the backend's .env; everything else is looked up there.
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [model, setModel] = useState("");
 
   // Every folder's chats, not just the open one -- the sidebar groups them
   // by folder, so picking a chat also says which folder it belongs to.
@@ -42,6 +43,23 @@ export default function Home() {
   }, [refreshSessions]);
 
   useEffect(() => {
+    let cancelled = false;
+    fetchModels()
+      .then((d) => {
+        if (cancelled) return;
+         
+        setModels(d.models);
+        setModel(d.default);
+      })
+      .catch(() => {
+        // Backend down: leave the picker empty rather than inventing a name.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- sets state only when the fetch completes
     if (session.historyVersion > 0) refreshSessions();
   }, [session.historyVersion, refreshSessions]);
@@ -57,8 +75,9 @@ export default function Home() {
   const chatCostUsd = session.lines.reduce((sum, l) => sum + (l.usage?.cost_usd ?? 0), 0) || undefined;
 
   const handleSendText = useCallback(
-    (text: string) => session.sendText(text, { folder: workspace.folderPath, reasoningEffort: level }),
-    [session, workspace.folderPath, level]
+    (text: string) =>
+      session.sendText(text, { folder: workspace.folderPath, reasoningEffort: level, model }),
+    [session, workspace.folderPath, level, model]
   );
 
   // Opening a past chat also switches to the folder it belongs to -- otherwise
@@ -128,7 +147,9 @@ export default function Home() {
         <TracePage lines={session.lines} onBack={() => setShowTrace(false)} />
       ) : showSettings ? (
         <SettingsPage
-          model={MODEL_NAME}
+          models={models}
+          model={model}
+          onModelChange={setModel}
           levels={LEVELS}
           level={level}
           onLevelChange={setLevel}
@@ -144,7 +165,9 @@ export default function Home() {
           contextUsed={contextUsed}
           contextWindow={contextWindow}
           chatCostUsd={chatCostUsd}
-          model={MODEL_NAME}
+          model={model}
+          models={models.map((m) => m.name)}
+          onModelChange={setModel}
           levels={LEVELS}
           level={level}
           onLevelChange={setLevel}

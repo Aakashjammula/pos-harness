@@ -11,6 +11,7 @@ const nextLineId = () => `line-${++lineIdSeq}`;
 interface SendOptions {
   folder?: string | null;
   reasoningEffort?: string;
+  model?: string | null;
 }
 
 /**
@@ -68,6 +69,7 @@ export function useChatSession() {
           thread_id: threadIdRef.current,
           folder: options.folder ?? null,
           reasoning_effort: options.reasoningEffort ?? "medium",
+          model: options.model ?? null,
         },
         {
           onSession: (id) => {

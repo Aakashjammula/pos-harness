@@ -98,11 +98,18 @@ full list. The ones you are most likely to change:
 
 | | |
 |---|---|
-| `AZURE_OPENAI_DEPLOYMENT` | which deployment to call |
-| `AZURE_OPENAI_CONTEXT_WINDOW` | used by the context meter |
-| `AZURE_OPENAI_PRICE_*` | per-1M-token rates, for the cost figures |
+| `POS_PROVIDER` | `azure_openai` or `openai` |
+| `POS_MODEL` | the model, or on Azure the deployment name |
+| `POS_MODELS` | comma-separated, to offer a picker |
 | `TAVILY_API_KEY` | enables web search |
 | `POS_ROOT_DIR` | the folder used when none has been picked |
+
+Prices and context windows are **not** configured — they are looked up from
+[models.dev](https://models.dev) for whichever model you name, cached to
+disk for a day. Its figures for `gpt-5.6-luna` were checked against
+Microsoft's own [Retail Prices API](https://prices.azure.com/api/retail/prices)
+and matched exactly. The `AZURE_OPENAI_PRICE_*` variables still exist as
+overrides for a deployment it doesn't know.
 
 ## Docker
 

@@ -18,7 +18,9 @@ interface ChatPanelProps {
   contextUsed?: number;
   contextWindow?: number;
   chatCostUsd?: number;
-  model: string; // fixed -- the backend's one configured deployment, not a picker
+  model: string;
+  models: string[]; // what the backend offers; one entry means no picker
+  onModelChange: (model: string) => void;
   levels: string[];
   level: string;
   onLevelChange: (level: string) => void;
@@ -40,6 +42,8 @@ export function ChatPanel({
   contextWindow,
   chatCostUsd,
   model,
+  models,
+  onModelChange,
   levels,
   level,
   onLevelChange,
@@ -279,7 +283,17 @@ export function ChatPanel({
               disabled={locked}
             />
             <div className="flex items-center gap-1">
-              <span className="rounded-md px-1.5 py-1 text-[12.5px] font-medium text-text">{model}</span>
+              {models.length > 1 ? (
+                <Dropdown
+                  value={model}
+                  options={models}
+                  onChange={onModelChange}
+                  triggerClassName="text-text"
+                  placement="top"
+                />
+              ) : (
+                <span className="rounded-md px-1.5 py-1 text-[12.5px] font-medium text-text">{model}</span>
+              )}
               <Dropdown value={level} options={levels} onChange={handleLevelChange} triggerClassName="text-text-muted" placement="top" />
               <ContextMeter used={contextUsed} window={contextWindow} costUsd={chatCostUsd} />
               <button

@@ -185,7 +185,11 @@ def active_tools() -> list[dict]:
     return tools
 
 
-def build_agent(checkpointer: BaseCheckpointSaver, root_dir: str | None = None) -> Any:
+def build_agent(
+    checkpointer: BaseCheckpointSaver,
+    root_dir: str | None = None,
+    model_name: str | None = None,
+) -> Any:
     """Builds the agent used to answer every chat request.
 
     Args:
@@ -196,11 +200,15 @@ def build_agent(checkpointer: BaseCheckpointSaver, root_dir: str | None = None) 
         root_dir: The folder the filesystem tool can read/write within.
             Falls back to `config.DEFAULT_ROOT_DIR` when the request
             didn't carry a usable one.
+        model_name: Which model to call. On Azure this is the deployment
+            name. Falls back to `config.MODEL_NAME`.
 
     Returns:
         A compiled LangGraph agent, ready to `.stream_events(...)`.
     """
-    model = init_chat_model(f"azure_openai:{config.MODEL_NAME}")
+    # "<provider>:<model>" is init_chat_model's own form, so switching
+    # provider is a config change rather than a code path.
+    model = init_chat_model(f"{config.PROVIDER}:{model_name or config.MODEL_NAME}")
 
     # The project folder stays sandboxed (virtual_mode), and the global
     # skills folder is mounted at /skills/ rather than being copied into
