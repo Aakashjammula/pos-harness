@@ -120,16 +120,20 @@ def split_model(spec: str) -> tuple[str, str]:
 # created it, so it only matches a catalogue entry when they used the
 # model's own name. AZURE_OPENAI_DEPLOYMENT is still honoured so existing
 # .env files keep working.
-MODEL_NAME = (
-    os.environ.get("POS_MODEL")
-    or os.environ.get("AZURE_OPENAI_DEPLOYMENT")
-    or "gpt-5.6-luna"
-)
+#
+# Empty when nothing is set. There is deliberately no default: a name baked
+# in here would be a deployment that exists on one Azure resource and
+# nowhere else, so an unset POS_MODEL would fail with a 404 for a name the
+# user never typed. With an OpenAI key the list can be discovered instead
+# (see app.list_models), and Azure is told to set it.
+MODEL_NAME = os.environ.get("POS_MODEL") or os.environ.get("AZURE_OPENAI_DEPLOYMENT") or ""
 
 # Models offered in the UI's picker, each optionally prefixed with its
 # provider ("openai:gpt-5"). Azure cannot list deployments with an API key
 # alone, so they are named here; leave it unset for just the one above.
-MODEL_SPECS = [m.strip() for m in os.environ.get("POS_MODELS", "").split(",") if m.strip()] or [MODEL_NAME]
+MODEL_SPECS = [m.strip() for m in os.environ.get("POS_MODELS", "").split(",") if m.strip()] or (
+    [MODEL_NAME] if MODEL_NAME else []
+)
 
 MAX_OUTPUT_TOKENS = _int_env("AZURE_OPENAI_MAX_OUTPUT_TOKENS", 128_000)
 
@@ -176,7 +180,8 @@ def model_error(spec: str) -> str | None:
     """Why this model can't be called, or None when it can.
 
     A model may name a provider whose keys are absent -- POS_MODELS can
-    list both providers while .env only has one set of keys.
+    list both providers while .env only has one set of keys -- or there may
+    be no model at all, which is what an empty POS_MODEL on Azure means.
 
     Args:
         spec: The model as configured.
@@ -184,6 +189,11 @@ def model_error(spec: str) -> str | None:
     Returns:
         A sentence naming what to set, or None.
     """
+    if not spec:
+        return (
+            "No model configured. Set POS_MODEL in .env -- an Azure deployment name cannot be "
+            "discovered from an API key, so there is nothing to fall back to."
+        )
     provider, _ = split_model(spec)
     if provider in AVAILABLE_PROVIDERS:
         return None

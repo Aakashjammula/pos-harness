@@ -398,12 +398,25 @@ def list_models():
                 "long_threshold": plan.long_threshold,
             },
         })
+    # With no POS_MODEL, fall back to the first model discovered -- which
+    # only happens on OpenAI, since Azure has nothing to discover. That is
+    # why an Azure-only .env with no POS_MODEL is an error rather than a
+    # guess: any name chosen here would be a deployment that exists on one
+    # resource and nowhere else.
+    default = config.MODEL_NAME or (out[0]["name"] if out else "")
+    missing_model = None
+    if not default and not config.CONFIG_ERROR:
+        missing_model = (
+            "Set POS_MODEL in .env. Azure deployment names are chosen when the deployment "
+            "is created and cannot be discovered from an API key."
+        )
+
     return {
         "provider": config.PROVIDER,
-        "default": config.MODEL_NAME,
+        "default": default,
         "models": out,
         # None when the app is usable; a sentence naming what to set otherwise.
-        "config_error": config.CONFIG_ERROR or listing_error,
+        "config_error": config.CONFIG_ERROR or missing_model or listing_error,
     }
 
 
