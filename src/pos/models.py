@@ -251,3 +251,27 @@ def openai_models(api_key: str) -> tuple[list[str], str | None]:
     ids = sorted(m["id"] for m in payload.get("data", []) if m.get("id") in known)
     _openai_cache = (time.time(), ids, None)
     return ids, None
+
+
+def lmstudio_models(base_url: str) -> tuple[list[str], str | None]:
+    """The models an LM Studio server currently has loaded.
+
+    Unlike OpenAI's, these ids won't be in models.dev's catalogue -- they're
+    whatever the user downloaded -- so nothing is filtered out. Not cached:
+    LM Studio's loaded set changes as the user swaps models, and the call is
+    a local, near-instant one anyway.
+
+    Args:
+        base_url: LM Studio's OpenAI-compatible base URL, e.g.
+            "http://localhost:1234/v1".
+
+    Returns:
+        Sorted model ids, and a message if the call failed.
+    """
+    request = urllib.request.Request(f"{base_url.rstrip('/')}/models", headers={"User-Agent": "pos-harness"})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read())
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
+        return [], f"Could not reach LM Studio at {base_url} ({e})."
+    return sorted(m["id"] for m in payload.get("data", [])), None

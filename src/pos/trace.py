@@ -46,9 +46,7 @@ def _count_tokens(message: ToolMessage) -> int:
     global _counter_model
     try:
         if _counter_model is None:
-            from langchain.chat_models import init_chat_model
-
-            _counter_model = init_chat_model(f"azure_openai:{config.MODEL_NAME}")
+            _counter_model = config.build_model(config.MODEL_NAME)
         return max(1, _counter_model.get_num_tokens_from_messages([message]))
     except Exception:  # noqa: BLE001 -- counting must never break a reply
         logger.debug("token counter unavailable; falling back to a character estimate")

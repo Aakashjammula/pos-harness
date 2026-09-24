@@ -10,7 +10,8 @@ side-effect.
 
 Built on [LangChain](https://docs.langchain.com/)'s `create_agent` with
 [deepagents](https://github.com/langchain-ai/deepagents) for the filesystem,
-shell and skills. Azure OpenAI only.
+shell and skills. Azure OpenAI, OpenAI, or a local LM Studio (or other
+OpenAI-compatible) server.
 
 ## Install and run
 
@@ -29,8 +30,10 @@ entered through the UI.
 
 ## What it does
 
-- **Open a folder** through the real OS dialog. The agent is sandboxed to
-  it: it cannot read above that folder, and your `.env` stays out of reach.
+- **Open a folder** through the real OS dialog (`zenity`/`kdialog` on Linux,
+  the native picker on Windows/macOS, Tk as a fallback if neither is
+  installed — see Configuration). The agent is sandboxed to it: it cannot
+  read above that folder, and your `.env` stays out of reach.
 - **Chat**, with replies streamed token by token. Markdown, tables and code
   blocks render properly.
 - **Tools**: read, write, edit, search and list files; run shell commands;
@@ -98,11 +101,17 @@ full list. The ones you are most likely to change:
 
 | | |
 |---|---|
-| `AZURE_OPENAI_*` / `OPENAI_API_KEY` | whichever you set decides the provider |
+| `AZURE_OPENAI_*` / `OPENAI_API_KEY` / `LMSTUDIO_BASE_URL` | whichever you set decides the provider |
 | `POS_MODEL` | the model, or on Azure the deployment name |
-| `POS_MODELS` | Azure deployments to offer. OpenAI models list themselves from the key |
+| `POS_MODELS` | Azure deployments to offer. OpenAI and LM Studio models list themselves |
 | `TAVILY_API_KEY` | enables web search |
 | `POS_ROOT_DIR` | the folder used when none has been picked |
+
+On Linux, the "Open folder" dialog needs `zenity` (GTK/GNOME) or `kdialog`
+(KDE) for a native-looking picker — most desktop environments already have
+one. Without either, it falls back to Tk, which needs its own system
+package on some distros (e.g. on Arch/CachyOS, `sudo pacman -S tk`).
+Without Tk either, `POST /fs/pick` answers 501 — set `POS_ROOT_DIR` instead.
 
 Prices and context windows are **not** configured — they are looked up from
 [models.dev](https://models.dev) for whichever model you name, cached to

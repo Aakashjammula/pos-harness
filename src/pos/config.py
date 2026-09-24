@@ -9,8 +9,10 @@ from __future__ import annotations
 import dataclasses
 import os
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
+from langchain.chat_models import init_chat_model
 
 load_dotenv()
 
@@ -55,9 +57,12 @@ def _detect_provider() -> tuple[str, str | None]:
     """Works out which provider to use from the keys that are present.
 
     Azure is chosen when it has both the endpoint and the key it needs,
-    then OpenAI when its key is present. Azure is checked first only
-    because it needs two variables, so its presence is the more deliberate
-    signal -- if both are set, delete the one you don't want.
+    then OpenAI when its key is present, then LM Studio when only a base
+    URL is given -- it needs no key at all, so it's the last resort rather
+    than something that could out-rank a real, deliberately configured
+    provider. Azure is checked first only because it needs two variables,
+    so its presence is the more deliberate signal -- if more than one is
+    set, delete the ones you don't want.
 
     Returns:
         The provider name, and a description of what's missing -- None when
@@ -67,6 +72,8 @@ def _detect_provider() -> tuple[str, str | None]:
         return "azure_openai", None
     if os.environ.get("OPENAI_API_KEY"):
         return "openai", None
+    if os.environ.get("LMSTUDIO_BASE_URL"):
+        return "lmstudio", None
 
     # Half-configured Azure is the likeliest mistake, so name the missing half.
     if os.environ.get("AZURE_OPENAI_ENDPOINT"):
@@ -76,7 +83,7 @@ def _detect_provider() -> tuple[str, str | None]:
 
     return "azure_openai", (
         "No provider configured. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY, "
-        "or OPENAI_API_KEY, in .env -- see .env.example."
+        "OPENAI_API_KEY, or LMSTUDIO_BASE_URL, in .env -- see .env.example."
     )
 
 
@@ -84,17 +91,28 @@ def _detect_provider() -> tuple[str, str | None]:
 # which keys exist; there is nothing to configure.
 PROVIDER, CONFIG_ERROR = _detect_provider()
 
+# LM Studio's OpenAI-compatible server, e.g. "http://localhost:1234/v1".
+# Needs no key -- build_model below sends a placeholder one, since the
+# OpenAI SDK requires the field to be non-empty even when the server
+# ignores it.
+LMSTUDIO_BASE_URL = os.environ.get("LMSTUDIO_BASE_URL")
+
 # Which providers this .env can actually reach.
 AVAILABLE_PROVIDERS = {
     name
     for name, ready in (
         ("azure_openai", bool(os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"))),
         ("openai", bool(os.environ.get("OPENAI_API_KEY"))),
+        ("lmstudio", bool(LMSTUDIO_BASE_URL)),
     )
     if ready
 }
 
-KEY_VARIABLES = {"azure_openai": "AZURE_OPENAI_API_KEY", "openai": "OPENAI_API_KEY"}
+KEY_VARIABLES = {
+    "azure_openai": "AZURE_OPENAI_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "lmstudio": "LMSTUDIO_BASE_URL",
+}
 
 
 def split_model(spec: str) -> tuple[str, str]:
@@ -200,3 +218,37 @@ def model_error(spec: str) -> str | None:
     if not AVAILABLE_PROVIDERS:
         return CONFIG_ERROR
     return f"{spec} needs {KEY_VARIABLES[provider]} in .env."
+
+
+def build_model(spec: str, **kwargs: Any) -> Any:
+    """Builds a chat model for `spec`, routing LM Studio through its base URL.
+
+    `init_chat_model("<provider>:<model>")` only understands providers it
+    ships support for, and LM Studio isn't one of them -- it just speaks
+    the OpenAI protocol on a different host. So `model_provider="openai"`
+    plus an explicit `base_url` is what actually reaches it; the model
+    name alone would otherwise fall through to OpenAI's own servers.
+
+    Args:
+        spec: A model spec, e.g. "openai:gpt-5" or "lmstudio:qwen3-30b".
+        **kwargs: Passed through to `init_chat_model`. For `lmstudio`,
+            `use_responses_api`, `output_version` and `reasoning_effort`
+            are dropped first -- LM Studio's server implements
+            `/v1/chat/completions`, not the Responses API those select.
+
+    Returns:
+        A LangChain chat model, ready to `.invoke(...)`.
+    """
+    provider, name = split_model(spec)
+    if provider == "lmstudio":
+        kwargs.pop("use_responses_api", None)
+        kwargs.pop("output_version", None)
+        kwargs.pop("reasoning_effort", None)
+        return init_chat_model(
+            name,
+            model_provider="openai",
+            base_url=LMSTUDIO_BASE_URL,
+            api_key="not-needed",
+            **kwargs,
+        )
+    return init_chat_model(f"{provider}:{name}", **kwargs)

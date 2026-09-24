@@ -9,7 +9,6 @@ message.
 
 from __future__ import annotations
 
-from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage, SystemMessage
 
 from pos import config
@@ -43,10 +42,9 @@ def generate(user_text: str, bot_text: str) -> tuple[str | None, dict | None]:
     global _title_model
     if _title_model is None:
         # The configured provider, not a hardcoded one: POS_MODEL may name
-        # openai, and this call has to go wherever the chat went.
-        provider, name = config.split_model(config.MODEL_NAME)
-        _title_model = init_chat_model(
-            f"{provider}:{name}",
+        # openai (or lmstudio), and this call has to go wherever the chat went.
+        _title_model = config.build_model(
+            config.MODEL_NAME,
             max_tokens=30,
             # No thinking: a title needs none, and reasoning tokens come out
             # of max_tokens before any visible text does -- with effort left

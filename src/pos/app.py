@@ -420,7 +420,8 @@ def list_models():
     """
     # Azure: whatever .env names, because a deployment name is unknowable
     # from outside. OpenAI: everything the key can reach, because it will
-    # say. Either list can be empty.
+    # say. LM Studio: whatever it currently has loaded, the same way.
+    # Any list can be empty.
     specs = list(config.azure_specs())
     listing_error = None
     openai_key = os.environ.get("OPENAI_API_KEY")
@@ -430,6 +431,12 @@ def list_models():
         # A model named explicitly in .env that the listing missed, e.g. a
         # fine-tune, should still be offered.
         named = [s for s in config.MODEL_SPECS if config.split_model(s)[0] == "openai"]
+        specs += [s for s in named if s not in specs]
+    if config.LMSTUDIO_BASE_URL:
+        ids, lmstudio_error = models_mod.lmstudio_models(config.LMSTUDIO_BASE_URL)
+        listing_error = listing_error or lmstudio_error
+        specs += [f"lmstudio:{model_id}" for model_id in ids]
+        named = [s for s in config.MODEL_SPECS if config.split_model(s)[0] == "lmstudio"]
         specs += [s for s in named if s not in specs]
 
     out = []

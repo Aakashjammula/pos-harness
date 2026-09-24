@@ -8,13 +8,22 @@ native dialog itself and hand back a real path, which is what
 FilesystemBackend actually needs.
 
 Tk >= 8.6.3 already uses Windows' modern IFileDialog under the hood (the
-same dialog Explorer shows), so this is a native picker, not a dated Tk
-widget -- but the process has to declare itself DPI-aware or Windows
-bitmap-stretches the dialog on a scaled display and it looks blurry.
+same dialog Explorer shows), so this is a native picker there, not a dated
+Tk widget -- but the process has to declare itself DPI-aware or Windows
+bitmap-stretches the dialog on a scaled display and it looks blurry. macOS
+Tk likewise calls the real Cocoa panel.
+
+Linux is the exception: Tk draws its own themed widget there instead of
+shelling out to the desktop's own dialog, so it looks dated and clashes
+with the rest of the UI. `zenity` (GTK/GNOME) or `kdialog` (KDE) give the
+real thing, so on Linux we try those first and only fall back to Tk if
+neither is installed.
 """
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 import threading
 from typing import Any
@@ -22,6 +31,27 @@ from typing import Any
 
 class PickerUnavailableError(RuntimeError):
     """Raised when there is no desktop to open a dialog on."""
+
+
+_NO_LINUX_TOOL = object()
+
+
+def _pick_folder_linux() -> str | None | object:
+    """Tries the desktop's own dialog via zenity or kdialog.
+
+    Returns:
+        The chosen path; None if the dialog opened but was cancelled;
+        `_NO_LINUX_TOOL` if neither tool is installed, so the caller can
+        tell "cancelled" apart from "fall back to Tk".
+    """
+    if shutil.which("zenity"):
+        cmd = ["zenity", "--file-selection", "--directory", "--title=Open folder"]
+    elif shutil.which("kdialog"):
+        cmd = ["kdialog", "--getexistingdirectory", "."]
+    else:
+        return _NO_LINUX_TOOL
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)  # noqa: S603
+    return proc.stdout.strip() or None
 
 
 def _fix_win_hidpi() -> None:
@@ -59,6 +89,11 @@ def pick_folder() -> str | None:
             a container, or a machine reached over SSH. The caller turns
             this into a message telling you to set the folder another way.
     """
+    if sys.platform.startswith("linux"):
+        path = _pick_folder_linux()
+        if path is not _NO_LINUX_TOOL:
+            return path
+
     # Imported here, not at module scope: a slim container image has no Tk
     # libraries, and importing tkinter there raises ImportError, which at
     # module scope would take the whole server down rather than just this

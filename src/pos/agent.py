@@ -16,7 +16,6 @@ from typing import Any
 from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
 from deepagents.middleware import FilesystemMiddleware, MemoryMiddleware, SkillsMiddleware
 from langchain.agents import create_agent
-from langchain.chat_models import init_chat_model
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from pos import config
@@ -206,18 +205,16 @@ def build_agent(
     Returns:
         A compiled LangGraph agent, ready to `.stream_events(...)`.
     """
-    # "<provider>:<model>" is init_chat_model's own form, and the same form
-    # POS_MODELS uses -- so a model can name its own provider and one .env
-    # can hold keys for both.
-    provider, name = config.split_model(model_name or config.MODEL_NAME)
     # The Responses API, not Chat Completions. Azure's own docs say the
     # gpt-5.6 and later models "support the Chat Completions API and function
     # tools, but not both at the same time unless reasoning_effort is none",
     # and the API enforces it: every tool-calling turn fails with
     # "Function tools with reasoning_effort are not supported ... use
     # /v1/responses". This agent is nothing but tools, so Responses it is.
-    model = init_chat_model(
-        f"{provider}:{name}",
+    # (config.build_model drops this pair again for lmstudio, which has no
+    # Responses endpoint to call.)
+    model = config.build_model(
+        model_name or config.MODEL_NAME,
         use_responses_api=True,
         output_version="responses/v1",
     )
