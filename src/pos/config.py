@@ -249,6 +249,11 @@ def build_model(spec: str, **kwargs: Any) -> Any:
             model_provider="openai",
             base_url=LMSTUDIO_BASE_URL,
             api_key="not-needed",
+            # ChatOpenAI only asks for usage on a stream (`include_usage`)
+            # when base_url is OpenAI's own; for any other host it leaves it
+            # off, LM Studio then sends none, and every turn records 0
+            # tokens. Verified against LM Studio: no usage chunk without it.
+            stream_usage=True,
             **kwargs,
         )
     return init_chat_model(f"{provider}:{name}", **kwargs)
