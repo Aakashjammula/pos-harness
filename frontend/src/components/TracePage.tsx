@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { toolPath } from "@/lib/files";
 import { Background, Controls, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { TranscriptLine } from "@/lib/types";
@@ -8,6 +9,8 @@ import type { TranscriptLine } from "@/lib/types";
 interface TracePageProps {
   lines: TranscriptLine[]; // the whole transcript, in order
   onBack: () => void;
+  /** The open folder's real path: paths under it show as the tools see them. */
+  root?: string | null;
 }
 
 /** A row in the summary's per-turn / per-round table. */
@@ -48,6 +51,18 @@ function fmt(n: number | undefined): string {
 
 /** Tool results run to thousands of characters; the node shows a taste and
  * the side panel shows the rest. */
+/** A call's arguments with real paths under the open folder shortened to
+ * the tools' own ("/home/me/proj/a.html" -> "/a.html"), as the trail does. */
+function shortArgs(args: unknown, root?: string | null): unknown {
+  if (!root || !args || typeof args !== "object") return args;
+  return Object.fromEntries(
+    Object.entries(args as Record<string, unknown>).map(([key, value]) => [
+      key,
+      (key === "file_path" || key === "path") && typeof value === "string" ? toolPath(value, root) : value,
+    ])
+  );
+}
+
 function preview(value: unknown, max = 90): string {
   const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
   if (!text) return "";
@@ -66,7 +81,7 @@ function full(value: unknown): string {
  * turn feeding into the next. Every value here is already in the stored
  * trace; this is a second view of it, not new data.
  */
-function buildGraph(lines: TranscriptLine[]): {
+function buildGraph(lines: TranscriptLine[], root?: string | null): {
   nodes: Node[];
   edges: Edge[];
   details: Record<string, NodeDetail>;
@@ -188,7 +203,7 @@ function buildGraph(lines: TranscriptLine[]): {
     turns += 1;
     const prompt =
       [...lines.slice(0, lineIndex)].reverse().find((l) => l.who === "you")?.text ?? "";
-    buildTurn({ line, prompt, t, y, place, link, details });
+    buildTurn({ line, prompt, t, y, place, link, details, root });
     // Each turn is its own little column of nodes; advance past it.
     const roundCount = line.usage.rounds?.length ?? 1;
     y += STEP * (2 + roundCount + (line.usage.tool_calls?.length ?? 0) * 0.55 + 1);
@@ -207,9 +222,10 @@ interface TurnArgs {
   place: (id: string, x: number, y: number, label: React.ReactNode) => void;
   link: (source: string, target: string, animated?: boolean) => void;
   details: Record<string, NodeDetail>;
+  root?: string | null;
 }
 
-function buildTurn({ line, prompt, t, y, place, link, details }: TurnArgs): void {
+function buildTurn({ line, prompt, t, y, place, link, details, root }: TurnArgs): void {
   const usage = line.usage;
   const calls = usage?.tool_calls ?? [];
   const rounds = usage?.rounds ?? [];
@@ -308,7 +324,7 @@ function buildTurn({ line, prompt, t, y, place, link, details }: TurnArgs): void
               {cost && <span className="font-mono normal-case text-accent">{cost}</span>}
             </div>
             <div className="break-words font-mono font-medium">{call.name}</div>
-            <div className="mt-1 break-words font-mono text-[10.5px] text-text-faint">{preview(call.args, 60)}</div>
+            <div className="mt-1 break-words font-mono text-[10.5px] text-text-faint">{preview(shortArgs(call.args, root), 60)}</div>
           </div>
         );
         details[callId] = {
@@ -322,7 +338,7 @@ function buildTurn({ line, prompt, t, y, place, link, details }: TurnArgs): void
             ],
             ["round", String((call.round ?? 0) + 1)],
           ],
-          block: full(call.args ?? {}),
+          block: full(shortArgs(call.args ?? {}, root)),
         };
 
         place(
@@ -368,8 +384,8 @@ function buildTurn({ line, prompt, t, y, place, link, details }: TurnArgs): void
   link(previous, answerId);
 }
 
-export function TracePage({ lines, onBack }: TracePageProps) {
-  const { nodes, edges, details, turns } = useMemo(() => buildGraph(lines), [lines]);
+export function TracePage({ lines, onBack, root }: TracePageProps) {
+  const { nodes, edges, details, turns } = useMemo(() => buildGraph(lines, root), [lines, root]);
   const [selected, setSelected] = useState("summary");
   const detail = details[selected];
   const toolCalls = lines.reduce((n, l) => n + (l.usage?.tool_calls?.length ?? 0), 0);

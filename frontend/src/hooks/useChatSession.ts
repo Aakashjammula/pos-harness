@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { stopChat, streamChat } from "@/lib/chatStream";
-import { WRITING_TOOLS } from "@/lib/files";
+import { toolPath, WRITING_TOOLS } from "@/lib/files";
 import type { StoredTurn } from "@/lib/sessions";
 import type { TranscriptLine, Usage } from "@/lib/types";
 
@@ -120,8 +120,9 @@ export function useChatSession() {
           onReasoning: (piece) => {
             patchLine(botId, (l) => ({ ...l, liveThinking: (l.liveThinking ?? "") + piece }));
           },
-          onActivityProgress: (id, tool, path, chars) => {
+          onActivityProgress: (id, tool, realPath, chars) => {
             const size = formatSize(chars);
+            const path = realPath && toolPath(realPath, options.folder);
             setActivity(path ? `${VERBS[tool] ?? tool} ${path}… ${size}` : `${tool}… ${size}`);
             // The row appears now, while the model is still writing the
             // call; `onActivity` fills in its finished arguments.

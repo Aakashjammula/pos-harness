@@ -313,8 +313,9 @@ def build_agent(
         # model that forgets).
         system_prompt=SYSTEM_PROMPT
         + f"\n\n## This folder\n\nThe open folder is `{Path(folder).resolve().as_posix()}` on disk. "
-        "In file tools that is `/`: a path the user gives as "
-        f"`{Path(folder).resolve().as_posix()}/cloud/a.html` is `/cloud/a.html` to them.",
+        "In file tools that is `/`: a real path the user gives under it, such as "
+        f"`{Path(folder).resolve().as_posix()}/src/app.py`, is `/src/app.py` to them. "
+        "Create new files where the user asks; if they don't say, put them at `/`.",
         tools=[search] if search else [],
         middleware=middleware,
         checkpointer=checkpointer,

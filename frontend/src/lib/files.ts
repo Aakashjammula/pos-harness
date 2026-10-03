@@ -57,10 +57,22 @@ export function previewUrl(key: string, path: string): string {
  * ("src/app.py"), or null for one that isn't in the project at all --
  * /skills/ and /memory/ are the app's own folders, mounted for the agent.
  */
-export function projectPath(agentPath: string): string | null {
-  if (/^\/(skills|memory)\//.test(agentPath)) return null;
-  const path = agentPath.replace(/^\/+/, "");
-  return path || null;
+export function projectPath(agentPath: string, root?: string | null): string | null {
+  const path = toolPath(agentPath, root);
+  if (/^\/(skills|memory)\//.test(path)) return null;
+  return path.replace(/^\/+/, "") || null;
+}
+
+/**
+ * A path as the file tools see it: a real path inside the open folder
+ * ("/home/me/proj/src/a.py") becomes "/src/a.py", the way the backend
+ * rewrites it before the tool runs. Anything else is returned unchanged.
+ */
+export function toolPath(path: string, root?: string | null): string {
+  const base = root?.replace(/\/+$/, "");
+  if (!base) return path;
+  if (path === base) return "/";
+  return path.startsWith(`${base}/`) ? path.slice(base.length) : path;
 }
 
 /** Tools that can change what is on disk -- the panel reloads after them. */

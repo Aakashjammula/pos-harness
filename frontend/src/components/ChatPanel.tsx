@@ -379,6 +379,7 @@ export function ChatPanel({
                             // the rows come from what has been announced so far.
                             toolCalls={line.usage?.tool_calls ?? line.liveCalls}
                             onOpenFile={onOpenFile}
+                            root={folderPath}
                           />
                         )}
                         {/* Only the assistant writes markdown. Your own

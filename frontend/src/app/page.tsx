@@ -159,7 +159,7 @@ export default function Home() {
         onOpenSettings={() => setShowSettings(true)}
       />
       {showTrace ? (
-        <TracePage lines={session.lines} onBack={() => setShowTrace(false)} />
+        <TracePage lines={session.lines} onBack={() => setShowTrace(false)} root={workspace.folderPath} />
       ) : showSettings ? (
         <SettingsPage
           models={models}

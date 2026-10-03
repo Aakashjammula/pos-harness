@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { projectPath } from "@/lib/files";
+import { projectPath, toolPath } from "@/lib/files";
 import type { Round, ToolCall } from "@/lib/types";
 
 interface ActivityTrailProps {
@@ -9,6 +9,8 @@ interface ActivityTrailProps {
   toolCalls?: ToolCall[];
   /** Opens a project file in the file panel. */
   onOpenFile?: (path: string) => void;
+  /** The open folder's real path, so real paths show as the tools see them. */
+  root?: string | null;
 }
 
 /** Tool calls that did the same sort of thing, shown as one row. */
@@ -35,10 +37,11 @@ function describe(call: ToolCall): { kind: string; verb: string } {
 }
 
 /** The bit of a call worth showing: a path, or a command. */
-function subject(call: ToolCall): string {
+function subject(call: ToolCall, root?: string | null): string {
   const args = (call.args ?? {}) as Record<string, unknown>;
   const value = args.file_path ?? args.command ?? args.path ?? args.query ?? args.pattern;
-  return typeof value === "string" ? value : JSON.stringify(args);
+  if (typeof value !== "string") return JSON.stringify(args);
+  return args.command === undefined ? toolPath(value, root) : value;
 }
 
 /**
@@ -60,10 +63,10 @@ function diffOf(call: ToolCall): string {
 
 /** The project file a call read or wrote, if it can be opened: not a
  * deleted one, and not the app's own /skills/ or /memory/. */
-function openablePath(call: ToolCall): string | null {
+function openablePath(call: ToolCall, root?: string | null): string | null {
   if (call.name !== "read_file" && call.name !== "write_file" && call.name !== "edit_file") return null;
   const path = ((call.args ?? {}) as Record<string, unknown>).file_path;
-  return typeof path === "string" ? projectPath(path) : null;
+  return typeof path === "string" ? projectPath(path, root) : null;
 }
 
 /** Consecutive calls of the same kind collapse into one row. */
@@ -78,19 +81,27 @@ function group(calls: ToolCall[]): Group[] {
   return groups;
 }
 
-function summarise(g: Group): string {
+function summarise(g: Group, root?: string | null): string {
   // One call names what it touched; several are counted, since a row of
   // paths would not fit and the expansion lists them anyway.
-  if (g.calls.length === 1) return `${g.verb} ${subject(g.calls[0])}`;
+  if (g.calls.length === 1) return `${g.verb} ${subject(g.calls[0], root)}`;
   const noun = g.kind === "run" ? "commands" : g.kind === "web" ? "searches" : "files";
   return `${g.verb} ${g.calls.length} ${noun}`;
 }
 
-function GroupRow({ group: g, onOpenFile }: { group: Group; onOpenFile?: (path: string) => void }) {
+function GroupRow({
+  group: g,
+  onOpenFile,
+  root,
+}: {
+  group: Group;
+  onOpenFile?: (path: string) => void;
+  root?: string | null;
+}) {
   const [open, setOpen] = useState(false);
   const diffs = g.calls.map(diffOf).filter(Boolean);
   // One file touched: offer to open it right on the row.
-  const single = g.calls.length === 1 && onOpenFile ? openablePath(g.calls[0]) : null;
+  const single = g.calls.length === 1 && onOpenFile ? openablePath(g.calls[0], root) : null;
 
   return (
     <div className="min-w-0">
@@ -102,7 +113,7 @@ function GroupRow({ group: g, onOpenFile }: { group: Group; onOpenFile?: (path: 
           className="flex min-w-0 flex-1 items-baseline gap-1.5 rounded py-0.5 text-left hover:text-text-muted"
         >
           <span className="shrink-0 text-[9px] leading-none">{open ? "▾" : "▸"}</span>
-          <span className="min-w-0 flex-1 truncate">{summarise(g)}</span>
+          <span className="min-w-0 flex-1 truncate">{summarise(g, root)}</span>
         </button>
         {g.calls.some((c) => c.pending) && (
           <span className="shrink-0 animate-pulse text-[11px] text-text-faint">
@@ -132,18 +143,18 @@ function GroupRow({ group: g, onOpenFile }: { group: Group; onOpenFile?: (path: 
           {g.calls.map((call, i) => (
             <div key={i} className="grid min-w-0 gap-0.5">
               <div className="flex min-w-0 items-baseline justify-between gap-2">
-                {onOpenFile && openablePath(call) ? (
+                {onOpenFile && openablePath(call, root) ? (
                   <button
                     type="button"
-                    onClick={() => onOpenFile(openablePath(call)!)}
-                    title={`Open ${subject(call)}`}
+                    onClick={() => onOpenFile(openablePath(call, root)!)}
+                    title={`Open ${subject(call, root)}`}
                     className="min-w-0 truncate text-left font-mono text-[11.5px] text-text-muted hover:text-accent hover:underline"
                   >
-                    {subject(call)}
+                    {subject(call, root)}
                   </button>
                 ) : (
-                  <span className="min-w-0 truncate font-mono text-[11.5px] text-text-muted" title={subject(call)}>
-                    {subject(call)}
+                  <span className="min-w-0 truncate font-mono text-[11.5px] text-text-muted" title={subject(call, root)}>
+                    {subject(call, root)}
                   </span>
                 )}
                 {diffOf(call) && (
@@ -201,7 +212,7 @@ export function ThinkingRow({ text, live = false }: { text: string; live?: boole
  * commentary sit between the tool batches instead of all of it landing
  * after them.
  */
-export function ActivityTrail({ rounds, toolCalls, onOpenFile }: ActivityTrailProps) {
+export function ActivityTrail({ rounds, toolCalls, onOpenFile, root }: ActivityTrailProps) {
   const calls = toolCalls ?? [];
   const thought = (rounds ?? []).some((r) => r.reasoning?.trim());
   if (calls.length === 0 && !thought) return null;
@@ -212,7 +223,7 @@ export function ActivityTrail({ rounds, toolCalls, onOpenFile }: ActivityTrailPr
     return (
       <div className="grid min-w-0 gap-0.5">
         {group(calls).map((g, i) => (
-          <GroupRow key={i} group={g} onOpenFile={onOpenFile} />
+          <GroupRow key={i} group={g} onOpenFile={onOpenFile} root={root} />
         ))}
       </div>
     );
@@ -232,7 +243,7 @@ export function ActivityTrail({ rounds, toolCalls, onOpenFile }: ActivityTrailPr
               <p className="m-0 text-[15px] leading-relaxed text-text">{round.text}</p>
             )}
             {group(mine).map((g, i) => (
-              <GroupRow key={i} group={g} onOpenFile={onOpenFile} />
+              <GroupRow key={i} group={g} onOpenFile={onOpenFile} root={root} />
             ))}
           </div>
         );
