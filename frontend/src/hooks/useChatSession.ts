@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { streamChat } from "@/lib/chatStream";
+import { stopChat, streamChat } from "@/lib/chatStream";
 import { WRITING_TOOLS } from "@/lib/files";
 import type { StoredTurn } from "@/lib/sessions";
 import type { TranscriptLine, Usage } from "@/lib/types";
@@ -26,6 +26,8 @@ export function useChatSession() {
   const [lines, setLines] = useState<TranscriptLine[]>([]);
   const [lineCountLabel, setLineCountLabel] = useState("");
   const [replying, setReplying] = useState(false);
+  // Stop was pressed and the server is winding the reply down.
+  const [stopping, setStopping] = useState(false);
   const [activity, setActivity] = useState<string | null>(null); // what it's doing right now
   // Call ids in the order they were announced, so a result can be matched
   // back to its row. Reset per turn.
@@ -155,11 +157,25 @@ export function useChatSession() {
         .finally(() => {
           if (abortRef.current === controller) abortRef.current = null;
           setReplying(false);
+          setStopping(false);
           setActivity(null);
         });
     },
     [addLine, patchLine, setThreadId]
   );
+
+  /** Stops the reply in progress. What it has written so far is kept, in
+   * the transcript and in the conversation the model sees next time. */
+  const stop = useCallback(() => {
+    const id = threadIdRef.current;
+    if (!abortRef.current || !id) return;
+    setStopping(true);
+    stopChat(id).catch(() => {
+      // Can't reach the server to ask: drop the connection instead, which
+      // the server also treats as a stop.
+      abortRef.current?.abort();
+    });
+  }, []);
 
   const newChat = useCallback(() => {
     abortRef.current?.abort();
@@ -207,11 +223,13 @@ export function useChatSession() {
     lines,
     lineCountLabel,
     replying,
+    stopping,
     activity,
     threadId,
     historyVersion,
     filesVersion,
     sendText,
+    stop,
     newChat,
     loadHistory,
   };

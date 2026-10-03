@@ -18,6 +18,8 @@ export function formatUsageLine(usage?: Usage, latency?: Latency): string {
       parts.push(`${usage.input_tokens} in / ${usage.output_tokens} out (${usage.total_tokens} total)`);
     }
     if (usage.cost_usd != null) parts.push(`$${usage.cost_usd.toFixed(4)}`);
+    // The tokens above only count rounds that finished; say why it ends early.
+    if (usage.finish_reason === "stopped") parts.push("stopped");
   }
   return parts.join(" · ");
 }

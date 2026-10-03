@@ -15,6 +15,8 @@ interface ChatPanelProps {
   lineCountLabel: string;
   onSendText: (text: string) => void;
   replying: boolean; // a reply is still streaming in
+  stopping: boolean; // Stop was pressed; the reply is winding down
+  onStop: () => void;
   activity: string | null; // e.g. "read_file /skills/pdf/SKILL.md" while a tool runs
   contextUsed?: number;
   contextWindow?: number;
@@ -56,6 +58,8 @@ export function ChatPanel({
   lineCountLabel,
   onSendText,
   replying,
+  stopping,
+  onStop,
   activity,
   contextUsed,
   contextWindow,
@@ -104,6 +108,16 @@ export function ChatPanel({
     const el = transcriptRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [lines]);
+
+  // Esc stops a reply, as in Claude Code -- from anywhere on the page.
+  useEffect(() => {
+    if (!replying) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) onStop();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [replying, onStop]);
 
   // Grows with the message, up to a cap, rather than a fixed one-line box.
   useEffect(() => {
@@ -244,6 +258,8 @@ export function ChatPanel({
                             rounds only the last one belongs here. */}
                         {isYou ? (
                           line.text
+                        ) : line.usage?.finish_reason === "stopped" && !finalText(line).trim() ? (
+                          <span className="text-[13.5px] italic text-text-faint">Stopped.</span>
                         ) : line.usage && !finalText(line).trim() ? (
                           // A finished turn with nothing to say. Seen with Qwen
                           // on LM Studio: a round that ends inside its thinking.
@@ -377,15 +393,28 @@ export function ChatPanel({
               )}
               <Dropdown value={level} options={levels} onChange={handleLevelChange} triggerClassName="text-text-muted" placement="top" />
               <ContextMeter used={contextUsed} window={contextWindow} costUsd={chatCostUsd} />
-              <button
-                type="button"
-                onClick={handleSend}
-                disabled={replying || locked}
-                aria-label="Send"
-                className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text text-bg transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                ↑
-              </button>
+              {replying ? (
+                <button
+                  type="button"
+                  onClick={onStop}
+                  disabled={stopping}
+                  aria-label={stopping ? "Stopping" : "Stop (Esc)"}
+                  title={stopping ? "Stopping…" : "Stop (Esc)"}
+                  className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text text-bg transition-opacity hover:opacity-85 disabled:cursor-wait disabled:opacity-40"
+                >
+                  <span className="block h-2.5 w-2.5 rounded-[2px] bg-bg" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={locked}
+                  aria-label="Send"
+                  className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text text-bg transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  ↑
+                </button>
+              )}
             </div>
           </div>
         </div>

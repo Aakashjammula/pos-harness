@@ -9,6 +9,8 @@
                        `done {text, model, finish_reason,
                        reasoning_effort, usage, tool_calls}`,
                        `error {message}`.
+  POST /chat/stop      Stop a reply mid-way. The stream then ends with its
+                       usual `done`, `finish_reason` "stopped".
   GET  /sessions       List past sessions, newest first.
   GET  /sessions/{id}  One session's stored turns.
   DEL  /sessions/{id}  Delete a session, its turns, and its memory. What
@@ -27,17 +29,22 @@ Single local user: no auth, no per-user isolation.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import os
+import threading
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
-from langchain.messages import ToolMessage
+from langchain.messages import AIMessage, ToolMessage
+from langchain_core.callbacks import BaseCallbackHandler
+from langgraph.stream.run_stream import GraphRunStream
 from langgraph.checkpoint.sqlite import SqliteSaver
 from pydantic import BaseModel
 
@@ -69,6 +76,144 @@ class ChatBody(BaseModel):
     folder: str | None = None
     reasoning_effort: str = "medium"
     model: str | None = None
+
+
+class StopBody(BaseModel):
+    """Request body for POST /chat/stop."""
+
+    thread_id: str
+
+
+@dataclasses.dataclass
+class _Run:
+    """A reply still being generated.
+
+    Attributes:
+        stop: Set to ask it to stop; checked between stream events.
+        worker: The thread running it, as a future -- done once the graph
+            has stopped and its state is saved.
+    """
+
+    stop: threading.Event
+    worker: asyncio.Future
+
+
+class _Stopped(Exception):
+    """Raised inside a run to cut it short."""
+
+
+class _StopHandler(BaseCallbackHandler):
+    """Ends the model call or tool in flight once stop is asked for.
+
+    `stream.abort()` alone is not enough: it waits for the node already
+    running, and a model call keeps generating -- measured at ~9 s to the
+    end of a story, with LM Studio busy all the while. Raising from the
+    token callback ends the HTTP stream itself, which is what makes the
+    server stop generating. `raise_error` is what lets the exception out;
+    callback errors are otherwise logged and swallowed.
+    """
+
+    raise_error = True
+
+    def __init__(self, stop: threading.Event) -> None:
+        self.stop = stop
+
+    def _check(self, *_args: Any, **_kwargs: Any) -> None:
+        if self.stop.is_set():
+            raise _Stopped
+
+    on_llm_new_token = _check
+    on_chat_model_start = _check  # no new round once stopped
+    on_tool_start = _check  # nor a tool that hasn't started yet
+
+
+def _caused_by_stop(error: BaseException | None) -> bool:
+    """Whether `error` is, or wraps, a _Stopped raised by _StopHandler."""
+    while error is not None:
+        if isinstance(error, _Stopped):
+            return True
+        error = error.__cause__ or error.__context__
+    return False
+
+
+# Replies in flight, by thread id. Single user, one process: a dict will do.
+_RUNS: dict[str, _Run] = {}
+
+
+def _stream_turn(
+    stream: GraphRunStream,
+    stop: threading.Event,
+    seen_results: set[str],
+    out: dict[str, str],
+) -> Iterator[str]:
+    """Turns one run's stream into server-sent events, until done or stopped.
+
+    Runs on a worker thread (see chat_stream): iterating the stream is what
+    drives the graph, model calls and tools included, and doing that on the
+    event loop froze the whole server -- a stop request could not even be
+    read until the reply was over.
+
+    Args:
+        stream: The run, from `agent.stream_events(version="v3")`.
+        stop: Checked at every event; once set, this returns early and the
+            caller aborts the run.
+        seen_results: Tool-call ids whose results were already sent.
+        out: Collects the answer text under "text", the current round's
+            under "round" (lost from the graph if it is cut short), and
+            "stopped" when this
+            returned early -- a stop asked for just as the run finished by
+            itself didn't cut anything short.
+
+    Yields:
+        Formatted SSE strings.
+    """
+    seen_calls: set[str] = set()
+    # Two projections, merged in arrival order. Tool *calls* show up in
+    # `messages`, but their *results* only ever appear in the state, so
+    # listening to messages alone means the UI learns what a tool returned
+    # when the turn is already over.
+    for projection, item in stream.interleave("messages", "values"):
+        if stop.is_set():
+            out["stopped"] = "yes"
+            return
+        if projection == "values":
+            # The whole state each time, so dedupe by call id.
+            for message in item.get("messages") or []:
+                if not isinstance(message, ToolMessage) or message.tool_call_id in seen_results:
+                    continue
+                seen_results.add(message.tool_call_id)
+                yield _sse(
+                    "activity_result",
+                    {"id": message.tool_call_id, "result": str(message.content)[:TOOL_PREVIEW_CHARS]},
+                )
+            continue
+
+        message = item
+        out["round"] = ""
+        # The raw events, in the order they arrive, so thinking and answer
+        # both stream live. Reading the `.text` or `.reasoning` projection
+        # instead would pull the message to its end before the other gets a
+        # turn -- and reading `.tool_calls` first, as this loop used to,
+        # buffered the whole round's text until the round was over.
+        for event in message:
+            if stop.is_set():
+                out["stopped"] = "yes"
+                return
+            kind, piece = _delta_of(event)
+            if kind == "text":
+                out["text"] += piece
+                out["round"] += piece
+                yield _sse("token", {"text": piece})
+            elif kind == "reasoning":
+                yield _sse("reasoning", {"text": piece})
+        # Tool calls repeat on every chunk as the message accumulates, so
+        # announce each one only the first time its id appears -- this is
+        # what turns the silent "thinking" dots into "Reading /skills/...".
+        for call in getattr(message, "tool_calls", None) or []:
+            call_id = call.get("id")
+            if call_id and call_id not in seen_calls:
+                seen_calls.add(call_id)
+                yield _sse("activity", {"id": call_id, "tool": call.get("name"), "args": call.get("args") or {}})
 
 
 def _sse(event: str, data: dict) -> str:
@@ -195,6 +340,13 @@ async def chat_stream(body: ChatBody):
             yield _sse("error", {"message": unusable})
             return
 
+        # One run per thread at a time. A reply whose browser went away may
+        # still be finishing; let it, so two runs never write one thread.
+        previous = _RUNS.get(thread_id)
+        if previous is not None and not previous.worker.done():
+            previous.stop.set()
+            await previous.worker
+
         conn = db.connect()
         try:
             if new_session:
@@ -224,76 +376,78 @@ async def chat_stream(body: ChatBody):
             # Messages the thread already had, so we can tell which ones
             # THIS call adds (see the backend design discussion: a fresh
             # thread's state is `{}`, not a "messages": [] key).
-            prior_count = len(agent.get_state(cfg).values.get("messages", []))
+            prior_messages = agent.get_state(cfg).values.get("messages", [])
+            prior_count = len(prior_messages)
 
+            stop = threading.Event()
             try:
                 stream = agent.stream_events(
                     {"messages": [{"role": "user", "content": text}]},
                     version="v3",
-                    config=cfg,
+                    config={**cfg, "callbacks": [_StopHandler(stop)]},
                     reasoning_effort=body.reasoning_effort.lower(),
                 )
             except Exception as e:  # noqa: BLE001 -- reported as an error event
                 yield _sse("error", {"message": errors.explain(e, body.model or config.MODEL_NAME)})
                 return
 
-            full_text = ""
-            seen_calls: set[str] = set()
-            seen_results: set[str] = set()
+            # The worker thread runs the stream and hands each event over a
+            # queue, so the event loop stays free -- for /chat/stop above all.
+            loop = asyncio.get_running_loop()
+            queue: asyncio.Queue = asyncio.Queue()
+            out = {"text": "", "round": ""}
+            # Results already in the thread belong to earlier turns; without
+            # this every turn re-announced the last one's tool results.
+            seen_results = {m.tool_call_id for m in prior_messages if isinstance(m, ToolMessage)}
+            failure: list[BaseException] = []
+
+            def produce() -> None:
+                try:
+                    for chunk in _stream_turn(stream, stop, seen_results, out):
+                        loop.call_soon_threadsafe(queue.put_nowait, chunk)
+                except Exception as e:  # noqa: BLE001 -- reported as an error event
+                    if _caused_by_stop(e):
+                        out["stopped"] = "yes"
+                    else:
+                        failure.append(e)
+                finally:
+                    # abort() must run on the thread that iterates the stream;
+                    # it closes the graph, cancelling the in-flight model call.
+                    if out.get("stopped"):
+                        stream.abort()
+                    loop.call_soon_threadsafe(queue.put_nowait, None)
+
+            run = _Run(stop=stop, worker=loop.run_in_executor(None, produce))
+            _RUNS[thread_id] = run
+            run.worker.add_done_callback(
+                lambda _: _RUNS.pop(thread_id, None) if _RUNS.get(thread_id) is run else None
+            )
             try:
-                # Two projections, merged in arrival order. Tool *calls* show up
-                # in `messages`, but their *results* only ever appear in the
-                # state, so listening to messages alone means the UI learns
-                # what a tool returned when the turn is already over.
-                for projection, item in stream.interleave("messages", "values"):
-                    if projection == "values":
-                        # The whole state each time, so dedupe by call id.
-                        for message in item.get("messages") or []:
-                            if not isinstance(message, ToolMessage):
-                                continue
-                            if message.tool_call_id in seen_results:
-                                continue
-                            seen_results.add(message.tool_call_id)
-                            yield _sse(
-                                "activity_result",
-                                {
-                                    "id": message.tool_call_id,
-                                    "result": str(message.content)[:TOOL_PREVIEW_CHARS],
-                                },
-                            )
-                        continue
-
-                    message = item
-                    # The raw events, in the order they arrive, so thinking and
-                    # answer both stream live. Reading the `.text` or
-                    # `.reasoning` projection instead would pull the message
-                    # to its end before the other gets a turn -- and reading
-                    # `.tool_calls` first, as this loop used to, buffered the
-                    # whole round's text until the round was over.
-                    for event in message:
-                        kind, piece = _delta_of(event)
-                        if kind == "text":
-                            full_text += piece
-                            yield _sse("token", {"text": piece})
-                        elif kind == "reasoning":
-                            yield _sse("reasoning", {"text": piece})
-                    # Tool calls repeat on every chunk as the message accumulates,
-                    # so announce each one only the first time its id appears --
-                    # this is what turns the silent "thinking" dots into
-                    # "Reading /skills/pdf/SKILL.md...".
-                    for call in getattr(message, "tool_calls", None) or []:
-                        call_id = call.get("id")
-                        if call_id and call_id not in seen_calls:
-                            seen_calls.add(call_id)
-                            yield _sse(
-                                "activity",
-                                {"id": call_id, "tool": call.get("name"), "args": call.get("args") or {}},
-                            )
-            except Exception as e:  # noqa: BLE001 -- mid-stream failure
-                yield _sse("error", {"message": errors.explain(e, body.model or config.MODEL_NAME)})
+                while (chunk := await queue.get()) is not None:
+                    yield chunk
+            finally:
+                # The browser went away mid-reply (closed tab, new chat):
+                # nobody is listening, so stop generating.
+                if not run.worker.done():
+                    stop.set()
+            await run.worker
+            if failure:
+                yield _sse("error", {"message": errors.explain(failure[0], body.model or config.MODEL_NAME)})
                 return
+            full_text = out["text"]
+            stopped = bool(out.get("stopped"))
 
-            final_state = stream.output
+            if stopped and out.get("round"):
+                # The round that was cut off never reached the checkpoint, so
+                # the model would not know what it had said -- ask "what was
+                # that about?" and it starts again from scratch. Keep the
+                # partial reply in the thread, as Claude Code and Codex do.
+                await asyncio.to_thread(
+                    agent.update_state, cfg, {"messages": [AIMessage(content=out["round"])]}, as_node="model"
+                )
+            # A stopped run has no output; the checkpoint holds every step
+            # that finished before it was stopped.
+            final_state = agent.get_state(cfg).values if stopped else stream.output
             new_messages = final_state["messages"][prior_count:]
             payload = trace_mod.build_trace(
                 new_messages,
@@ -301,6 +455,8 @@ async def chat_stream(body: ChatBody):
                 model_spec=body.model or config.MODEL_NAME,
             )
             payload["text"] = full_text
+            if stopped:
+                payload["finish_reason"] = "stopped"
 
             conn.execute(
                 """INSERT INTO turns
@@ -321,7 +477,8 @@ async def chat_stream(body: ChatBody):
             yield _sse("done", payload)
 
             if new_session:
-                title, title_usage = titles.generate(text, full_text)
+                # Off the event loop: it is a whole model call.
+                title, title_usage = await asyncio.to_thread(titles.generate, text, full_text)
                 if title:
                     conn.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, thread_id))
                     conn.commit()
@@ -343,6 +500,21 @@ async def chat_stream(body: ChatBody):
             conn.close()
 
     return StreamingResponse(events(), media_type="text/event-stream")
+
+
+@app.post("/chat/stop")
+async def chat_stop(body: StopBody):
+    """Stops a reply mid-way.
+
+    Only asks: the run stops at its next event, aborting the model call in
+    flight, and its stream then ends with `done` as usual. A tool already
+    running (a long shell command) finishes first.
+    """
+    run = _RUNS.get(body.thread_id)
+    if run is None or run.worker.done():
+        return {"stopped": False}
+    run.stop.set()
+    return {"stopped": True}
 
 
 @app.get("/sessions")

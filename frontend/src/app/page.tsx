@@ -75,7 +75,9 @@ export default function Home() {
   // round of a turn, so a turn with 11 tool calls reports ~121k for a thread
   // that is really ~17k. `context_tokens` is the last round's input, which is
   // the thread as it now stands.
-  const lastUsage = [...session.lines].reverse().find((l) => l.usage)?.usage;
+  // A stopped reply measured nothing (its last round never finished), so
+  // skip back to the last one that did rather than drop the meter to zero.
+  const lastUsage = [...session.lines].reverse().find((l) => l.usage?.context_tokens)?.usage;
   const contextUsed = lastUsage?.context_tokens ?? undefined;
   const contextWindow = lastUsage?.context_window ?? undefined;
   // What this chat has cost so far, summed over its replies.
@@ -174,6 +176,8 @@ export default function Home() {
           lineCountLabel={session.lineCountLabel}
           onSendText={handleSendText}
           replying={session.replying}
+          stopping={session.stopping}
+          onStop={session.stop}
           activity={session.activity}
           contextUsed={contextUsed}
           contextWindow={contextWindow}

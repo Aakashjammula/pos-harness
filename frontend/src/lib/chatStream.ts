@@ -58,6 +58,19 @@ function dispatch(event: string, d: Record<string, unknown>, h: ChatHandlers): v
 }
 
 /**
+ * Ask the server to stop a reply mid-way. The reply's own stream then ends
+ * with its usual `done` (finish_reason "stopped"), so keep reading it: that
+ * is what carries the partial text and its usage.
+ */
+export async function stopChat(threadId: string): Promise<void> {
+  await fetch(`${API_URL}/chat/stop`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ thread_id: threadId }),
+  });
+}
+
+/**
  * POST a message and stream the reply from POST /chat/stream.
  *
  * Problems found before streaming starts arrive as an ordinary HTTP error and

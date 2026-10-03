@@ -15,6 +15,7 @@ from typing import Any
 
 from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
 from deepagents.middleware import FilesystemMiddleware, MemoryMiddleware, SkillsMiddleware
+from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
@@ -239,7 +240,11 @@ def build_agent(
         routes[MEMORY_MOUNT] = FilesystemBackend(root_dir=str(MEMORY_DIR))
     backend = CompositeBackend(default=project, routes=routes)
 
-    middleware = [FilesystemMiddleware(backend=backend)]
+    # First, so it runs before anything reads the history: a reply stopped
+    # between a model asking for a tool and the tool answering leaves a call
+    # with no result, and every provider rejects the whole thread after
+    # that. This answers each such call with "cancelled" before the turn.
+    middleware = [PatchToolCallsMiddleware(), FilesystemMiddleware(backend=backend)]
     if SKILLS_DIR.is_dir():
         middleware.append(SkillsMiddleware(backend=backend, sources=[SKILLS_MOUNT]))
     # Sources that don't exist are skipped, so this is safe for folders with
