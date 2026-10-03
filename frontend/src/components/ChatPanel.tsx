@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { TranscriptLine } from "@/lib/types";
 import { formatUsageLine } from "@/lib/format";
 import { Dropdown } from "./Dropdown";
@@ -9,6 +9,8 @@ import { FolderIcon } from "./icons";
 import { ContextMeter } from "./ContextMeter";
 import { Markdown } from "./Markdown";
 import { ActivityTrail, ThinkingRow } from "./ActivityTrail";
+import { ComposerMenu, type MenuItem } from "./ComposerMenu";
+import { searchFiles } from "@/lib/files";
 
 interface ChatPanelProps {
   lines: TranscriptLine[];
@@ -28,6 +30,8 @@ interface ChatPanelProps {
   level: string;
   onLevelChange: (level: string) => void;
   folderName: string | null; // null = no folder open yet -- chat is locked until then
+  folderPath: string | null; // the same folder's real path, for @-mention search
+  onNewChat: () => void;
   folderReady: boolean; // false until the saved folder has been restored
   onOpenFolder: () => void;
   folderPicking: boolean; // the native OS dialog is open, waiting on you
@@ -38,6 +42,33 @@ interface ChatPanelProps {
   onOpenFile: (path: string) => void;
   filesOpen: boolean;
   onToggleFiles: () => void;
+}
+
+/** What "/" offers at the start of the box. */
+const COMMANDS: MenuItem[] = [
+  { key: "new", label: "/new", detail: "Start a new chat in this folder", icon: "+" },
+  { key: "files", label: "/files", detail: "Show or hide the file panel", icon: "▤" },
+  { key: "model", label: "/model", detail: "Switch model", icon: "◇" },
+  { key: "help", label: "/help", detail: "What / and @ can do", icon: "?" },
+];
+
+/** A popup the composer is showing: what it lists, the text it is
+ * completing, and where that text starts in the box. */
+interface MenuState {
+  kind: "file" | "command" | "model";
+  query: string;
+  start: number;
+}
+
+/** Which popup, if any, the text before the cursor calls for: "/word" at
+ * the very start, or "@word" after a space or at the start. */
+function menuFor(value: string, caret: number): MenuState | null {
+  const before = value.slice(0, caret);
+  const command = /^\/(\S*)$/.exec(before);
+  if (command) return { kind: "command", query: command[1], start: 0 };
+  const mention = /(?:^|\s)@(\S*)$/.exec(before);
+  if (mention) return { kind: "file", query: mention[1], start: caret - mention[1].length - 1 };
+  return null;
 }
 
 /** The part of a reply that belongs in the bubble.
@@ -71,6 +102,8 @@ export function ChatPanel({
   level,
   onLevelChange,
   folderName,
+  folderPath,
+  onNewChat,
   folderReady,
   onOpenFolder,
   folderPicking,
@@ -87,6 +120,85 @@ export function ChatPanel({
   const [textValue, setTextValue] = useState("");
   // A message sent while a reply was still running; it goes when that ends.
   const [queued, setQueued] = useState<string | null>(null);
+  // The "/" or "@" popup, its file results, and the highlighted row.
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const [fileItems, setFileItems] = useState<MenuItem[]>([]);
+  const [menuActive, setMenuActive] = useState(0);
+  const [showHelp, setShowHelp] = useState(false);
+
+  const menuItems: MenuItem[] = useMemo(() => {
+    if (!menu) return [];
+    if (menu.kind === "command") return COMMANDS.filter((c) => c.label.startsWith(`/${menu.query}`));
+    if (menu.kind === "model") return models.map((m) => ({ key: m, label: m, icon: m === model ? "✓" : "" }));
+    return fileItems;
+  }, [menu, models, model, fileItems]);
+
+  // Files come from the server, a moment after typing pauses.
+  const fileQuery = menu?.kind === "file" ? menu.query : null;
+  useEffect(() => {
+    if (fileQuery === null || !folderPath) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      searchFiles(folderPath, fileQuery, controller.signal)
+        .then((entries) =>
+          setFileItems(
+            entries.map((e) => ({
+              key: e.path,
+              label: e.type === "dir" ? `${e.path}/` : e.path,
+              icon: e.type === "dir" ? "▸" : "·",
+            }))
+          )
+        )
+        .catch(() => {
+          // aborted by the next keystroke, or the folder went away: keep the old list
+        });
+    }, 80);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [fileQuery, folderPath]);
+
+  function updateText(value: string, caret: number) {
+    setTextValue(value);
+    const next = menuFor(value, caret);
+    // The model list was opened by a command, not by typing; typing leaves it.
+    setMenu((prev) => (prev?.kind === "model" && !next ? prev : next));
+    setMenuActive(0);
+  }
+
+  function pick(item: MenuItem) {
+    if (!menu) return;
+    if (menu.kind === "model") {
+      onModelChange(item.key);
+      setMenu(null);
+      return;
+    }
+    if (menu.kind === "command") {
+      setTextValue("");
+      setMenu(null);
+      if (item.key === "new") onNewChat();
+      else if (item.key === "files") onToggleFiles();
+      else if (item.key === "help") setShowHelp(true);
+      else if (item.key === "model") setMenu({ kind: "model", query: "", start: 0 });
+      return;
+    }
+    // A file: replace "@what-was-typed" with its path. A folder stays open,
+    // listing what is inside it, the way Claude Code drills down.
+    const el = textareaRef.current;
+    const caret = el?.selectionStart ?? textValue.length;
+    const isDir = item.label.endsWith("/");
+    const inserted = isDir ? `@${item.label}` : `@${item.label} `;
+    const value = textValue.slice(0, menu.start) + inserted + textValue.slice(caret);
+    const at = menu.start + inserted.length;
+    setTextValue(value);
+    setMenu(isDir ? { kind: "file", query: item.label, start: menu.start } : null);
+    setMenuActive(0);
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(at, at);
+    });
+  }
   const [files, setFiles] = useState<File[]>([]);
   const [toolsEnabled, setToolsEnabled] = useState(false);
   // Shown after the reasoning level is changed part-way through a chat.
@@ -384,12 +496,73 @@ export function ChatPanel({
         </div>
         {/* one rounded box: message at top, add/model/level along the bottom
             -- mic/dictation go in that same bottom-right row later */}
-        <div className="mx-auto max-w-[720px] rounded-[26px] border border-border bg-surface-sunken px-4 pt-3.5 pb-2.5">
+        {showHelp && (
+          <div className="relative mx-auto mb-2 max-w-[720px] rounded-xl border border-border bg-surface-sunken px-4 py-3 text-[12.5px] text-text-muted">
+            <button
+              type="button"
+              onClick={() => setShowHelp(false)}
+              aria-label="Close help"
+              className="absolute top-2 right-3 text-text-faint hover:text-text"
+            >
+              ✕
+            </button>
+            <div className="mb-1.5 font-medium text-text">In the message box</div>
+            <div>
+              <span className="font-mono text-text">@</span> — mention a file or folder. The agent gets its path,
+              and a small file&apos;s contents too.
+            </div>
+            <div>
+              <span className="font-mono text-text">/</span> — a command at the start:{" "}
+              {COMMANDS.map((c) => c.label).join(", ")}.
+            </div>
+            <div>
+              <span className="font-mono text-text">Esc</span> stops a reply; typing while it runs queues your
+              next message.
+            </div>
+          </div>
+        )}
+        <div className="relative mx-auto max-w-[720px] rounded-[26px] border border-border bg-surface-sunken px-4 pt-3.5 pb-2.5">
+          {menu && (
+            <ComposerMenu
+              title={menu.kind === "file" ? "Files" : menu.kind === "model" ? "Model" : "Commands"}
+              items={menuItems}
+              active={Math.min(menuActive, Math.max(menuItems.length - 1, 0))}
+              empty={menu.kind === "file" ? "No matching files." : "Nothing matches."}
+              onPick={pick}
+              onHover={setMenuActive}
+            />
+          )}
           <textarea
             ref={textareaRef}
             value={textValue}
-            onChange={(e) => setTextValue(e.target.value)}
+            onChange={(e) => updateText(e.target.value, e.target.selectionStart)}
             onKeyDown={(e) => {
+              if (menu) {
+                const count = menuItems.length;
+                if (e.key === "ArrowDown" && count) {
+                  e.preventDefault();
+                  setMenuActive((i) => (i + 1) % count);
+                  return;
+                }
+                if (e.key === "ArrowUp" && count) {
+                  e.preventDefault();
+                  setMenuActive((i) => (i - 1 + count) % count);
+                  return;
+                }
+                if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+                  if (count) {
+                    e.preventDefault();
+                    pick(menuItems[Math.min(menuActive, count - 1)]);
+                    return;
+                  }
+                }
+                if (e.key === "Escape") {
+                  // Marks it handled, so the Esc-to-stop listener leaves the reply alone.
+                  e.preventDefault();
+                  setMenu(null);
+                  return;
+                }
+              }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 handleSend();

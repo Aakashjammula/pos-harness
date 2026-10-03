@@ -189,6 +189,8 @@ export default function Home() {
           level={level}
           onLevelChange={setLevel}
           folderName={workspace.folderName}
+          folderPath={workspace.folderPath}
+          onNewChat={handleNewChat}
           folderReady={workspace.ready}
           onOpenFolder={workspace.openFolder}
           folderPicking={workspace.picking}

@@ -65,3 +65,11 @@ export function projectPath(agentPath: string): string | null {
 
 /** Tools that can change what is on disk -- the panel reloads after them. */
 export const WRITING_TOOLS = new Set(["write_file", "edit_file", "delete", "execute"]);
+
+/** Files and folders matching what was typed after "@", best first. */
+export async function searchFiles(folder: string, q: string, signal?: AbortSignal): Promise<FileEntry[]> {
+  const params = new URLSearchParams({ folder, q });
+  const res = await fetch(`${API_URL}/fs/search?${params}`, { signal });
+  if (!res.ok) return [];
+  return ((await res.json()) as { entries: FileEntry[] }).entries;
+}
