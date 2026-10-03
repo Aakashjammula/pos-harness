@@ -6,6 +6,12 @@ import { WRITING_TOOLS } from "@/lib/files";
 import type { StoredTurn } from "@/lib/sessions";
 import type { TranscriptLine, Usage } from "@/lib/types";
 
+// What the status line says while a call is still being written.
+const VERBS: Record<string, string> = { write_file: "Writing", edit_file: "Editing", read_file: "Reading" };
+
+/** 4300 -> "4.2 KB". */
+const formatSize = (chars: number) => (chars < 1024 ? `${chars} B` : `${(chars / 1024).toFixed(1)} KB`);
+
 let lineIdSeq = 0;
 const nextLineId = () => `line-${++lineIdSeq}`;
 
@@ -71,6 +77,23 @@ export function useChatSession() {
 
       liveIds.current = [];
       liveTools.current.clear();
+
+      /** Adds the call's row, or updates it if it is already shown -- by
+       * call id, since progress reports arrive before the call is whole. */
+      const upsertCall = (id: string, tool: string, args: Record<string, unknown>, chars?: number) => {
+        const index = liveIds.current.indexOf(id);
+        if (index < 0) {
+          liveIds.current.push(id);
+          liveTools.current.set(id, tool);
+        }
+        patchLine(botId, (l) => {
+          const calls = l.liveCalls ?? [];
+          const call = { name: tool, args, pending: true, progress_chars: chars };
+          return index < 0
+            ? { ...l, liveCalls: [...calls, call] }
+            : { ...l, liveCalls: calls.map((c, i) => (i === index ? { ...c, ...call } : c)) };
+        });
+      };
       const controller = new AbortController();
       abortRef.current = controller;
       setReplying(true);
@@ -97,6 +120,13 @@ export function useChatSession() {
           onReasoning: (piece) => {
             patchLine(botId, (l) => ({ ...l, liveThinking: (l.liveThinking ?? "") + piece }));
           },
+          onActivityProgress: (id, tool, path, chars) => {
+            const size = formatSize(chars);
+            setActivity(path ? `${VERBS[tool] ?? tool} ${path}… ${size}` : `${tool}… ${size}`);
+            // The row appears now, while the model is still writing the
+            // call; `onActivity` fills in its finished arguments.
+            upsertCall(id, tool, { ...(path ? { file_path: path } : {}) }, chars);
+          },
           onActivity: (id, tool, args) => {
             // Show the most telling argument (a path, a query) rather than
             // the whole blob -- this is a one-line status, not a trace.
@@ -104,12 +134,7 @@ export function useChatSession() {
             setActivity(detail ? `${tool} ${String(detail)}` : tool);
             // And add it to the reply's own list, so the activity trail
             // builds up as the turn runs rather than appearing at the end.
-            patchLine(botId, (l) => ({
-              ...l,
-              liveCalls: [...(l.liveCalls ?? []), { name: tool, args, pending: true }],
-            }));
-            liveIds.current.push(id);
-            liveTools.current.set(id, tool);
+            upsertCall(id, tool, args);
           },
           onActivityResult: (id, result) => {
             const index = liveIds.current.indexOf(id);

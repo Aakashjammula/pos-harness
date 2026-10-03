@@ -5,6 +5,9 @@
                        `reasoning {text}` (the model's thinking, if it
                        reports any),
                        `title {title}` (once, after the first reply),
+                       `activity {id, tool, args}` once a call is complete,
+                       `activity_progress {id, tool, path, chars}` while
+                       its arguments stream in,
                        `activity_result {id, result}`,
                        `done {text, model, finish_reason,
                        reasoning_effort, usage, tool_calls}`,
@@ -33,6 +36,7 @@ import asyncio
 import dataclasses
 import json
 import os
+import re
 import threading
 import uuid
 from collections.abc import AsyncIterator, Iterator
@@ -66,6 +70,13 @@ from pos import usage
 # Enough of a tool's output to recognise it mid-stream; the full result is
 # in the turn's stored trace.
 TOOL_PREVIEW_CHARS = 300
+
+# While a tool call's arguments stream in (a whole file, for write_file),
+# report its size at most this often -- enough to show it is moving.
+PROGRESS_EVERY_CHARS = 1024
+
+# The path, from a tool call's arguments while they are still half-written.
+_PARTIAL_PATH = re.compile(r'"(?:file_path|path)"\s*:\s*"((?:[^"\\]|\\.)*)"')
 
 
 class ChatBody(BaseModel):
@@ -168,6 +179,9 @@ def _stream_turn(
         Formatted SSE strings.
     """
     seen_calls: set[str] = set()
+    # Each tool call's arguments so far, and how much of them was last
+    # reported, by call id -- see _tool_progress.
+    drafts: dict[str, dict] = {}
     # Two projections, merged in arrival order. Tool *calls* show up in
     # `messages`, but their *results* only ever appear in the state, so
     # listening to messages alone means the UI learns what a tool returned
@@ -199,6 +213,9 @@ def _stream_turn(
             if stop.is_set():
                 out["stopped"] = "yes"
                 return
+            if (progress := _tool_progress(event, drafts)) is not None:
+                yield _sse("activity_progress", progress)
+                continue
             kind, piece = _delta_of(event)
             if kind == "text":
                 out["text"] += piece
@@ -206,10 +223,10 @@ def _stream_turn(
                 yield _sse("token", {"text": piece})
             elif kind == "reasoning":
                 yield _sse("reasoning", {"text": piece})
-        # Tool calls repeat on every chunk as the message accumulates, so
-        # announce each one only the first time its id appears -- this is
-        # what turns the silent "thinking" dots into "Reading /skills/...".
-        for call in getattr(message, "tool_calls", None) or []:
+        # Announced from the finished message, whose calls carry their whole
+        # arguments. The streamed chunks don't: announcing on the first one,
+        # as this used to, sent args of "{" and the UI showed "{" as the path.
+        for call in message.output.tool_calls:
             call_id = call.get("id")
             if call_id and call_id not in seen_calls:
                 seen_calls.add(call_id)
@@ -219,6 +236,54 @@ def _stream_turn(
 def _sse(event: str, data: dict) -> str:
     """Formats one server-sent event."""
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _tool_progress(event: dict, drafts: dict[str, dict]) -> dict | None:
+    """How far a tool call's arguments have streamed, if this event says.
+
+    A model writing a file streams the whole file as the call's arguments,
+    which can take a minute with nothing else to show -- it looks stuck.
+    This turns those chunks into an occasional size report.
+
+    Args:
+        event: One raw event from a v3 message stream.
+        drafts: Per call id, the arguments so far and the size last
+            reported. Updated in place.
+
+    Returns:
+        `{id, tool, path, chars}` when there is something new to report --
+        the path just became readable, or PROGRESS_EVERY_CHARS more arrived;
+        None for every other event, and for chunks between reports.
+    """
+    if event.get("event") != "content-block-delta":
+        return None
+    delta = event.get("delta") or {}
+    fields = delta.get("fields") if delta.get("type") == "block-delta" else None
+    if not isinstance(fields, dict) or fields.get("type") != "tool_call_chunk":
+        return None
+    call_id = fields.get("id")
+    if not call_id:
+        return None
+
+    draft = drafts.setdefault(call_id, {"args": "", "reported": -1, "path": None, "tool": None})
+    draft["tool"] = fields.get("name") or draft["tool"]
+    piece = fields.get("args") or ""
+    # LM Studio sends the arguments so far on every chunk; other servers
+    # send only the new part. Handle both.
+    draft["args"] = piece if piece.startswith(draft["args"]) else draft["args"] + piece
+
+    path = draft["path"]
+    if path is None and (match := _PARTIAL_PATH.search(draft["args"])):
+        try:  # it is a JSON string: undo its escapes
+            path = json.loads(f'"{match.group(1)}"')
+        except ValueError:
+            path = match.group(1)
+        draft["path"] = path
+    chars = len(draft["args"])
+    if path == draft.get("reported_path") and chars - draft["reported"] < PROGRESS_EVERY_CHARS:
+        return None
+    draft["reported"], draft["reported_path"] = chars, path
+    return {"id": call_id, "tool": draft["tool"], "path": path, "chars": chars}
 
 
 def _delta_of(event: dict) -> tuple[str | None, str]:

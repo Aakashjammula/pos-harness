@@ -16,6 +16,8 @@ export interface ChatHandlers {
   onReasoning: (text: string) => void;
   onActivity: (id: string, tool: string, args: Record<string, unknown>) => void;
   onActivityResult: (id: string, result: string) => void;
+  /** A call's arguments still streaming in: `path` once readable. */
+  onActivityProgress: (id: string, tool: string, path: string | null, chars: number) => void;
   onDone: (d: ChatDone) => void;
   /** `usage` is the turn's totals re-stated to include the title call,
    * which is billed but happens after `done`. Null when titling produced
@@ -51,6 +53,8 @@ function dispatch(event: string, d: Record<string, unknown>, h: ChatHandlers): v
   else if (event === "reasoning") h.onReasoning(d.text as string);
   else if (event === "activity")
     h.onActivity(d.id as string, d.tool as string, (d.args as Record<string, unknown>) ?? {});
+  else if (event === "activity_progress")
+    h.onActivityProgress(d.id as string, d.tool as string, (d.path as string) ?? null, (d.chars as number) ?? 0);
   else if (event === "activity_result") h.onActivityResult(d.id as string, (d.result as string) ?? "");
   else if (event === "done") h.onDone(d as unknown as ChatDone);
   else if (event === "title") h.onTitle((d.title as string) ?? null, (d.usage as Usage) ?? null);

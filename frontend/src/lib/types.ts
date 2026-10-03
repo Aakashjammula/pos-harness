@@ -10,6 +10,9 @@ export interface ToolCall {
   cost_estimated?: boolean;
   /** Set while a call is in flight, cleared when its result arrives. */
   pending?: boolean;
+  /** How much of its arguments has streamed so far -- a whole file, for
+   * write_file -- while the model is still writing them. */
+  progress_chars?: number;
 }
 
 /** One model call within a turn. A turn with tool calls has several. */

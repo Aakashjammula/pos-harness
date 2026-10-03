@@ -105,7 +105,13 @@ function GroupRow({ group: g, onOpenFile }: { group: Group; onOpenFile?: (path: 
           <span className="min-w-0 flex-1 truncate">{summarise(g)}</span>
         </button>
         {g.calls.some((c) => c.pending) && (
-          <span className="shrink-0 animate-pulse text-[11px] text-text-faint">running…</span>
+          <span className="shrink-0 animate-pulse text-[11px] text-text-faint">
+            {/* While the model is still writing the call itself (a file's
+                whole contents), say how far it has got. */}
+            {g.calls.some((c) => c.progress_chars)
+              ? `writing… ${(Math.max(...g.calls.map((c) => c.progress_chars ?? 0)) / 1024).toFixed(1)} KB`
+              : "running…"}
+          </span>
         )}
         {diffs.length > 0 && (
           <span className="shrink-0 font-mono text-[11px] text-text-faint">{diffs.join(" ")}</span>
