@@ -1,136 +1,158 @@
 # pos-harness
 
-A local coding and research agent with a browser UI. You open a folder, it
-reads and writes files in it, runs commands on your machine, searches the
-web, and shows you exactly what every turn cost.
+An open-source, Claude Code–style coding agent that runs on your own
+machine with the model of your choice. Open a folder in the browser UI and
+the agent reads and edits files there, runs commands and searches the web.
+It works with Azure OpenAI, OpenAI, or a local model in LM Studio.
 
-Single user, runs on your own computer. There is no login, no server, and
-no account — the model's access to your files is the point, not a
-side-effect.
+![Chat with the file panel and a live HTML preview](.github/screenshots/files-and-preview.png)
 
-Built on [LangChain](https://docs.langchain.com/)'s `create_agent` with
-[deepagents](https://github.com/langchain-ai/deepagents) for the filesystem,
-shell and skills. Azure OpenAI, OpenAI, or a local LM Studio (or other
-OpenAI-compatible) server.
+## Features
 
-## Install and run
+- **Claude Code–style setup with any model.** Use the same agent, tools and
+  workflow with Azure OpenAI, OpenAI, or a local model in LM Studio.
+- **Open-source agent harness.** Built on LangChain's `create_agent` with
+  [deepagents](https://github.com/langchain-ai/deepagents). Runs locally with
+  no account and no login.
+- **Tools.** The agent can read, write and edit files, search the folder,
+  run shell commands, and search the web with
+  [Tavily](https://tavily.com/).
+- **Skills.** Folders of instructions and scripts (pdf, docx, xlsx, pptx,
+  frontend design and more). The agent loads a skill only when a task needs
+  it. To add your own, drop a folder into `skills/`.
+- **AGENTS.md.** Standing instructions that follow the
+  [agents.md](https://agents.md/) spec. A global file applies everywhere, and
+  a project's own file adds to it.
+- **UI with Trace.** The browser UI has:
+  - a file panel with a code view and HTML preview;
+  - `@` to mention files and `/` for commands;
+  - a Stop button (or Esc) to interrupt the agent;
+  - a Trace view that shows every turn as a graph, with each model round,
+    each tool call, and its tokens, context and cost.
 
-```bash
-uvx pos-backend          # run it without installing
-uv tool install pos-backend && pos   # or install it, then `pos`
-```
+| `@` to mention a file | Trace of a turn |
+|---|---|
+| ![File mention popup](.github/screenshots/mention.png) | ![Trace view](.github/screenshots/trace.png) |
 
-[uv](https://docs.astral.sh/uv/) downloads Python if you don't have it, so
-that is the whole dependency list. The app opens in your browser at
-<http://127.0.0.1:8000>.
+## Setup
 
-Before the first run, put your Azure credentials in a `.env` file beside
-wherever you run it — see [`.env.example`](.env.example). Nothing is ever
-entered through the UI.
-
-## What it does
-
-- **Open a folder** through the real OS dialog (`zenity`/`kdialog` on Linux,
-  the native picker on Windows/macOS, Tk as a fallback if neither is
-  installed — see Configuration). The agent is sandboxed to it: it cannot
-  read above that folder, and your `.env` stays out of reach.
-- **Chat**, with replies streamed token by token. Markdown, tables and code
-  blocks render properly.
-- **Tools**: read, write, edit, search and list files; run shell commands;
-  search the web with [Tavily](https://tavily.com/) if you set a key.
-- **Skills** — folders of reference material (pdf, docx, xlsx, pptx and
-  more) that the agent opens only when a task matches. It sees each one's
-  name and description up front and reads the rest on demand.
-- **AGENTS.md** — standing instructions per project, following the
-  [agents.md](https://agents.md/) spec. A global one applies everywhere; a
-  folder's own layers on top.
-- **Trace** — every turn as a graph: each model round, each tool call, what
-  each one added to the context, cache hits, and cost.
-- **Usage** — tokens, cost and activity across all your chats.
-
-## Development
-
-One server, always:
+You need [uv](https://docs.astral.sh/uv/). It downloads Python for you if
+it's missing.
 
 ```bash
+git clone https://github.com/Aakashjammula/pos-harness.git
+cd pos-harness
+uv sync
+cp .env.example .env      # then fill it in, see below
 uv run uvicorn pos.app:app --reload --port 8000
 ```
 
-That serves the API *and* the UI. There is no second process.
+Open <http://127.0.0.1:8000> and click **Open folder**.
 
-### Changing the UI
+## Configure `.env`
 
-The frontend is Next.js, but nothing Node-related runs when the app runs —
-Node is only needed to build. `next build` with `output: 'export'` produces
-plain files, and those files are committed at `src/pos/static/`,
-which is what the server hands out.
+Set up one provider. If you fill in more than one, Azure is used first,
+then OpenAI, then LM Studio.
 
-So after editing anything under `frontend/src/`:
+**Azure OpenAI**
 
-```bash
-cd frontend && npm run build:app
+```env
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+AZURE_OPENAI_API_KEY=your-key
+OPENAI_API_VERSION=2025-04-01-preview
+POS_MODEL=your-deployment-name
 ```
 
-That rebuilds and copies the result into `src/pos/static/`. Commit
-that folder along with your source change — it is the part that actually
-ships.
+**OpenAI**
 
-Changes do not appear until you rebuild. That is the trade for having one
-command instead of two.
+```env
+OPENAI_API_KEY=sk-...
+POS_MODEL=gpt-5
+```
 
-### Where things live
+**LM Studio** (local, no key needed)
+
+```env
+LMSTUDIO_BASE_URL=http://localhost:1234/v1
+POS_MODEL=qwen/qwen3.5-9b
+```
+
+Load the model in LM Studio first. The app reads the context size from
+LM Studio, and local models cost $0.
+
+**Optional**
+
+```env
+TAVILY_API_KEY=tvly-...   # turns on web search
+```
+
+[`.env.example`](.env.example) lists every setting.
+
+## Using it
 
 | | |
 |---|---|
-| `src/pos/app.py` | the endpoints |
-| `src/pos/agent.py` | how the agent is assembled |
-| `src/pos/prompt.py` | the system prompt |
-| `src/pos/trace.py` | per-round and per-tool token accounting |
-| `src/pos/static/` | the built UI, committed |
-| `skills/` | the global skills |
-| `memory/AGENTS.md` | global standing instructions |
-| `frontend/src/components/` | the UI |
+| `@` | Mention a file or folder. The agent gets its path, plus the contents of small files |
+| `/new` `/files` `/model` `/help` | Commands. Type `/` at the start of the message box |
+| ■ or `Esc` | Stop the reply. Typing while the agent works queues your next message |
+| **Files** | Folder tree, code view, and a sandboxed preview for HTML files |
+| **Trace** | Every step of the chat, with tokens, context and cost |
 
-Your chats live in SQLite — `data/checkpoint.db` in a checkout, or your OS
-user-data folder when installed. `POS_DATA_DIR` overrides both.
-
-## Configuration
-
-Everything is read from `.env`; see [`.env.example`](.env.example) for the
-full list. The ones you are most likely to change:
-
-| | |
-|---|---|
-| `AZURE_OPENAI_*` / `OPENAI_API_KEY` / `LMSTUDIO_BASE_URL` | whichever you set decides the provider |
-| `POS_MODEL` | the model, or on Azure the deployment name |
-| `POS_MODELS` | Azure deployments to offer. OpenAI and LM Studio models list themselves |
-| `TAVILY_API_KEY` | enables web search |
-| `POS_ROOT_DIR` | the folder used when none has been picked |
-
-On Linux, the "Open folder" dialog needs `zenity` (GTK/GNOME) or `kdialog`
-(KDE) for a native-looking picker — most desktop environments already have
-one. Without either, it falls back to Tk, which needs its own system
-package on some distros (e.g. on Arch/CachyOS, `sudo pacman -S tk`).
-Without Tk either, `POST /fs/pick` answers 501 — set `POS_ROOT_DIR` instead.
-
-Prices and context windows are **not** configured — they are looked up from
-[models.dev](https://models.dev) for whichever model you name, cached to
-disk for a day. Its figures for `gpt-5.6-luna` were checked against
-Microsoft's own [Retail Prices API](https://prices.azure.com/api/retail/prices)
-and matched exactly. The `AZURE_OPENAI_PRICE_*` variables still exist as
-overrides for a deployment it doesn't know.
+The agent works inside the folder you open. Its file tools can't reach
+outside that folder, so the app's own `.env` stays out of reach. Shell
+commands run on your machine and are **not** sandboxed, so only open
+folders you trust it to work in.
 
 ## Docker
 
 ```bash
-WORKSPACE=C:/Users/me/projects docker compose up --build
+WORKSPACE=/path/to/your/projects docker compose up --build
 ```
 
-One service, and no Node stage in the image: the UI is already built and
-committed, so the image only installs Python dependencies.
+Docker is for running the harness on a server, not for daily use: there is
+no folder picker (it uses `WORKSPACE`), shell commands run inside the
+container, and it only listens on 127.0.0.1 by default. To use LM Studio
+from inside the container, set
+`LMSTUDIO_BASE_URL=http://host.docker.internal:1234/v1`, turn on "Serve on
+Local Network" in LM Studio, and on Linux add
+`extra_hosts: ["host.docker.internal:host-gateway"]` to the service.
 
-This is for deploying the app somewhere, **not** for daily use on your own
-machine. A container has no display, so the folder picker cannot open --
-`POST /fs/pick` answers 501 and you set the folder with `POS_ROOT_DIR`
-instead. `execute` runs inside the container rather than on your computer,
-and the agent sees only what `WORKSPACE` mounts.
+## Project layout
+
+| | |
+|---|---|
+| `src/pos/` | the backend: endpoints (`app.py`), agent setup (`agent.py`), system prompt (`prompt.py`), file panel and `@` mentions (`files.py`) |
+| `src/pos/static/` | the built UI, committed, which the server serves |
+| `frontend/` | the UI source (Next.js) |
+| `skills/` | global skills |
+| `memory/AGENTS.md` | global standing instructions |
+| `tests/` | backend tests |
+
+Chats are stored in SQLite at `data/checkpoint.db`. Set `POS_DATA_DIR` to
+store them somewhere else.
+
+## Development
+
+The UI is Next.js, but Node is only needed to build it. After editing
+`frontend/src/`, rebuild and commit `src/pos/static/` along with your
+change:
+
+```bash
+cd frontend && npm install && npm run build:app
+```
+
+Run the tests:
+
+```bash
+uv run --with pytest pytest tests
+```
+
+## Roadmap
+
+- **Modes.** Today the agent runs in **auto** mode and acts without asking.
+  Planned: **manual** (approve each change), `/plan` (plan read-only, then
+  approve), and `/auto` to switch back.
+- **More commands.** `/compact`, `/clear`, `/context`, `/usage`, `/export`,
+  `/resume`, `/init` and more.
+- **More tools and connectors**, such as MCP servers.
+- **More skills.**

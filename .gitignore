@@ -23,6 +23,8 @@ wheels/
 *.png
 *.jpg
 *.jpeg
+# ...except the README's screenshots.
+!/.github/screenshots/*.png
 
 # Scratch notes and fetched reference docs -- useful locally, not part of the app
 /docs/
