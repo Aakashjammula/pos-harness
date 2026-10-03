@@ -9,6 +9,8 @@ message.
 
 from __future__ import annotations
 
+import re
+
 from langchain.messages import HumanMessage, SystemMessage
 
 from pos import config
@@ -20,6 +22,27 @@ _SYSTEM = (
 )
 
 _title_model = None  # built lazily -- see generate()
+
+# Phrases from the instructions above. A small model sometimes answers with
+# the instructions themselves ("Title for this conversation: 3-8 words,
+# sentence case...") -- seen repeatedly with a 4B model on LM Studio.
+_ECHOES = ("title for this conversation", "3-8 words", "sentence case", "return only", "the conversation is")
+
+
+def clean(raw: str) -> str | None:
+    """The title in `raw`, or None if it isn't a usable one.
+
+    None leaves the provisional title -- the first message, shortened --
+    which is plainer but never wrong.
+    """
+    title = raw.strip().splitlines()[0].strip() if raw.strip() else ""
+    title = re.sub(r"^(?:title)\s*:\s*", "", title, flags=re.IGNORECASE)
+    title = title.strip().strip("\"'*").rstrip(".").strip()
+    if not title or len(title) > 80 or len(title.split()) > 10:
+        return None
+    if any(echo in title.lower() for echo in _ECHOES):
+        return None
+    return title
 
 
 def generate(user_text: str, bot_text: str) -> tuple[str | None, dict | None]:
@@ -67,5 +90,4 @@ def generate(user_text: str, bot_text: str) -> tuple[str | None, dict | None]:
     except Exception:  # noqa: BLE001 -- a failed title is not worth failing the chat over
         return None, None
 
-    title = response.text.strip().strip('"').strip("'")
-    return (title or None), (response.usage_metadata or None)
+    return clean(response.text), (response.usage_metadata or None)
