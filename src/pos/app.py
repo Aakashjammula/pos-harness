@@ -23,6 +23,7 @@
                        closed, returns the chosen path (or none).
   GET  /fs/tree        One folder's entries, for the file panel.
   GET  /fs/file        One file's text, for the viewer.
+  GET  /fs/search      Files and folders matching a name, for @-mentions.
   GET  /fs/preview/{key}/{path}
                        A file served as itself, sandboxed -- for running
                        an HTML page the agent wrote.
@@ -445,9 +446,12 @@ async def chat_stream(body: ChatBody):
             prior_count = len(prior_messages)
 
             stop = threading.Event()
+            # @-mentions become real paths for the tools, with small files
+            # attached. The transcript keeps what was typed (stored above).
+            agent_text = files.expand_mentions(root_dir, text) if root_dir else text
             try:
                 stream = agent.stream_events(
-                    {"messages": [{"role": "user", "content": text}]},
+                    {"messages": [{"role": "user", "content": agent_text}]},
                     version="v3",
                     config={**cfg, "callbacks": [_StopHandler(stop)]},
                     reasoning_effort=body.reasoning_effort.lower(),
@@ -690,6 +694,13 @@ def fs_tree(folder: str, path: str = ""):
         # For building preview links without sending the path back to us.
         "preview_key": files.folder_key(root),
     }
+
+
+@app.get("/fs/search")
+def fs_search(folder: str, q: str = ""):
+    """Files and folders matching `q`, best first -- the @-mention popup."""
+    root = _open_folder(folder)
+    return {"entries": [dataclasses.asdict(entry) for entry in files.search(root, q)]}
 
 
 @app.get("/fs/file")

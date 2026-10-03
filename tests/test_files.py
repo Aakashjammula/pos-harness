@@ -124,3 +124,53 @@ def test_preview_is_sandboxed_and_the_app_is_not_loosened(project: Path, client:
     api = client.get("/fs/tree", params={"folder": str(project)})
     assert api.headers["x-frame-options"] == "DENY"
     assert "sandbox" not in api.headers["content-security-policy"]
+
+
+def test_search_ranks_like_a_file_picker(project: Path):
+    (project / "src" / "app_test.py").write_text("")
+    (project / "docs").mkdir()
+    (project / "docs" / "about-app.md").write_text("")
+    (project / "node_modules" / "app.py").write_text("")
+
+    paths = [e.path for e in files.search(str(project), "app")]
+
+    assert paths[:3] == ["src/app.py", "src/app_test.py", "docs/about-app.md"]
+    assert "node_modules/app.py" not in paths
+
+
+def test_search_with_nothing_typed_shows_the_top_level(project: Path):
+    entries = files.search(str(project), "")
+    assert [e.path for e in entries if e.type == "dir"] == ["src"]  # node_modules is skipped
+    assert "README.md" in [e.path for e in entries]
+    assert all("/" not in e.path for e in entries)
+
+
+def test_search_never_lists_secrets(project: Path):
+    paths = [e.path for e in files.search(str(project), "env")]
+    assert ".env" not in paths
+    assert "src/.env.local" not in paths
+    # A link to .env may be listed by its own name; opening it is refused
+    # (test_refuses_env_files_however_named), and so is mentioning it:
+    assert files.expand_mentions(str(project), "see @env-link") == "see @env-link"
+
+
+def test_mentions_become_tool_paths_with_the_file_attached(project: Path):
+    out = files.expand_mentions(str(project), "look at @src/app.py, then @src")
+    first_line = out.splitlines()[0]
+
+    assert first_line == "look at /src/app.py, then /src"
+    assert '<file path="/src/app.py">\nprint(\'hi\')\n\n</file>' in out
+    assert out.count("<file ") == 1  # folders are named, not attached
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["mail me@example.com", "see @.env", "see @nope.txt", "see @../outside.txt", "no mentions"],
+)
+def test_mentions_that_dont_resolve_are_left_alone(project: Path, message: str):
+    assert files.expand_mentions(str(project), message) == message
+
+
+def test_search_endpoint(project: Path, client: TestClient):
+    found = client.get("/fs/search", params={"folder": str(project), "q": "read"}).json()["entries"]
+    assert [e["path"] for e in found] == ["README.md"]

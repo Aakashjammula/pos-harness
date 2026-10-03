@@ -16,6 +16,7 @@ import base64
 import binascii
 import dataclasses
 import os
+import re
 from pathlib import Path
 
 # Big enough for any source file worth reading in a browser; small enough
@@ -188,3 +189,107 @@ def folder_from_key(key: str) -> str:
     if not Path(folder).is_dir():
         raise FileAccessError(400, "That folder no longer exists.")
     return folder
+
+
+# Stop looking after this many entries -- a home directory opened by
+# mistake should cost a moment, not a minute.
+MAX_SCANNED = 20_000
+
+# Attached whole when @-mentioned; past this only the path goes.
+MAX_MENTION_BYTES = 100 * 1024
+
+
+def search(root: str, query: str, limit: int = 50) -> list[Entry]:
+    """Files and folders whose path matches `query`, best first.
+
+    For the composer's @-mention popup. Ranked as people expect from an
+    editor's file picker: the name equal to the query, then starting with
+    it, then containing it, then the path containing it; shorter paths
+    first within each. Heavy folders are not entered and secrets are never
+    listed.
+
+    Args:
+        root: The open folder.
+        query: What was typed after "@"; empty lists the top level.
+        limit: The most entries to return.
+    """
+    base = Path(root).resolve()
+    needle = query.strip().lower().lstrip("/")
+    ranked: list[tuple[int, bool, int, str, Entry]] = []
+    scanned = 0
+    for dirpath, dirnames, filenames in os.walk(base):
+        here = Path(dirpath)
+        # Pruned in place, which is what stops os.walk descending.
+        dirnames[:] = sorted(d for d in dirnames if d not in HEAVY_DIRS and not is_secret(d))
+        names = [(d, "dir") for d in dirnames] + [(f, "file") for f in sorted(filenames) if not is_secret(f)]
+        if not needle:
+            # Nothing typed yet: the top level only, folders first.
+            dirnames[:] = []
+        for name, kind in names:
+            scanned += 1
+            rel = (here / name).relative_to(base).as_posix()
+            lname, lrel = name.lower(), rel.lower()
+            if not needle:
+                rank = 0
+            elif lname == needle:
+                rank = 0
+            elif lname.startswith(needle):
+                rank = 1
+            elif needle in lname:
+                rank = 2
+            elif needle in lrel:
+                rank = 3
+            else:
+                continue
+            ranked.append((rank, kind != "dir", len(rel), rel, Entry(name=name, path=rel, type=kind, size=None)))
+        if scanned >= MAX_SCANNED:
+            break
+    ranked.sort(key=lambda item: item[:4])
+    return [item[-1] for item in ranked[:limit]]
+
+
+_MENTION = re.compile(r"(?<!\S)@(\S+)")
+
+
+def expand_mentions(root: str, message: str) -> str:
+    """The message as the agent should see it, with @-mentions resolved.
+
+    `@cloud/a.html` becomes the file tools' own path, `/cloud/a.html`, and
+    each mentioned text file is attached after the message -- as Claude
+    Code does -- so the agent has it without a tool call. Mentions that
+    don't resolve inside the folder (an email address, a typo, a .env) are
+    left exactly as typed.
+
+    Args:
+        root: The open folder.
+        message: What the user sent.
+
+    Returns:
+        The message to give the agent. Unchanged when it mentions nothing.
+    """
+    attached: list[str] = []
+    seen: set[str] = set()
+
+    def resolve(match: re.Match[str]) -> str:
+        raw = match.group(1)
+        # Trailing punctuation belongs to the sentence, not the path.
+        trimmed = raw.rstrip(".,;:!?)\"'")
+        try:
+            target = resolve_inside(root, trimmed)
+        except FileAccessError:
+            return match.group(0)
+        rel = target.relative_to(Path(root).resolve()).as_posix()
+        virtual = "/" + rel if rel != "." else "/"
+        if target.is_file() and virtual not in seen:
+            seen.add(virtual)
+            try:
+                if target.stat().st_size <= MAX_MENTION_BYTES:
+                    attached.append(f'<file path="{virtual}">\n{read_text(root, rel)}\n</file>')
+            except FileAccessError:
+                pass  # binary or unreadable: the path alone will do
+        return virtual + raw[len(trimmed):]
+
+    text = _MENTION.sub(resolve, message)
+    if not attached:
+        return text
+    return text + "\n\nFiles the user mentioned:\n\n" + "\n\n".join(attached)
