@@ -52,12 +52,35 @@ def _apply(rates: models.Rates, override: dict[str, float | None]) -> models.Rat
     )
 
 
-@functools.lru_cache(maxsize=32)
 def plan_for(spec: str, reported: str | None = None) -> Plan:
     """Everything needed to price and size one model.
 
-    Cached: the catalogue itself is already cached on disk, and this saves
-    re-deriving the same answer on every turn.
+    LM Studio models skip the cache: their context length is whatever the
+    model is loaded with right now, which the user can change between turns.
+
+    Args:
+        spec: The model as configured -- "openai:gpt-5", or a bare name for
+            whichever provider the keys point at.
+        reported: The model id the reply carried; see `_catalogue_plan`.
+
+    Returns:
+        A Plan.
+    """
+    if config.split_model(spec)[0] == "lmstudio":
+        return _plan(spec, reported)
+    return _catalogue_plan(spec, reported)
+
+
+@functools.lru_cache(maxsize=32)
+def _catalogue_plan(spec: str, reported: str | None = None) -> Plan:
+    """`_plan`, cached -- for catalogue models, whose answer doesn't change."""
+    return _plan(spec, reported)
+
+
+def _plan(spec: str, reported: str | None = None) -> Plan:
+    """Everything needed to price and size one model.
+
+    Called through `plan_for`, which caches it for catalogue models.
 
     Args:
         spec: The model as configured -- "openai:gpt-5", or a bare name for

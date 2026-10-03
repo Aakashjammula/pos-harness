@@ -22,7 +22,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from pos import db
+from pos import config, db
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +165,9 @@ def lookup(provider: str, name: str) -> ModelInfo:
         A ModelInfo. Its fields are None when the model isn't listed; the
         caller falls back to whatever `.env` provides.
     """
+    if provider == "lmstudio":
+        return lmstudio_info(name)
+
     data = catalogue()
     key = _PROVIDER_ALIASES.get(provider, provider)
     models = (data.get(key) or {}).get("models") or {}
@@ -275,3 +278,51 @@ def lmstudio_models(base_url: str) -> tuple[list[str], str | None]:
     except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
         return [], f"Could not reach LM Studio at {base_url} ({e})."
     return sorted(m["id"] for m in payload.get("data", [])), None
+
+
+# A local model costs nothing per token. Real zeros, not _UNKNOWN's
+# "we don't know" zeros -- so the model counts as priced.
+_FREE = Rates(input=0.0, cached=0.0, cache_write=0.0, output=0.0)
+
+
+def lmstudio_info(name: str) -> ModelInfo:
+    """What LM Studio itself says about one of its models.
+
+    A local model is in no catalogue -- it is whatever file the user
+    downloaded -- so the server running it is the only source. Its native
+    REST API (`/api/v0/models`, beside the OpenAI-compatible `/v1`) reports
+    both the context length the model is loaded with and the most it
+    supports; the loaded one is what a conversation actually has to fit in.
+
+    Not cached: the user can reload a model with a different context length
+    at any time, and the call is local and near-instant.
+
+    Args:
+        name: The model id as LM Studio lists it, e.g. "qwen/qwen3.5-9b".
+
+    Returns:
+        A ModelInfo priced at zero. `context_window` is None when LM Studio
+        is unreachable or doesn't know the model.
+    """
+    info = ModelInfo(name=name, short=_FREE, long=_FREE)
+    if not config.LMSTUDIO_BASE_URL:
+        return info
+    # base_url ends in /v1; the native API lives at the same host.
+    host = config.LMSTUDIO_BASE_URL.rstrip("/").removesuffix("/v1")
+    request = urllib.request.Request(f"{host}/api/v0/models", headers={"User-Agent": "pos-harness"})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read())
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
+        logger.warning("Could not ask LM Studio about %s: %s", name, e)
+        return info
+
+    entry = next((m for m in payload.get("data", []) if m.get("id") == name), None)
+    if entry is None:
+        return info
+    # Not `reasoning`: LM Studio's capabilities list only says "tool_use",
+    # and build_model drops reasoning_effort for it regardless.
+    return dataclasses.replace(
+        info,
+        context_window=entry.get("loaded_context_length") or entry.get("max_context_length"),
+    )
