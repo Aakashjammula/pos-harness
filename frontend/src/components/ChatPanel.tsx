@@ -85,6 +85,8 @@ export function ChatPanel({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [textValue, setTextValue] = useState("");
+  // A message sent while a reply was still running; it goes when that ends.
+  const [queued, setQueued] = useState<string | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [toolsEnabled, setToolsEnabled] = useState(false);
   // Shown after the reasoning level is changed part-way through a chat.
@@ -129,12 +131,29 @@ export function ChatPanel({
 
   function handleSend() {
     const value = textValue.trim();
-    if (!value || replying || locked) return;
-    onSendText(value);
+    if (!value || locked) return;
     setTextValue("");
+    // Mid-reply, a message waits its turn rather than being dropped -- or,
+    // as when this button turned into Stop under the cursor, cutting the
+    // reply short.
+    if (replying) {
+      setQueued(value);
+      return;
+    }
+    onSendText(value);
     setLevelChanged(false);
     setFiles([]); // nothing to actually upload to yet -- clears with the message
   }
+
+  // The queued message goes as soon as the reply in progress is over --
+  // however it ended.
+  useEffect(() => {
+    if (replying || queued === null) return;
+    onSendText(queued);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the queue empties as it sends
+    setQueued(null);
+    setLevelChanged(false);
+  }, [replying, queued, onSendText]);
 
   function handleFilesSelected(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(e.target.files ?? []);
@@ -295,6 +314,25 @@ export function ChatPanel({
 
       {/* composer */}
       <div className="shrink-0 border-t border-border px-6 pt-3.5 pb-5">
+        {queued !== null && (
+          <div className="mx-auto mb-2 flex max-w-[720px]">
+            <span
+              role="status"
+              className="flex max-w-full items-center gap-1.5 rounded-full border border-border bg-surface-sunken px-3 py-1 text-[12px] text-text-muted"
+            >
+              <span className="shrink-0 text-text-faint">Queued:</span>
+              <span className="min-w-0 truncate">{queued}</span>
+              <button
+                type="button"
+                onClick={() => setQueued(null)}
+                aria-label="Don't send the queued message"
+                className="shrink-0 text-text-faint hover:text-danger"
+              >
+                ✕
+              </button>
+            </span>
+          </div>
+        )}
         {files.length > 0 && (
           <div className="mx-auto mb-2 flex max-w-[720px] flex-wrap gap-1.5">
             {files.map((f, i) => (
@@ -358,7 +396,13 @@ export function ChatPanel({
               }
             }}
             placeholder={
-              !settled ? "" : locked ? "Open a folder to start chatting…" : replying ? "Replying…" : "Write a message…"
+              !settled
+                ? ""
+                : locked
+                  ? "Open a folder to start chatting…"
+                  : replying
+                    ? "Replying… (type to queue a message, Esc to stop)"
+                    : "Write a message…"
             }
             rows={1}
             disabled={locked}
@@ -393,7 +437,10 @@ export function ChatPanel({
               )}
               <Dropdown value={level} options={levels} onChange={handleLevelChange} triggerClassName="text-text-muted" placement="top" />
               <ContextMeter used={contextUsed} window={contextWindow} costUsd={chatCostUsd} />
-              {replying ? (
+              {/* Stop only when there is nothing typed. With a message in
+                  the box this stays Send (it queues), so clicking where
+                  Send was a moment ago can't cut the reply short. */}
+              {replying && !textValue.trim() ? (
                 <button
                   type="button"
                   onClick={onStop}
