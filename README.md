@@ -8,7 +8,6 @@ It works with Azure OpenAI, OpenAI, or a local model in LM Studio.
 ![Chat with the file panel and a live HTML preview](.github/screenshots/files-and-preview.png)
 
 
-https://github.com/user-attachments/assets/6309eb14-da91-4309-ac1e-983680f4da3f
 
 
 ## Features
