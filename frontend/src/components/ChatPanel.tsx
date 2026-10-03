@@ -8,7 +8,7 @@ import { PlusMenu } from "./PlusMenu";
 import { FolderIcon } from "./icons";
 import { ContextMeter } from "./ContextMeter";
 import { Markdown } from "./Markdown";
-import { ActivityTrail } from "./ActivityTrail";
+import { ActivityTrail, ThinkingRow } from "./ActivityTrail";
 
 interface ChatPanelProps {
   lines: TranscriptLine[];
@@ -171,6 +171,8 @@ export function ChatPanel({
                         {line.text}
                       </span>
                     ) : line.who === "bot" && line.text === "" && replying ? (
+                      <span className="grid w-full min-w-0 gap-1">
+                      {line.liveThinking && <ThinkingRow text={line.liveThinking} live />}
                       <span role="status" aria-label="The assistant is working" className="flex items-center gap-2 py-2">
                         <span className="flex items-center gap-1.5">
                           {[0, 1, 2].map((i) => (
@@ -185,6 +187,7 @@ export function ChatPanel({
                           <span className="truncate font-mono text-[11.5px] text-text-faint">{activity}</span>
                         )}
                       </span>
+                      </span>
                     ) : (
                       <span
                         className={`break-words text-[15px] leading-relaxed ${
@@ -197,6 +200,11 @@ export function ChatPanel({
                       >
                         {/* What it did on the way to this answer: its own
                             commentary, and each batch of tool calls. */}
+                        {/* Until the turn is stored, its thinking has no
+                            rounds to sit in -- show what has streamed so far. */}
+                        {!isYou && !line.usage && line.liveThinking && (
+                          <ThinkingRow text={line.liveThinking} live={replying} />
+                        )}
                         {!isYou && (
                           <ActivityTrail
                             rounds={line.usage?.rounds}
@@ -211,7 +219,21 @@ export function ChatPanel({
                             `line.text` is every round's tokens concatenated,
                             so when the trail has already shown the earlier
                             rounds only the last one belongs here. */}
-                        {isYou ? line.text : <Markdown>{finalText(line)}</Markdown>}
+                        {isYou ? (
+                          line.text
+                        ) : line.usage && !finalText(line).trim() ? (
+                          // A finished turn with nothing to say. Seen with Qwen
+                          // on LM Studio: a round that ends inside its thinking.
+                          <span className="text-[13.5px] italic text-text-faint">
+                            The model stopped without writing an answer
+                            {line.usage.rounds?.some((r) => r.reasoning?.trim())
+                              ? " — open “Thought” above to see what it was working on."
+                              : "."}{" "}
+                            Send “continue” to let it carry on.
+                          </span>
+                        ) : (
+                          <Markdown>{finalText(line)}</Markdown>
+                        )}
                       </span>
                     )}
                   </div>

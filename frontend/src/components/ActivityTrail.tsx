@@ -124,6 +124,35 @@ function GroupRow({ group: g }: { group: Group }) {
 }
 
 /**
+ * The model's thinking, collapsed to one line until asked for. `live` while
+ * it is still arriving -- then it reads "Thinking…" rather than "Thought".
+ */
+export function ThinkingRow({ text, live = false }: { text: string; live?: boolean }) {
+  const [open, setOpen] = useState(false);
+  if (!text.trim()) return null;
+  return (
+    <div className="min-w-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full min-w-0 items-baseline gap-1.5 rounded py-0.5 text-left text-[12.5px] text-text-faint hover:text-text-muted"
+      >
+        <span className="shrink-0 text-[9px] leading-none">{open ? "▾" : "▸"}</span>
+        <span className={`min-w-0 flex-1 truncate ${live ? "animate-pulse" : ""}`}>
+          {live ? "Thinking…" : "Thought"}
+        </span>
+      </button>
+      {open && (
+        <div className="max-h-72 overflow-y-auto whitespace-pre-wrap border-l border-border py-1 pl-3 text-[12.5px] leading-relaxed text-text-muted">
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * What the assistant did during one turn, in order: what it said, what it
  * ran, what it said next.
  *
@@ -133,7 +162,8 @@ function GroupRow({ group: g }: { group: Group }) {
  */
 export function ActivityTrail({ rounds, toolCalls }: ActivityTrailProps) {
   const calls = toolCalls ?? [];
-  if (calls.length === 0) return null;
+  const thought = (rounds ?? []).some((r) => r.reasoning?.trim());
+  if (calls.length === 0 && !thought) return null;
 
   // Turns recorded before per-round text existed have no rounds to walk, so
   // fall back to every tool group followed by the whole reply.
@@ -154,6 +184,7 @@ export function ActivityTrail({ rounds, toolCalls }: ActivityTrailProps) {
         const isLast = round.index === rounds[rounds.length - 1].index;
         return (
           <div key={round.index} className="grid min-w-0 gap-1">
+            <ThinkingRow text={round.reasoning ?? ""} />
             {/* The last round's text is the reply itself, rendered by the
                 transcript -- showing it here too would duplicate it. */}
             {round.text && !isLast && (

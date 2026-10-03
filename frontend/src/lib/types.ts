@@ -24,6 +24,9 @@ export interface Round {
   tool_calls: number;
   /** What the model said in this round, before its tool calls ran. */
   text: string;
+  /** What it thought before that, for models that report it. Absent on
+   * turns recorded before thinking was kept. */
+  reasoning?: string;
 }
 
 export interface Usage {
@@ -59,6 +62,9 @@ export interface TranscriptLine {
   /** Tool calls seen while the reply is still streaming. Replaced by
    * `usage.tool_calls` once the turn finishes. */
   liveCalls?: ToolCall[];
+  /** The model's thinking so far, while the reply is still streaming.
+   * Replaced by each round's `reasoning` once the turn finishes. */
+  liveThinking?: string;
   usage?: Usage;
   latency?: Latency;
 }

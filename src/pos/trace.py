@@ -134,6 +134,14 @@ def build_trace(new_messages: list[Any], reasoning_effort: str, model_spec: str 
             # The transcript keeps one blob of text per turn, so this is the
             # only place the commentary between tool batches survives.
             "text": msg.text or "",
+            # What it thought first, for models that report it (LM Studio's
+            # reasoning_content). A round can be all thinking and no text --
+            # this is then the only record of why the reply came back empty.
+            "reasoning": "".join(
+                block.get("reasoning") or ""
+                for block in msg.content_blocks
+                if block.get("type") == "reasoning"
+            ),
         })
 
     final = ai_messages[-1] if ai_messages else None

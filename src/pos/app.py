@@ -2,6 +2,8 @@
 
   POST /chat/stream    Send a message, stream the reply back as
                        server-sent events: `session {id}`, `token {text}`,
+                       `reasoning {text}` (the model's thinking, if it
+                       reports any),
                        `title {title}` (once, after the first reply),
                        `activity_result {id, result}`,
                        `done {text, model, finish_reason,
@@ -66,6 +68,30 @@ class ChatBody(BaseModel):
 def _sse(event: str, data: dict) -> str:
     """Formats one server-sent event."""
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _delta_of(event: dict) -> tuple[str | None, str]:
+    """The streamed text in one raw message event, and which kind it is.
+
+    Args:
+        event: One event from iterating a v3 message stream.
+
+    Returns:
+        ("text", piece), ("reasoning", piece), or (None, "") for every other
+        event -- tool-call chunks, block starts and finishes, usage.
+    """
+    if event.get("event") != "content-block-delta":
+        return None, ""
+    delta = event.get("delta")
+    if not isinstance(delta, dict):
+        # The older shape carries the block itself rather than a delta.
+        block = event.get("content_block") or {}
+        delta = {"type": f"{block.get('type')}-delta", **block}
+    if delta.get("type") == "text-delta":
+        return "text", delta.get("text") or ""
+    if delta.get("type") == "reasoning-delta":
+        return "reasoning", delta.get("reasoning") or ""
+    return None, ""
 
 
 def _add_title_usage(usage: dict, title_usage: dict, spec: str) -> dict:
@@ -232,6 +258,19 @@ async def chat_stream(body: ChatBody):
                         continue
 
                     message = item
+                    # The raw events, in the order they arrive, so thinking and
+                    # answer both stream live. Reading the `.text` or
+                    # `.reasoning` projection instead would pull the message
+                    # to its end before the other gets a turn -- and reading
+                    # `.tool_calls` first, as this loop used to, buffered the
+                    # whole round's text until the round was over.
+                    for event in message:
+                        kind, piece = _delta_of(event)
+                        if kind == "text":
+                            full_text += piece
+                            yield _sse("token", {"text": piece})
+                        elif kind == "reasoning":
+                            yield _sse("reasoning", {"text": piece})
                     # Tool calls repeat on every chunk as the message accumulates,
                     # so announce each one only the first time its id appears --
                     # this is what turns the silent "thinking" dots into
@@ -244,9 +283,6 @@ async def chat_stream(body: ChatBody):
                                 "activity",
                                 {"id": call_id, "tool": call.get("name"), "args": call.get("args") or {}},
                             )
-                    for delta in message.text:
-                        full_text += delta
-                        yield _sse("token", {"text": delta})
             except Exception as e:  # noqa: BLE001 -- mid-stream failure
                 yield _sse("error", {"message": errors.explain(e, body.model or config.MODEL_NAME)})
                 return

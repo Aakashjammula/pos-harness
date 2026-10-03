@@ -13,6 +13,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
+from langchain_core.outputs import ChatGenerationChunk, ChatResult
+from langchain_openai import ChatOpenAI
 
 load_dotenv()
 
@@ -220,18 +222,64 @@ def model_error(spec: str) -> str | None:
     return f"{spec} needs {KEY_VARIABLES[provider]} in .env."
 
 
+class ChatLMStudio(ChatOpenAI):
+    """ChatOpenAI that keeps the model's thinking.
+
+    LM Studio streams a reasoning model's thinking in a non-standard
+    `reasoning_content` field, which ChatOpenAI documents that it drops
+    ("use a provider-specific subclass"). Losing it is not cosmetic: a
+    model like Qwen can end a round having only thought, and the user then
+    sees an empty reply with no hint why. This copies the field into
+    `additional_kwargs["reasoning_content"]` -- the same place ChatDeepSeek
+    puts it -- and tags the message's provider as "lmstudio". The tag
+    matters: langchain-core only reads `reasoning_content` into a reasoning
+    block on its generic path, and the "openai" tag ChatOpenAI writes routes
+    messages through OpenAI's translator, which skips it. No translator is
+    registered for "lmstudio" (nor for "deepseek"), so the generic path runs.
+    ChatOpenAI only ever writes this tag, never reads it.
+    """
+
+    def _convert_chunk_to_generation_chunk(
+        self,
+        chunk: dict,
+        default_chunk_class: type,
+        base_generation_info: dict | None,
+    ) -> ChatGenerationChunk | None:
+        generation_chunk = super()._convert_chunk_to_generation_chunk(
+            chunk, default_chunk_class, base_generation_info
+        )
+        choices = chunk.get("choices") or chunk.get("chunk", {}).get("choices") or []
+        reasoning = (choices[0].get("delta") or {}).get("reasoning_content") if choices else None
+        if generation_chunk is None:
+            return None
+        generation_chunk.message.response_metadata["model_provider"] = "lmstudio"
+        if reasoning:
+            generation_chunk.message.additional_kwargs["reasoning_content"] = reasoning
+        return generation_chunk
+
+    def _create_chat_result(self, response: Any, generation_info: dict | None = None) -> ChatResult:
+        result = super()._create_chat_result(response, generation_info)
+        raw = response if isinstance(response, dict) else response.model_dump()
+        for generation, choice in zip(result.generations, raw.get("choices") or []):
+            generation.message.response_metadata["model_provider"] = "lmstudio"
+            reasoning = (choice.get("message") or {}).get("reasoning_content")
+            if reasoning:
+                generation.message.additional_kwargs["reasoning_content"] = reasoning
+        return result
+
+
 def build_model(spec: str, **kwargs: Any) -> Any:
     """Builds a chat model for `spec`, routing LM Studio through its base URL.
 
     `init_chat_model("<provider>:<model>")` only understands providers it
     ships support for, and LM Studio isn't one of them -- it just speaks
-    the OpenAI protocol on a different host. So `model_provider="openai"`
-    plus an explicit `base_url` is what actually reaches it; the model
-    name alone would otherwise fall through to OpenAI's own servers.
+    the OpenAI protocol on a different host. So it gets ChatLMStudio with an
+    explicit `base_url`; the model name alone would otherwise fall through
+    to OpenAI's own servers.
 
     Args:
         spec: A model spec, e.g. "openai:gpt-5" or "lmstudio:qwen3-30b".
-        **kwargs: Passed through to `init_chat_model`. For `lmstudio`,
+        **kwargs: Passed through to the model's constructor. For `lmstudio`,
             `use_responses_api`, `output_version` and `reasoning_effort`
             are dropped first -- LM Studio's server implements
             `/v1/chat/completions`, not the Responses API those select.
@@ -244,9 +292,8 @@ def build_model(spec: str, **kwargs: Any) -> Any:
         kwargs.pop("use_responses_api", None)
         kwargs.pop("output_version", None)
         kwargs.pop("reasoning_effort", None)
-        return init_chat_model(
-            name,
-            model_provider="openai",
+        return ChatLMStudio(
+            model=name,
             base_url=LMSTUDIO_BASE_URL,
             api_key="not-needed",
             # ChatOpenAI only asks for usage on a stream (`include_usage`)

@@ -86,6 +86,9 @@ export function useChatSession() {
             setActivity(null); // text arriving means the tool work is done
             patchLine(botId, (l) => ({ ...l, text: l.text + piece }));
           },
+          onReasoning: (piece) => {
+            patchLine(botId, (l) => ({ ...l, liveThinking: (l.liveThinking ?? "") + piece }));
+          },
           onActivity: (id, tool, args) => {
             // Show the most telling argument (a path, a query) rather than
             // the whole blob -- this is a one-line status, not a trace.
