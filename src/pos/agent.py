@@ -17,6 +17,7 @@ from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellB
 from deepagents.middleware import FilesystemMiddleware, MemoryMiddleware, SkillsMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from pos import config
@@ -124,6 +125,49 @@ def _web_search_tool():
     from langchain_tavily import TavilySearch
 
     return TavilySearch(max_results=3)
+
+
+# The file tools' path arguments. `execute` is left alone: the shell runs
+# in the real folder and wants real paths.
+_PATH_ARGS = ("file_path", "path")
+
+
+class RealPathMiddleware(AgentMiddleware):
+    """Turns a real path inside the open folder into the file tools' own.
+
+    The file tools are rooted at the open folder: `/` is the folder, so
+    `/home/me/proj/src/a.py` means `<folder>/home/me/proj/src/a.py`, which
+    does not exist. Users paste real paths and models copy them -- and were
+    then told the file "doesn't exist" when it was right there. A real path
+    under the folder is rewritten to `/src/a.py` before the tool runs;
+    anything else is left for the tool to judge.
+    """
+
+    def __init__(self, root_dir: str) -> None:
+        super().__init__()
+        self.root = Path(root_dir).resolve().as_posix().rstrip("/")
+
+    def _fix(self, value: Any) -> Any:
+        if not isinstance(value, str) or not self.root:
+            return value
+        if value.rstrip("/") == self.root:
+            return "/"
+        if value.startswith(self.root + "/"):
+            return value[len(self.root):]
+        return value
+
+    def _rewrite(self, request: Any) -> Any:
+        args = request.tool_call.get("args") or {}
+        fixed = {key: self._fix(value) if key in _PATH_ARGS else value for key, value in args.items()}
+        if fixed == args:
+            return request
+        return request.override(tool_call={**request.tool_call, "args": fixed})
+
+    def wrap_tool_call(self, request: Any, handler: Any) -> Any:
+        return handler(self._rewrite(request))
+
+    async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
+        return await handler(self._rewrite(request))
 
 
 def available_skills() -> list[dict]:
@@ -244,7 +288,12 @@ def build_agent(
     # between a model asking for a tool and the tool answering leaves a call
     # with no result, and every provider rejects the whole thread after
     # that. This answers each such call with "cancelled" before the turn.
-    middleware = [PatchToolCallsMiddleware(), FilesystemMiddleware(backend=backend)]
+    folder = root_dir or config.DEFAULT_ROOT_DIR
+    middleware = [
+        PatchToolCallsMiddleware(),
+        RealPathMiddleware(folder),
+        FilesystemMiddleware(backend=backend),
+    ]
     if SKILLS_DIR.is_dir():
         middleware.append(SkillsMiddleware(backend=backend, sources=[SKILLS_MOUNT]))
     # Sources that don't exist are skipped, so this is safe for folders with
@@ -259,7 +308,13 @@ def build_agent(
     # the agent itself.
     return create_agent(
         model,
-        system_prompt=SYSTEM_PROMPT,
+        # The folder's real path, for the shell and for recognising pasted
+        # paths. File tools still call it `/` (RealPathMiddleware covers a
+        # model that forgets).
+        system_prompt=SYSTEM_PROMPT
+        + f"\n\n## This folder\n\nThe open folder is `{Path(folder).resolve().as_posix()}` on disk. "
+        "In file tools that is `/`: a path the user gives as "
+        f"`{Path(folder).resolve().as_posix()}/cloud/a.html` is `/cloud/a.html` to them.",
         tools=[search] if search else [],
         middleware=middleware,
         checkpointer=checkpointer,
