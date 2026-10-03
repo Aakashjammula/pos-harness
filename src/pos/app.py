@@ -16,6 +16,11 @@
   DEL  /usage/deleted  Forget what deleted chats cost.
   POST /fs/pick        Opens the native OS folder dialog, blocks until
                        closed, returns the chosen path (or none).
+  GET  /fs/tree        One folder's entries, for the file panel.
+  GET  /fs/file        One file's text, for the viewer.
+  GET  /fs/preview/{key}/{path}
+                       A file served as itself, sandboxed -- for running
+                       an HTML page the agent wrote.
 
 Single local user: no auth, no per-user isolation.
 """
@@ -31,7 +36,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from langchain.messages import ToolMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from pydantic import BaseModel
@@ -40,6 +45,7 @@ from pos import agent as agent_mod
 from pos import config
 from pos import db
 from pos import errors
+from pos import files
 from pos import fs
 from pos import http_headers
 from pos import models as models_mod
@@ -417,6 +423,84 @@ def pick_folder():
             status_code=501,
             detail=f"{e}. Set POS_ROOT_DIR instead, or run the app directly on your machine.",
         ) from e
+
+
+def _open_folder(folder: str) -> str:
+    """The folder a file-panel request names, or a 400.
+
+    The panel only ever asks about the folder the user opened, so an absent
+    or vanished one is the client's mistake, not a reason to fall back to
+    POS_ROOT_DIR the way chat does.
+    """
+    root = _resolve_root_dir(folder)
+    if root is None:
+        raise HTTPException(status_code=400, detail="Open a folder first.")
+    return root
+
+
+@app.get("/fs/tree")
+def fs_tree(folder: str, path: str = ""):
+    """One folder's entries -- the tree loads a level at a time, on expand."""
+    root = _open_folder(folder)
+    try:
+        entries, truncated = files.list_dir(root, path)
+    except files.FileAccessError as e:
+        raise HTTPException(status_code=e.status, detail=e.message) from e
+    return {
+        "path": path.strip("/"),
+        "entries": [dataclasses.asdict(entry) for entry in entries],
+        "truncated": truncated,
+        # For building preview links without sending the path back to us.
+        "preview_key": files.folder_key(root),
+    }
+
+
+@app.get("/fs/file")
+def fs_file(folder: str, path: str):
+    """One file's text. Refuses folders, binaries, and anything over 2 MB."""
+    root = _open_folder(folder)
+    try:
+        content = files.read_text(root, path)
+    except files.FileAccessError as e:
+        raise HTTPException(status_code=e.status, detail=e.message) from e
+    return {"path": path.strip("/"), "content": content}
+
+
+# The previewed page is code the agent wrote, so it runs in a sandbox. The
+# CSP `sandbox` directive gives it an opaque ("null") origin even when it is
+# opened in a tab of its own: it can run scripts, but it is no longer this
+# app's origin, so it cannot read the API's responses (there is no CORS to
+# let it), and cannot reach into the app around it. `allow-same-origin` is
+# left out on purpose -- with `allow-scripts` it would undo all of that.
+# The rest is wide open because a page is useless if its CDN scripts,
+# styles and images are blocked; this app's own CSP stays strict.
+_PREVIEW_HEADERS = {
+    "Content-Security-Policy": "; ".join((
+        "sandbox allow-scripts allow-modals allow-forms allow-popups",
+        "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'",
+        "frame-ancestors 'self'",
+    )),
+    # The app's DENY would stop its own preview pane from showing this.
+    "X-Frame-Options": "SAMEORIGIN",
+    "Cache-Control": "no-store",
+}
+
+
+@app.get("/fs/preview/{key}/{path:path}")
+def fs_preview(key: str, path: str):
+    """Serves a file from the open folder as itself, sandboxed.
+
+    `key` is the folder (see files.folder_key) -- in the path so that a
+    page's relative links to its own CSS and images resolve here too.
+    """
+    try:
+        root = files.folder_from_key(key)
+        target = files.resolve_inside(root, path)
+    except files.FileAccessError as e:
+        raise HTTPException(status_code=e.status, detail=e.message) from e
+    if target.is_dir():
+        raise HTTPException(status_code=400, detail="That is a folder; preview a file in it.")
+    return FileResponse(target, headers=_PREVIEW_HEADERS)
 
 
 @app.get("/usage")
