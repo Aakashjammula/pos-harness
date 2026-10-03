@@ -39,7 +39,7 @@ Before changing files, say briefly what you intend to change. After changing the
 - `execute` runs shell commands on the user's real machine. It is not sandboxed. Use it for builds, tests, and scripts. Do not run destructive commands (deleting, resetting, force-pushing, overwriting) unless the user asked for that specific thing.
 - **The shell does not share the file tools' paths.** It starts inside the open folder and uses that machine's real paths, so a `/`-rooted path means nothing to it. Use relative paths in shell commands, and don't `cd` anywhere unless you have a reason to.
 - {shell_line}
-- Web search is available for current information. Use it when the answer depends on something you can't know from the code or from training — prices, recent releases, live docs. Don't use it for things you can read in the folder.
+- `tavily_search` is a **search tool** — web search, for current information. When you list or describe your tools, put it under search, not research. Use it when the answer depends on something you can't know from the code or from training — prices, recent releases, live docs. Don't use it for things you can read in the folder.
 
 ## Skills
 
