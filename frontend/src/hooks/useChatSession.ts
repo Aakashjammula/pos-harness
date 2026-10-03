@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { streamChat } from "@/lib/chatStream";
+import { WRITING_TOOLS } from "@/lib/files";
 import type { StoredTurn } from "@/lib/sessions";
 import type { TranscriptLine, Usage } from "@/lib/types";
 
@@ -29,6 +30,10 @@ export function useChatSession() {
   // Call ids in the order they were announced, so a result can be matched
   // back to its row. Reset per turn.
   const liveIds = useRef<string[]>([]);
+  const liveTools = useRef<Map<string, string>>(new Map());
+  // Bumps whenever a tool that can change files finishes, so the file panel
+  // knows to reload what it shows.
+  const [filesVersion, setFilesVersion] = useState(0);
   const [historyVersion, setHistoryVersion] = useState(0);
   const [threadId, setThreadIdState] = useState<string | null>(null);
   const threadIdRef = useRef<string | null>(null);
@@ -63,6 +68,7 @@ export function useChatSession() {
       setLines((prev) => [...prev, { id: botId, who: "bot", text: "" }]);
 
       liveIds.current = [];
+      liveTools.current.clear();
       const controller = new AbortController();
       abortRef.current = controller;
       setReplying(true);
@@ -101,10 +107,12 @@ export function useChatSession() {
               liveCalls: [...(l.liveCalls ?? []), { name: tool, args, pending: true }],
             }));
             liveIds.current.push(id);
+            liveTools.current.set(id, tool);
           },
           onActivityResult: (id, result) => {
             const index = liveIds.current.indexOf(id);
             if (index < 0) return;
+            if (WRITING_TOOLS.has(liveTools.current.get(id) ?? "")) setFilesVersion((v) => v + 1);
             patchLine(botId, (l) => ({
               ...l,
               liveCalls: (l.liveCalls ?? []).map((c, i) =>
@@ -195,5 +203,16 @@ export function useChatSession() {
     [setThreadId]
   );
 
-  return { lines, lineCountLabel, replying, activity, threadId, historyVersion, sendText, newChat, loadHistory };
+  return {
+    lines,
+    lineCountLabel,
+    replying,
+    activity,
+    threadId,
+    historyVersion,
+    filesVersion,
+    sendText,
+    newChat,
+    loadHistory,
+  };
 }

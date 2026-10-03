@@ -10,6 +10,7 @@ import { ChatPanel } from "@/components/ChatPanel";
 import { SettingsPage } from "@/components/SettingsPage";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { TracePage } from "@/components/TracePage";
+import { FilePanel, type OpenRequest } from "@/components/FilePanel";
 
 const LEVELS = ["Low", "Medium", "High"];
 
@@ -22,6 +23,9 @@ export default function Home() {
   // The chat awaiting a delete confirmation; null when no dialog is open.
   const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
   const [showTrace, setShowTrace] = useState(false);
+  // The file panel beside the chat, and the last file asked for from the chat.
+  const [showFiles, setShowFiles] = useState(false);
+  const [openRequest, setOpenRequest] = useState<OpenRequest | null>(null);
   // The models the backend can call, and which one is selected. Names come
   // from the backend's .env; everything else is looked up there.
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -107,6 +111,12 @@ export default function Home() {
     [session, workspace]
   );
 
+  // Clicking a file in the chat opens the panel on it.
+  const handleOpenFile = useCallback((path: string) => {
+    setShowFiles(true);
+    setOpenRequest((prev) => ({ path, nonce: (prev?.nonce ?? 0) + 1 }));
+  }, []);
+
   // Deleting is permanent -- the chat, its stored turns and its memory all
   // go -- so it asks first. Deleting the chat you're looking at leaves the
   // transcript pointing at a thread that no longer exists, so start a fresh one.
@@ -181,6 +191,18 @@ export default function Home() {
           folderError={workspace.error}
           configError={configError}
           onOpenTrace={() => setShowTrace(true)}
+          onOpenFile={handleOpenFile}
+          filesOpen={showFiles}
+          onToggleFiles={() => setShowFiles((v) => !v)}
+        />
+      )}
+      {showFiles && !showTrace && !showSettings && workspace.folderPath && (
+        <FilePanel
+          key={workspace.folderPath}
+          folder={workspace.folderPath}
+          version={session.filesVersion}
+          openRequest={openRequest}
+          onClose={() => setShowFiles(false)}
         />
       )}
       {pendingDelete && (

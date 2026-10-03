@@ -1,11 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { projectPath } from "@/lib/files";
 import type { Round, ToolCall } from "@/lib/types";
 
 interface ActivityTrailProps {
   rounds?: Round[];
   toolCalls?: ToolCall[];
+  /** Opens a project file in the file panel. */
+  onOpenFile?: (path: string) => void;
 }
 
 /** Tool calls that did the same sort of thing, shown as one row. */
@@ -55,6 +58,14 @@ function diffOf(call: ToolCall): string {
   return `+${added} −${removed}`;
 }
 
+/** The project file a call read or wrote, if it can be opened: not a
+ * deleted one, and not the app's own /skills/ or /memory/. */
+function openablePath(call: ToolCall): string | null {
+  if (call.name !== "read_file" && call.name !== "write_file" && call.name !== "edit_file") return null;
+  const path = ((call.args ?? {}) as Record<string, unknown>).file_path;
+  return typeof path === "string" ? projectPath(path) : null;
+}
+
 /** Consecutive calls of the same kind collapse into one row. */
 function group(calls: ToolCall[]): Group[] {
   const groups: Group[] = [];
@@ -75,36 +86,60 @@ function summarise(g: Group): string {
   return `${g.verb} ${g.calls.length} ${noun}`;
 }
 
-function GroupRow({ group: g }: { group: Group }) {
+function GroupRow({ group: g, onOpenFile }: { group: Group; onOpenFile?: (path: string) => void }) {
   const [open, setOpen] = useState(false);
   const diffs = g.calls.map(diffOf).filter(Boolean);
+  // One file touched: offer to open it right on the row.
+  const single = g.calls.length === 1 && onOpenFile ? openablePath(g.calls[0]) : null;
 
   return (
     <div className="min-w-0">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full min-w-0 items-baseline gap-1.5 rounded py-0.5 text-left text-[12.5px] text-text-faint hover:text-text-muted"
-      >
-        <span className="shrink-0 text-[9px] leading-none">{open ? "▾" : "▸"}</span>
-        <span className="min-w-0 flex-1 truncate">{summarise(g)}</span>
+      <div className="flex w-full min-w-0 items-baseline gap-1.5 text-[12.5px] text-text-faint">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-baseline gap-1.5 rounded py-0.5 text-left hover:text-text-muted"
+        >
+          <span className="shrink-0 text-[9px] leading-none">{open ? "▾" : "▸"}</span>
+          <span className="min-w-0 flex-1 truncate">{summarise(g)}</span>
+        </button>
         {g.calls.some((c) => c.pending) && (
           <span className="shrink-0 animate-pulse text-[11px] text-text-faint">running…</span>
         )}
         {diffs.length > 0 && (
           <span className="shrink-0 font-mono text-[11px] text-text-faint">{diffs.join(" ")}</span>
         )}
-      </button>
+        {single && (
+          <button
+            type="button"
+            onClick={() => onOpenFile?.(single)}
+            className="shrink-0 text-[11.5px] text-text-faint underline-offset-2 hover:text-accent hover:underline"
+          >
+            open
+          </button>
+        )}
+      </div>
 
       {open && (
         <div className="grid min-w-0 gap-1 border-l border-border pt-1 pb-0.5 pl-3">
           {g.calls.map((call, i) => (
             <div key={i} className="grid min-w-0 gap-0.5">
               <div className="flex min-w-0 items-baseline justify-between gap-2">
-                <span className="min-w-0 truncate font-mono text-[11.5px] text-text-muted" title={subject(call)}>
-                  {subject(call)}
-                </span>
+                {onOpenFile && openablePath(call) ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenFile(openablePath(call)!)}
+                    title={`Open ${subject(call)}`}
+                    className="min-w-0 truncate text-left font-mono text-[11.5px] text-text-muted hover:text-accent hover:underline"
+                  >
+                    {subject(call)}
+                  </button>
+                ) : (
+                  <span className="min-w-0 truncate font-mono text-[11.5px] text-text-muted" title={subject(call)}>
+                    {subject(call)}
+                  </span>
+                )}
                 {diffOf(call) && (
                   <span className="shrink-0 font-mono text-[11px] text-text-faint">{diffOf(call)}</span>
                 )}
@@ -160,7 +195,7 @@ export function ThinkingRow({ text, live = false }: { text: string; live?: boole
  * commentary sit between the tool batches instead of all of it landing
  * after them.
  */
-export function ActivityTrail({ rounds, toolCalls }: ActivityTrailProps) {
+export function ActivityTrail({ rounds, toolCalls, onOpenFile }: ActivityTrailProps) {
   const calls = toolCalls ?? [];
   const thought = (rounds ?? []).some((r) => r.reasoning?.trim());
   if (calls.length === 0 && !thought) return null;
@@ -171,7 +206,7 @@ export function ActivityTrail({ rounds, toolCalls }: ActivityTrailProps) {
     return (
       <div className="grid min-w-0 gap-0.5">
         {group(calls).map((g, i) => (
-          <GroupRow key={i} group={g} />
+          <GroupRow key={i} group={g} onOpenFile={onOpenFile} />
         ))}
       </div>
     );
@@ -191,7 +226,7 @@ export function ActivityTrail({ rounds, toolCalls }: ActivityTrailProps) {
               <p className="m-0 text-[15px] leading-relaxed text-text">{round.text}</p>
             )}
             {group(mine).map((g, i) => (
-              <GroupRow key={i} group={g} />
+              <GroupRow key={i} group={g} onOpenFile={onOpenFile} />
             ))}
           </div>
         );

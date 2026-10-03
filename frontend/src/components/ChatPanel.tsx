@@ -32,6 +32,10 @@ interface ChatPanelProps {
   folderError: string | null;
   configError: string | null; // provider not set up; chatting will fail
   onOpenTrace: () => void;
+  /** Opens a project file in the file panel. */
+  onOpenFile: (path: string) => void;
+  filesOpen: boolean;
+  onToggleFiles: () => void;
 }
 
 /** The part of a reply that belongs in the bubble.
@@ -69,6 +73,9 @@ export function ChatPanel({
   folderError,
   configError,
   onOpenTrace,
+  onOpenFile,
+  filesOpen,
+  onToggleFiles,
 }: ChatPanelProps) {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -129,6 +136,21 @@ export function ChatPanel({
     <div className="flex h-screen flex-1 flex-col">
       {/* topbar */}
       <div className="flex items-center justify-end gap-3 border-b border-border px-6 py-3.5">
+        {folderName && (
+          <button
+            type="button"
+            onClick={onToggleFiles}
+            aria-pressed={filesOpen}
+            title={filesOpen ? "Hide the file panel" : "Browse this folder's files"}
+            className={`rounded-full border px-2.5 py-1 text-[12.5px] font-medium ${
+              filesOpen
+                ? "border-text-muted text-text"
+                : "border-border text-text-muted hover:border-text-muted hover:text-text"
+            }`}
+          >
+            Files
+          </button>
+        )}
         {lines.some((l) => l.usage) && (
           <button
             type="button"
@@ -211,6 +233,7 @@ export function ChatPanel({
                             // While streaming there is no stored trace yet, so
                             // the rows come from what has been announced so far.
                             toolCalls={line.usage?.tool_calls ?? line.liveCalls}
+                            onOpenFile={onOpenFile}
                           />
                         )}
                         {/* Only the assistant writes markdown. Your own
