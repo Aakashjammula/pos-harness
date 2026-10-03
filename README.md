@@ -62,7 +62,7 @@ That serves the API *and* the UI. There is no second process.
 
 The frontend is Next.js, but nothing Node-related runs when the app runs —
 Node is only needed to build. `next build` with `output: 'export'` produces
-plain files, and those files are committed at `backend/src/pos/static/`,
+plain files, and those files are committed at `src/pos/static/`,
 which is what the server hands out.
 
 So after editing anything under `frontend/src/`:
@@ -71,7 +71,7 @@ So after editing anything under `frontend/src/`:
 cd frontend && npm run build:app
 ```
 
-That rebuilds and copies the result into `backend/src/pos/static/`. Commit
+That rebuilds and copies the result into `src/pos/static/`. Commit
 that folder along with your source change — it is the part that actually
 ships.
 
